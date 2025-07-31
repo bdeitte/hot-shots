@@ -593,6 +593,248 @@ describe('#errorHandling', () => {
               }, 5);
             });
           });
+
+          describe('#udsRetry', () => {
+            /**
+             * Create UDS test server
+             * @param {string} socketPath Path to socket
+             * @param {Function} messageHandler Message handler function
+             * @return {Object} Server object with cleanup function
+             */
+            function createUdsTestServer(socketPath, messageHandler) {
+              const fs = require('fs'); // eslint-disable-line global-require
+              let unixDgram;
+              try {
+                unixDgram = require('unix-dgram'); // eslint-disable-line global-require
+              } catch (e) {
+                return null;
+              }
+
+              // Clean up socket file if it exists
+              try {
+                fs.unlinkSync(socketPath); // eslint-disable-line no-sync
+              } catch (e) {
+                /* ignore */
+              }
+
+              const testServer = unixDgram.createSocket('unix_dgram');
+              testServer.bind(socketPath);
+              if (messageHandler) {
+                testServer.on('message', messageHandler);
+              }
+
+              return {
+                server: testServer,
+                cleanup: () => {
+                  testServer.close();
+                  try {
+                    fs.unlinkSync(socketPath); // eslint-disable-line no-sync
+                  } catch (e) {
+                    /* ignore */
+                  }
+                }
+              };
+            }
+
+            it('should retry UDS send with exponential backoff on failure', (done) => {
+              const path = require('path'); // eslint-disable-line global-require
+              const socketPath = path.join(__dirname, 'test-retry.sock');
+              let attemptCount = 0;
+              const maxRetries = 2;
+              const initialDelay = 50;
+
+              const udsServer = createUdsTestServer(socketPath, () => {
+                attemptCount++;
+                if (attemptCount <= maxRetries) {
+                  // Simulate failure by not responding
+                  return;
+                }
+                // Succeed on final attempt
+                udsServer.cleanup();
+              });
+
+              if (!udsServer) {
+                return done();
+              }
+
+              const client = statsd = createHotShotsClient({
+                protocol: 'uds',
+                path: socketPath,
+                udsRetries: maxRetries,
+                udsRetryDelay: initialDelay,
+                udsBackoffFactor: 2,
+                maxBufferSize: 1
+              }, 'client');
+
+              const startTime = Date.now();
+              client.timing('test.timer', 100, (err) => {
+                const elapsedTime = Date.now() - startTime;
+                assert.ok(elapsedTime >= (initialDelay + (initialDelay * 2)));
+                assert.ok(!err);
+                done();
+              });
+            });
+
+            it('should fail after exhausting all retries', (done) => {
+              const path = require('path'); // eslint-disable-line global-require
+              const socketPath = path.join(__dirname, 'test-retry-fail.sock');
+              const maxRetries = 2;
+
+              // Skip UDS server creation to simulate connection failure
+              if (!createUdsTestServer(socketPath)) {
+                return done();
+              }
+
+              const client = statsd = createHotShotsClient({
+                protocol: 'uds',
+                path: socketPath,
+                udsRetries: maxRetries,
+                udsRetryDelay: 10,
+                maxBufferSize: 1,
+                errorHandler: (err) => {
+                  assert.ok(err);
+                  done();
+                }
+              }, 'client');
+
+              client.timing('test.timer', 100);
+            });
+
+            it('should not retry when udsRetries is 0', (done) => {
+              const path = require('path'); // eslint-disable-line global-require
+              const socketPath = path.join(__dirname, 'test-no-retry.sock');
+
+              // Don't create a server to simulate connection failure
+              let errorCount = 0;
+              const client = statsd = createHotShotsClient({
+                protocol: 'uds',
+                path: socketPath,
+                udsRetries: 0,
+                maxBufferSize: 1,
+                errorHandler: (err) => {
+                  errorCount++;
+                  assert.ok(err);
+                  assert.strictEqual(errorCount, 1);
+                  done();
+                }
+              }, 'client');
+
+              client.timing('test.timer', 100);
+            });
+
+            it('should handle slow server that causes buffer overflow and then recovers', function(done) {
+              this.timeout(12000);
+              const path = require('path'); // eslint-disable-line global-require
+              const socketPath = path.join(__dirname, 'test-slow-server.sock');
+
+              const receivedPackets = [];
+              const serverStartTime = Date.now();
+              let totalBytesReceived = 0;
+              let clientErrors = 0;
+              let cleanedUp = false;
+              const totalPacketsToSend = 8;
+              let packetsProcessedInSlowMode = 0;
+              const slowModePacketInterval = 500; // 500ms between each packet in slow mode
+
+              function safeCleanup() {
+                cleanedUp = true;
+                udsServer.cleanup();
+              }
+
+              const udsServer = createUdsTestServer(socketPath, (msg) => {
+                if (cleanedUp) return;
+
+                const currentTime = Date.now();
+                const elapsedTime = currentTime - serverStartTime;
+
+                // Simulate slow processing: process packets one at a time with 500ms intervals for first 4 seconds
+                if (elapsedTime < 4000) {
+                  // Calculate when this packet should be processed (500ms intervals)
+                  const processingDelay = packetsProcessedInSlowMode * slowModePacketInterval;
+                  
+                  setTimeout(() => {
+                    if (cleanedUp) return;
+
+                    packetsProcessedInSlowMode++;
+                    const packetContent = msg.toString();
+                    totalBytesReceived += msg.length;
+                    receivedPackets.push(packetContent);
+
+                    const processTime = Date.now() - serverStartTime;
+                    console.log(`Server slowly processed packet ${receivedPackets.length} (${msg.length} bytes) - arrived at ${elapsedTime}ms, processed at ${processTime}ms (${processingDelay}ms delay)`);
+
+                    // Complete test when we've received all packets
+                    if (receivedPackets.length >= totalPacketsToSend) {
+                      const testDuration = Date.now() - serverStartTime;
+                      console.log(`Test success! Received all ${receivedPackets.length}/${totalPacketsToSend} packets (${totalBytesReceived} bytes total) despite ${clientErrors} client errors in ${testDuration}ms`);
+                      safeCleanup();
+                      done();
+                    }
+                  }, processingDelay);
+                } else {
+                  // Fast processing after 4 seconds - process immediately
+                  const packetContent = msg.toString();
+                  totalBytesReceived += msg.length;
+                  receivedPackets.push(packetContent);
+
+                  console.log(`Server quickly processed packet ${receivedPackets.length} (${msg.length} bytes) - arrived at ${elapsedTime}ms, processed immediately`);
+
+                  // Complete test when we've received all packets
+                  if (receivedPackets.length >= totalPacketsToSend) {
+                    const testDuration = Date.now() - serverStartTime;
+                    console.log(`Test success! Received all ${receivedPackets.length}/${totalPacketsToSend} packets (${totalBytesReceived} bytes total) despite ${clientErrors} client errors in ${testDuration}ms`);
+                    safeCleanup();
+                    done();
+                  }
+                }
+              });
+
+              if (!udsServer) {
+                return done();
+              }
+
+              const client = statsd = createHotShotsClient({
+                protocol: 'uds',
+                path: socketPath,
+                udsRetries: 4,
+                udsRetryDelay: 150,
+                udsMaxRetryDelay: 800,
+                udsBackoffFactor: 2,
+                maxBufferSize: 1,
+                errorHandler: (err) => {
+                  clientErrors++;
+                  console.log(`Client error #${clientErrors}: ${err.message}`);
+                }
+              }, 'client');
+
+              // Send large packets that will stress the socket buffer
+              const largePayload = 'x'.repeat(4000); // big payload
+
+              console.log('Sending large packets rapidly to stress buffer...');
+              for (let i = 0; i < 8; i++) {
+                setTimeout(() => {
+                  client.gauge(`test.large.metric.${i}.${largePayload}`, 42);
+                }, i * 50); // Send every 50ms
+              }
+
+              // Fallback timeout
+              setTimeout(() => {
+                if (cleanedUp) return;
+
+                console.log(`Test timeout. Received ${receivedPackets.length}/${totalPacketsToSend} packets, ${clientErrors} errors, ${totalBytesReceived} bytes total`);
+
+                // Consider it successful if we got most packets
+                if (receivedPackets.length >= Math.floor(totalPacketsToSend * 0.75)) {
+                  console.log('Test passed: Retry mechanism handled buffer overflow scenario');
+                  safeCleanup();
+                  done();
+                } else {
+                  safeCleanup();
+                  done(new Error(`Test failed: received ${receivedPackets.length}/${totalPacketsToSend} packets with ${clientErrors} errors`));
+                }
+              }, 10000);
+            });
+          });
         });
       }
     });

@@ -61,6 +61,10 @@ Parameters (specified as one object passed into hot-shots):
 * `tcpGracefulRestartRateLimit`: Used only when the protocol is `tcp`. Time (ms) between re-creating the socket. Defaults to `1000`.
 * `udsGracefulErrorHandling`: Used only when the protocol is `uds`. Boolean indicating whether to handle socket errors gracefully. Defaults to true.
 * `udsGracefulRestartRateLimit`: Used only when the protocol is `uds`. Time (ms) between re-creating the socket. Defaults to `1000`.
+* `udsRetries`: Used only when the protocol is `uds`. Number of retry attempts for failed packet sends. Defaults to `3`.
+* `udsRetryDelay`: Used only when the protocol is `uds`. Initial delay in milliseconds before retrying a failed packet send. Defaults to `100`.
+* `udsMaxRetryDelay`: Used only when the protocol is `uds`. Maximum delay in milliseconds between retry attempts (caps exponential backoff). Defaults to `1000`.
+* `udsBackoffFactor`: Used only when the protocol is `uds`. Exponential backoff multiplier for retry delays. Each retry delay is multiplied by this factor. Defaults to `2`.
 * `closingFlushInterval`: Before closing, StatsD will check for inflight messages. Time (ms) between each check. Defaults to `50`.
 * `udpSocketOptions`: Used only when the protocol is `udp`. Specify the options passed into dgram.createSocket(). Defaults to `{ type: 'udp4' }`
 
@@ -143,6 +147,21 @@ The check method has the following API:
 
   // Check: sends a service check (DataDog only)
   client.check('service.up', client.CHECKS.OK, { hostname: 'host-1' }, ['foo', 'bar'])
+```
+
+### UDS (Unix Domain Socket) with Retry Support
+
+```javascript
+  // UDS client with automatic retry on packet failures
+  var client = new StatsD({
+      protocol: 'uds',
+      path: '/var/run/datadog/dsd.socket'
+      // Retry options (all optional, showing defaults):
+      // udsRetries: 3,           // Number of retry attempts (set to 0 to disable)
+      // udsRetryDelay: 100,      // Initial delay in ms
+      // udsMaxRetryDelay: 1000,  // Maximum delay cap in ms  
+      // udsBackoffFactor: 2      // Exponential backoff multiplier
+  });
 
   // Incrementing multiple items
   client.increment(['these', 'are', 'different', 'stats']);
