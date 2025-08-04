@@ -724,14 +724,12 @@ describe('#errorHandling', () => {
                 },
                 maxBufferSize: 1,
                 errorHandler: (err) => {
-                  console.log('MRJN Error handler called with:', err);
                   assert.ok(err);
                   // restore
                   unixDgramModule.createSocket = realCreateSocket;
                   // clean up the uds server to avoid hanging the test
                   udsServer.cleanup();
                   done();
-                  console.log('MRJN Done');
                 }
               }, 'client');
 
