@@ -671,10 +671,10 @@ describe('#errorHandling', () => {
 
               const client = statsd = createHotShotsClient({
                 protocol: 'uds',
-                udsSocketOptions: {
-                  path: socketPath,
+                path: socketPath,
+                udsRetryOptions: {
                   retries: maxRetries,
-                  retryDelay: initialDelay,
+                  retryDelayMs: initialDelay,
                   backoffFactor: 2
                 },
                 maxBufferSize: 1
@@ -718,8 +718,8 @@ describe('#errorHandling', () => {
 
               const client = statsd = createHotShotsClient({
                 protocol: 'uds',
-                udsSocketOptions: {
-                  path: socketPath,
+                path: socketPath,
+                udsRetryOptions: {
                   retries: 5,
                 },
                 maxBufferSize: 1,
@@ -744,8 +744,8 @@ describe('#errorHandling', () => {
               let errorCount = 0;
               const client = statsd = createHotShotsClient({
                 protocol: 'uds',
-                udsSocketOptions: {
-                  path: socketPath,
+                path: socketPath,
+                udsRetryOptions: {
                   retries: 0
                 },
                 maxBufferSize: 1,
@@ -841,11 +841,11 @@ describe('#errorHandling', () => {
 
               const client = statsd = createHotShotsClient({
                 protocol: 'uds',
-                udsSocketOptions: {
-                  path: socketPath,
+                path: socketPath,
+                udsRetryOptions: {
                   retries: 20,
-                  retryDelay: 150,
-                  maxRetryDelay: 800,
+                  retryDelayMs: 150,
+                  maxRetryDelayMs: 800,
                   backoffFactor: 2
                 },
                 maxBufferSize: 1,

@@ -32,12 +32,14 @@ declare module "hot-shots" {
     tcpGracefulRestartRateLimit?: number;
     udsGracefulErrorHandling?: boolean;
     udsGracefulRestartRateLimit?: number;
-    udsRetries?: number;
-    udsRetryDelay?: number;
-    udsMaxRetryDelay?: number;
-    udsBackoffFactor?: number;
     closingFlushInterval?: number;
     udpSocketOptions?: dgram.SocketOptions;
+    udsRetryOptions?: {
+      retries?: number;
+      retryDelayMs?: number;
+      maxRetryDelayMs?: number;
+      backoffFactor?: number;
+    };
   }
 
   export interface ChildClientOptions {
