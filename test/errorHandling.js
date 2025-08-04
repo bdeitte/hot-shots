@@ -842,7 +842,7 @@ describe('#errorHandling', () => {
                 protocol: 'uds',
                 udsSocketOptions: {
                   path: socketPath,
-                  retries: 4,
+                  retries: 20,
                   retryDelay: 150,
                   maxRetryDelay: 800,
                   backoffFactor: 2
