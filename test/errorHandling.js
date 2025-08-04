@@ -695,11 +695,11 @@ describe('#errorHandling', () => {
             it('should fail after exhausting all retries', (done) => {
               const path = require('path'); // eslint-disable-line global-require
               const socketPath = path.join(__dirname, 'test-retry-fail.sock');
-              const maxRetries = 2;
 
-              // Skip UDS server creation to simulate connection failure
-              if (!createUdsTestServer(socketPath)) {
-                return done();
+              // Create a UDS server so connect() succeeds; we'll force send() to fail and then clean up.
+              const udsServer = createUdsTestServer(socketPath);
+              if (!udsServer) {
+               return done();
               }
 
               // Mock unix-dgram socket to always fail
@@ -720,15 +720,18 @@ describe('#errorHandling', () => {
                 protocol: 'uds',
                 udsSocketOptions: {
                   path: socketPath,
-                  retries: maxRetries,
-                  retryDelay: 10
+                  retries: 5,
                 },
                 maxBufferSize: 1,
                 errorHandler: (err) => {
+                  console.log('MRJN Error handler called with:', err);
                   assert.ok(err);
                   // restore
                   unixDgramModule.createSocket = realCreateSocket;
+                  // clean up the uds server to avoid hanging the test
+                  udsServer.cleanup();
                   done();
+                  console.log('MRJN Done');
                 }
               }, 'client');
 
