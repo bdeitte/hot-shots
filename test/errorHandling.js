@@ -3,6 +3,15 @@ const os = require('os');
 const process = require('process');
 const helpers = require('./helpers/helpers.js');
 
+/**
+ * Create an internal error with a code and message.
+ */
+function internalError(code, msg) {
+  const e = new Error(msg);
+  e.code = code;
+  return e;
+}
+
 const closeAll = helpers.closeAll;
 const testTypes = helpers.testTypes;
 const createServer = helpers.createServer;
@@ -658,9 +667,7 @@ describe('#errorHandling', () => {
                 realSocket.send = function(buffer, callback) {
                   sendAttempts++;
                   if (sendAttempts <= maxRetries) {
-                    const error = new Error('Resource temporarily unavailable');
-                    error.code = 'EAGAIN';
-                    error.errno = -11;
+                    const error = internalError('CONGESTION', 'congestion');
                     return process.nextTick(() => callback(error));
                   }
                   // Success on final attempt
@@ -708,9 +715,7 @@ describe('#errorHandling', () => {
               unixDgramModule.createSocket = function(type) {
                 const realSocket = realCreateSocket(type);
                 realSocket.send = function(buffer, callback) {
-                  const error = new Error('Resource temporarily unavailable');
-                  error.code = 'EAGAIN';
-                  error.errno = -11;
+                  const error = internalError('CONGESTION', 'congestion');
                   return process.nextTick(() => callback(error));
                 };
                 return realSocket;
@@ -817,11 +822,9 @@ describe('#errorHandling', () => {
                   realSocket.send = function(buffer, callback) {
                     const elapsedTime = Date.now() - testStartTime;
                     if (elapsedTime < 2000) {
-                      // First 2 seconds: reject all sends with EAGAIN to simulate saturated buffer
-                      console.log(`Mock socket: buffer overflow at ${elapsedTime}ms (EAGAIN)`);
-                      const error = new Error('Resource temporarily unavailable');
-                      error.code = 'EAGAIN';
-                      error.errno = -11;
+                      // First 2 seconds: reject all sends to simulate saturated buffer
+                      console.log(`Mock socket: buffer overflow at ${elapsedTime}ms (congestion)`);
+                      const error = internalError('CONGESTION', 'congestion');
                       if (callback) {
                         process.nextTick(() => callback(error));
                       }
