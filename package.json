@@ -18,10 +18,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git://github.com/brightcove/hot-shots.git"
+    "url": "git://github.com/bdeitte/hot-shots.git"
   },
   "bugs": {
-    "url": "https://github.com/brightcove/hot-shots/issues"
+    "url": "https://github.com/bdeitte/hot-shots/issues"
   },
   "directories": {
     "lib": "./lib/"
