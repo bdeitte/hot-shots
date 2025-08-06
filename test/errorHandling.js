@@ -3,6 +3,15 @@ const os = require('os');
 const process = require('process');
 const helpers = require('./helpers/helpers.js');
 
+/**
+ * Create an internal error with a code and message.
+ */
+function internalError(code, msg) {
+  const e = new Error(msg);
+  e.code = code;
+  return e;
+}
+
 const closeAll = helpers.closeAll;
 const testTypes = helpers.testTypes;
 const createServer = helpers.createServer;
@@ -591,6 +600,294 @@ describe('#errorHandling', () => {
                   done();
                 }, 5);
               }, 5);
+            });
+          });
+
+          describe('#udsRetry', () => {
+            /**
+             * Create UDS test server
+             * @param {string} socketPath Path to socket
+             * @param {Function} messageHandler Message handler function
+             * @return {Object} Server object with cleanup function
+             */
+            function createUdsTestServer(socketPath, messageHandler) {
+              const fs = require('fs'); // eslint-disable-line global-require
+              let unixDgram;
+              try {
+                unixDgram = require('unix-dgram'); // eslint-disable-line global-require
+              } catch (e) {
+                return null;
+              }
+
+              // Clean up socket file if it exists
+              try {
+                fs.unlinkSync(socketPath); // eslint-disable-line no-sync
+              } catch (e) {
+                /* ignore */
+              }
+
+              const testServer = unixDgram.createSocket('unix_dgram');
+              testServer.bind(socketPath);
+              if (messageHandler) {
+                testServer.on('message', messageHandler);
+              }
+
+              return {
+                server: testServer,
+                cleanup: () => {
+                  testServer.close();
+                  try {
+                    fs.unlinkSync(socketPath); // eslint-disable-line no-sync
+                  } catch (e) {
+                    /* ignore */
+                  }
+                }
+              };
+            }
+
+            it('should retry UDS send with exponential backoff on failure', (done) => {
+              const path = require('path'); // eslint-disable-line global-require
+              const socketPath = path.join(__dirname, 'test-retry.sock');
+              const maxRetries = 2;
+              const initialDelay = 50;
+
+              const udsServer = createUdsTestServer(socketPath);
+
+              if (!udsServer) {
+                return done();
+              }
+
+              // Mock unix-dgram socket to fail first `maxRetries` attempts, then succeed
+              const unixDgramModule = require('unix-dgram'); // eslint-disable-line global-require
+              const realCreateSocket = unixDgramModule.createSocket;
+              let sendAttempts = 0;
+              unixDgramModule.createSocket = function(type) {
+                const realSocket = realCreateSocket(type);
+                const originalSend = realSocket.send.bind(realSocket);
+                realSocket.send = function(buffer, callback) {
+                  sendAttempts++;
+                  if (sendAttempts <= maxRetries) {
+                    const error = internalError('CONGESTION', 'congestion');
+                    return process.nextTick(() => callback(error));
+                  }
+                  // Success on final attempt
+                  return originalSend(buffer, callback);
+                };
+                return realSocket;
+              };
+
+              const client = statsd = createHotShotsClient({
+                protocol: 'uds',
+                path: socketPath,
+                udsRetryOptions: {
+                  retries: maxRetries,
+                  retryDelayMs: initialDelay,
+                  backoffFactor: 2
+                },
+                maxBufferSize: 1
+              }, 'client');
+
+              const startTime = Date.now();
+              client.timing('test.timer', 100, (err) => {
+                const elapsedTime = Date.now() - startTime;
+                assert.ok(elapsedTime >= (initialDelay + (initialDelay * 2)));
+                assert.ok(!err);
+                // restore
+                unixDgramModule.createSocket = realCreateSocket;
+                udsServer.cleanup();
+                done();
+              });
+            });
+
+            it('should fail after exhausting all retries', (done) => {
+              const path = require('path'); // eslint-disable-line global-require
+              const socketPath = path.join(__dirname, 'test-retry-fail.sock');
+
+              // Create a UDS server so connect() succeeds; we'll force send() to fail and then clean up.
+              const udsServer = createUdsTestServer(socketPath);
+              if (!udsServer) {
+               return done();
+              }
+
+              // Mock unix-dgram socket to always fail
+              const unixDgramModule = require('unix-dgram'); // eslint-disable-line global-require
+              const realCreateSocket = unixDgramModule.createSocket;
+              unixDgramModule.createSocket = function(type) {
+                const realSocket = realCreateSocket(type);
+                realSocket.send = function(buffer, callback) {
+                  const error = internalError('CONGESTION', 'congestion');
+                  return process.nextTick(() => callback(error));
+                };
+                return realSocket;
+              };
+
+              const client = statsd = createHotShotsClient({
+                protocol: 'uds',
+                path: socketPath,
+                udsRetryOptions: {
+                  retries: 5,
+                },
+                maxBufferSize: 1,
+                errorHandler: (err) => {
+                  assert.ok(err);
+                  // restore
+                  unixDgramModule.createSocket = realCreateSocket;
+                  // clean up the uds server to avoid hanging the test
+                  udsServer.cleanup();
+                  done();
+                }
+              }, 'client');
+
+              client.timing('test.timer', 100);
+            });
+
+            it('should not retry when udsRetries is 0', (done) => {
+              const path = require('path'); // eslint-disable-line global-require
+              const socketPath = path.join(__dirname, 'test-no-retry.sock');
+
+              // Don't create a server to simulate connection failure
+              let errorCount = 0;
+              const client = statsd = createHotShotsClient({
+                protocol: 'uds',
+                path: socketPath,
+                udsRetryOptions: {
+                  retries: 0
+                },
+                maxBufferSize: 1,
+                errorHandler: (err) => {
+                  errorCount++;
+                  assert.ok(err);
+                  assert.strictEqual(errorCount, 1);
+                  done();
+                }
+              }, 'client');
+
+              client.timing('test.timer', 100);
+            });
+
+            it('should handle slow server that causes buffer overflow', function(done) {
+              this.timeout(8000);
+              const path = require('path'); // eslint-disable-line global-require
+              const socketPath = path.join(__dirname, 'test-buffer-overflow.sock');
+
+              const receivedPackets = [];
+              const testStartTime = Date.now();
+              let clientErrors = 0;
+              let cleanedUp = false;
+              let successfulSends = 0;
+              let realCreateSocket;
+              let unixDgramModule;
+
+              /**
+               * Clean up test server
+               */
+              function safeCleanup() {
+                if (cleanedUp) {
+                  return;
+                }
+                cleanedUp = true;
+                udsServer.cleanup();
+                // restore unix-dgram createSocket if we patched it
+                try {
+                  if (unixDgramModule && realCreateSocket) {
+                    unixDgramModule.createSocket = realCreateSocket;
+                  }
+                } catch (e) {
+                  /* ignore */
+                }
+              }
+
+              // Create a normal server that accepts all packets
+              const udsServer = createUdsTestServer(socketPath, (msg) => {
+                if (cleanedUp) {
+                  return;
+                }
+                receivedPackets.push(msg.toString());
+                console.log(`Server received packet: ${receivedPackets.length}`);
+              });
+
+              if (!udsServer) {
+                return done();
+              }
+
+              // Monkey-patch unix-dgram socket to simulate buffer overflow (EAGAIN) at the socket level
+              // so that the transport's retry logic is exercised instead of being bypassed.
+              try {
+                // eslint-disable-next-line global-require
+                unixDgramModule = require('unix-dgram');
+                realCreateSocket = unixDgramModule.createSocket;
+                unixDgramModule.createSocket = function(type) {
+                  const realSocket = realCreateSocket(type);
+                  const originalSend = realSocket.send.bind(realSocket);
+                  realSocket.send = function(buffer, callback) {
+                    const elapsedTime = Date.now() - testStartTime;
+                    if (elapsedTime < 2000) {
+                      // First 2 seconds: reject all sends to simulate saturated buffer
+                      console.log(`Mock socket: buffer overflow at ${elapsedTime}ms (congestion)`);
+                      const error = internalError('CONGESTION', 'congestion');
+                      if (callback) {
+                        process.nextTick(() => callback(error));
+                      }
+                      return;
+                    }
+                    // After 2 seconds: allow all sends
+                    successfulSends++;
+                    console.log(`Mock socket: fast send #${successfulSends} at ${elapsedTime}ms (retried packet success)`);
+                    return originalSend(buffer, callback);
+                  };
+                  return realSocket;
+                };
+              } catch (e) {
+                // If unix-dgram is not available, skip
+                return done();
+              }
+
+              const client = statsd = createHotShotsClient({
+                protocol: 'uds',
+                path: socketPath,
+                udsRetryOptions: {
+                  retries: 20,
+                  retryDelayMs: 150,
+                  maxRetryDelayMs: 800,
+                  backoffFactor: 2
+                },
+                maxBufferSize: 1,
+                errorHandler: (err) => {
+                  clientErrors++;
+                  console.log(`Client error #${clientErrors}: ${err.message || err.code || err}`);
+                }
+              }, 'client');
+
+              // Send a single packet; it should retry until allowed after 2s
+              console.log('Sending a single packet that should retry until success...');
+              client.gauge('test.single.metric', 42);
+
+              // Poll every 500ms so we can quit as soon as success criteria are met
+              let finished = false;
+              const poll = setInterval(() => {
+                if (finished) { return; }
+                if (successfulSends === 1 && receivedPackets.length === 1) {
+                  finished = true;
+                  clearInterval(poll);
+                  clearTimeout(failSafe);
+                  console.log('Early success: single packet delivered after retries.');
+                  safeCleanup();
+                  done();
+                }
+              }, 500);
+
+              // Failsafe to end the test even if polling never detects success
+              const failSafe = setTimeout(() => {
+                if (finished) { return; }
+                console.log(`Test completed: ${receivedPackets.length} packets received, ${clientErrors} client errors, ${successfulSends} successful sends after recovery`);
+                assert.strictEqual(successfulSends, 1, 'Should succeed exactly once after recovery period');
+                assert.strictEqual(receivedPackets.length, 1, 'Server should receive exactly one packet');
+                console.log('Test passed: Buffer overflow simulation and recovery demonstrated');
+                finished = true;
+                clearInterval(poll);
+                safeCleanup();
+                done();
+              }, 5000);
             });
           });
         });
