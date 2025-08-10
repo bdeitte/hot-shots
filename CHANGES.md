@@ -1,6 +1,8 @@
 CHANGELOG
 =========
 
+* @bdeitte Revert change to improve memory/performance of overrideTags and add more tests
+
 ## 11.1.0 (2024-10-22)
 
 * @bdeitte Add more tests for uncovered areas
