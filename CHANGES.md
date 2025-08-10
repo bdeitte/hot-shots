@@ -1,7 +1,7 @@
 CHANGELOG
 =========
 
-## 11.1.2 (2025-8-10)
+## 11.1.1 (2025-8-10)
 
 * @bdeitte Revert change to improve memory/performance of overrideTags and add more tests
 * @bdeitte Upgrade node-unix-dram to support latest Node
