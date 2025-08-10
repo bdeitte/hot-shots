@@ -1,16 +1,19 @@
 CHANGELOG
 =========
 
-* @bdeitte Revert change to improve memory/performance of overrideTags and add more tests
+## 11.1.2 (2025-8-10)
 
-## 11.1.0 (2024-10-22)
+* @bdeitte Revert change to improve memory/performance of overrideTags and add more tests
+* @bdeitte Upgrade node-unix-dram to support latest Node
+
+## 11.1.0 (2025-6-22)
 
 * @bdeitte Add more tests for uncovered areas
 * @bdeitte When DD_AGENT_HOST is set to empty string, consider it to be undefined
 * @bdeitte Set max size for maxBufferSize to 8192 when using UDS
 * @bdeitte Improve memory/performance of overrideTags
 
-## 11.0.0 (2024-10-20)
+## 11.0.0 (2025-6-20)
 
 * @bdeitte Stop testing much older Node.js versions and test latest: now testing Node 16 to Node 24
 * @bdeitte Enable buffering by default (as 8192) for UDS connections
