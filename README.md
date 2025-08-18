@@ -148,23 +148,6 @@ The check method has the following API:
 
   // Check: sends a service check (DataDog only)
   client.check('service.up', client.CHECKS.OK, { hostname: 'host-1' }, ['foo', 'bar'])
-```
-
-### UDS (Unix Domain Socket) with Retry Support
-
-```javascript
-  // UDS client with automatic retry on packet failures
-  var client = new StatsD({
-      protocol: 'uds',
-      path: '/var/run/datadog/dsd.socket',
-      udsRetryOptions: {
-        // Retry options (all optional, showing defaults):
-        // retries: 3,           // Number of retry attempts (set to 0 to disable)
-        // retryDelayMs: 100,    // Initial delay in ms
-        // maxRetryDelayMs: 1000,// Maximum delay cap in ms
-        // backoffFactor: 2      // Exponential backoff multiplier
-      }
-  });
 
   // Incrementing multiple items
   client.increment(['these', 'are', 'different', 'stats']);
@@ -242,6 +225,19 @@ The check method has the following API:
   // from doing anything more.
   client.close(function(err) {
     console.log('The close did not work quite right: ', err);
+  });
+
+  // UDS client with automatic retry on packet failures
+  var client = new StatsD({
+      protocol: 'uds',
+      path: '/var/run/datadog/dsd.socket',
+      udsRetryOptions: {
+        // Retry options (all optional, showing defaults):
+        // retries: 3,           // Number of retry attempts (set to 0 to disable)
+        // retryDelayMs: 100,    // Initial delay in ms
+        // maxRetryDelayMs: 1000,// Maximum delay cap in ms
+        // backoffFactor: 2      // Exponential backoff multiplier
+      }
   });
 ```
 
