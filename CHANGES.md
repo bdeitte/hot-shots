@@ -1,6 +1,10 @@
 CHANGELOG
 =========
 
+## 11.2.0 (2025-8-23)
+
+* @manishrjain Add retry mechanism for UDS with udsRetryOptions
+
 ## 11.1.1 (2025-8-10)
 
 * @bdeitte Revert change to improve memory/performance of overrideTags and add more tests
