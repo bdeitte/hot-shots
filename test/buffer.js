@@ -100,6 +100,63 @@ describe('#buffer', () => {
           done();
         });
       });
+
+      it('should never allow buffer to exceed maxBufferSize', done => {
+        const maxSize = 100;
+        const receivedBatches = [];
+        let allMessagesSent = false;
+        let doneCalledOnce = false;
+
+        server = createServer(serverType, opts => {
+          statsd = createHotShotsClient(Object.assign(opts, {
+            maxBufferSize: maxSize,
+            bufferFlushInterval: 10000, // long interval so we control flushing
+          }), clientType);
+
+          // Send multiple messages that would exceed maxBufferSize if not flushed properly
+          // Each message is roughly 20-25 bytes
+          for (let i = 0; i < 10; i++) {
+            statsd.increment(`test.metric.${i}`, 1);
+            // Check buffer size after each enqueue - this is the key test
+            const bufferSize = statsd.bufferHolder.buffer.length;
+            assert.strictEqual(
+              bufferSize <= maxSize,
+              true,
+              `Buffer size ${bufferSize} exceeded maxBufferSize ${maxSize} after message ${i}`
+            );
+          }
+
+          // Force a final flush to ensure all messages are sent
+          allMessagesSent = true;
+          statsd.flushQueue();
+        });
+
+        server.on('metrics', metrics => {
+          receivedBatches.push(metrics);
+          // Note: For TCP, multiple client flushes can arrive in a single server 'data' event
+          // because TCP is a stream protocol. The important thing is that the CLIENT buffer
+          // never exceeds maxBufferSize (verified above), which prevents fragmentation issues
+          // with the Datadog agent.
+
+          // Once we've sent all messages and received at least one batch, verify results
+          if (allMessagesSent && !doneCalledOnce) {
+            doneCalledOnce = true;
+            // Give a small delay to ensure all batches have arrived
+            setTimeout(() => {
+              // Verify all 10 metrics were sent
+              const allMetrics = receivedBatches.join('\n');
+              for (let i = 0; i < 10; i++) {
+                assert.strictEqual(
+                  allMetrics.includes(`test.metric.${i}:1|c`),
+                  true,
+                  `Missing metric test.metric.${i}`
+                );
+              }
+              done();
+            }, 50);
+          }
+        });
+      });
     });
   });
 });
