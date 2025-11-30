@@ -1,6 +1,10 @@
 CHANGELOG
 =========
 
+## 11.3.0 (2025-11-30)
+
+* @bdeitte Revert some buffering code to try to fix tag duplication issues seen with Datadog
+
 ## 11.2.0 (2025-8-23)
 
 * @manishrjain Add retry mechanism for UDS with udsRetryOptions
@@ -15,14 +19,14 @@ CHANGELOG
 * @bdeitte Add more tests for uncovered areas
 * @bdeitte When DD_AGENT_HOST is set to empty string, consider it to be undefined
 * @bdeitte Set max size for maxBufferSize to 8192 when using UDS
-* @bdeitte Improve memory/performance of overrideTags
+* @bdeitte Improve memory/performance of overrideTags (reverted in 11.1.1)
 
 ## 11.0.0 (2025-6-20)
 
 * @bdeitte Stop testing much older Node.js versions and test latest: now testing Node 16 to Node 24
 * @bdeitte Enable buffering by default (as 8192) for UDS connections
 * @bdeitte Stop adding extra newline in buffering cases where it's not needed
-* @bdeitte Flush buffering earlier when possible
+* @bdeitte Flush buffering earlier when possible (reverted in 11.3.0)
 * @bdeitte Add CLAUDE.md for easlier Claude usage
 * @bdeitte Ensure client.close() does not throws errors when mock: true is set
 
