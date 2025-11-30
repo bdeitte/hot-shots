@@ -36,13 +36,24 @@ describe('#statsFunctions', () => {
             });
           });
 
-          it(`should send proper ${statFunction.name} format with tags`, done => {
+          it(`should send proper ${statFunction.name} format with array tags`, done => {
             server = createServer(serverType, opts => {
               statsd = createHotShotsClient(opts, clientType);
               statsd[statFunction.name]('test', 42, ['foo', 'bar', 'gtag:gvalue1', 'gtag:gvalue2']);
             });
             server.on('metrics', metrics => {
               assert.strictEqual(metrics, `test:${statFunction.sign}42|${statFunction.unit}|#gtag:gvalue1,gtag:gvalue2,foo,bar${metricsEnd}`);
+              done();
+            });
+          });
+
+          it(`should send proper ${statFunction.name} format with object tags`, done => {
+            server = createServer(serverType, opts => {
+              statsd = createHotShotsClient(opts, clientType);
+              statsd[statFunction.name]('test', 42, { gtag:'gvalue1', gtag2:'gvalue2' });
+            });
+            server.on('metrics', metrics => {
+              assert.strictEqual(metrics, `test:${statFunction.sign}42|${statFunction.unit}|#gtag:gvalue1,gtag2:gvalue2${metricsEnd}`);
               done();
             });
           });

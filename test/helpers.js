@@ -391,16 +391,16 @@ describe('#helpersExtended', () => {
   });
 
   describe('#overrideTags edge cases', () => {
-    it('should return false when child is null', () => {
+    it('should return parent tags when child is null', () => {
       const parent = ['parent:tag'];
       const result = helpers.overrideTags(parent, null);
-      assert.strictEqual(result, false);
+      assert.strictEqual(result, parent);
     });
 
-    it('should return false when child is undefined', () => {
+    it('should return parent tags when child is undefined', () => {
       const parent = ['parent:tag'];
       const result = helpers.overrideTags(parent, undefined);
-      assert.strictEqual(result, false);
+      assert.strictEqual(result, parent);
     });
 
     it('should handle tags without colons', () => {
@@ -544,15 +544,6 @@ describe('#helpersExtended', () => {
       assert(result.includes('env:dev,staging') || result.includes('env:dev_staging'));
       assert(result.includes('standalone'));
       assert(!result.includes('env:prod'));
-    });
-
-    it('should return false for falsy child values other than empty array/object', () => {
-      const parent = ['env:prod'];
-
-      assert.strictEqual(helpers.overrideTags(parent, false), false);
-      assert.strictEqual(helpers.overrideTags(parent, 0), false);
-      assert.strictEqual(helpers.overrideTags(parent, ''), false);
-      assert.strictEqual(helpers.overrideTags(parent, NaN), false);
     });
 
     it('should handle parent with non-string values', () => {

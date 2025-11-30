@@ -52,7 +52,11 @@ function closeAll(server, statsd, allowErrors, done) {
     statsd.close(() => {
       try {
         if (statsd.hasOwnProperty('protocol') && statsd.protocol === UDS) {
-          server.close(() => { }); // eslint-disable-line no-empty-function
+          server.close((err) => {
+            if (err) {
+              console.log('Error on close:', err);
+            }
+          });
           // this one is synchronous
           done();
         }
@@ -227,7 +231,7 @@ function createServer(serverType, callback) {
  * @param {*} clientType
  */
 function createHotShotsClient(args, clientType) {
-  if (args.protocol === UDS && ! args.maxBufferSize) {
+  if (args.protocol === UDS && args.maxBufferSize === undefined) {
     args.maxBufferSize = 1; // use a buffer like normal but shrink to get messages early
   }
    /* eslint-disable require-jsdoc */

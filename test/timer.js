@@ -102,6 +102,7 @@ describe('#timer', () => {
       const time = stat.split(/:|\|/)[1];
 
       assert.strictEqual(name, 'name-thingy');
+      console.log('User time: ' + time);
       assert.ok(parseFloat(time) >= 99);
       assert.ok(parseFloat(time) < (100 + TIMER_BUFFER));
     });
