@@ -3,7 +3,7 @@ CHANGELOG
 
 ## 11.3.0 (2025-11-30)
 
-* @bdeitte Revert some buffering code to try to fix tag duplication issues seen with Datadog
+* @bdeitte Revert some buffering code to fix tag duplication issue seen with Datadog
 
 ## 11.2.0 (2025-8-23)
 
