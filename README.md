@@ -291,7 +291,7 @@ If you're having issues with metrics not being sent or want to understand what h
 in detail, you can enable debug logging using Node.js's built-in `NODE_DEBUG` environment variable:
 
 ```bash
-+NODE_DEBUG=hot-shots node your-app.js
+NODE_DEBUG=hot-shots node your-app.js
 ```
 
 ## Unix domain socket support
