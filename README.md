@@ -179,6 +179,11 @@ The check method has the following API:
   // Timing: also accepts a Date object of which the difference is calculated
   client.timing('response_time', new Date());
 
+  // Timing: measuring elapsed time with Date.now()
+  var startTime = Date.now();
+  // ... your code here ...
+  client.timing('response_time', Date.now() - startTime);
+
   // Timer: Returns a function that you call to record how long the first
   // parameter takes to execute (in milliseconds) and then sends that value
   // using 'client.timing'.
@@ -279,6 +284,15 @@ If you get an error like `Error sending hot-shots message: Error: congestion` wi
 it is probably because you are sending large volumes of metrics to a single agent/ server.
 This error only arises when using the UDS protocol and means that packages are being dropped.
 Take a look at the [Datadog docs](https://docs.datadoghq.com/developers/dogstatsd/high_throughput/?#over-uds-unix-domain-socket) for some tips on tuning your connection.
+
+## Debugging
+
+If you're having issues with metrics not being sent or want to understand what hot-shots is doing
+in detail, you can enable debug logging using Node.js's built-in `NODE_DEBUG` environment variable:
+
+```bash
++NODE_DEBUG=hot-shots node your-app.js
+```
 
 ## Unix domain socket support
 
