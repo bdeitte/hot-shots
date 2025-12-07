@@ -1,7 +1,9 @@
 CHANGELOG
 =========
 
-Add debug logging that can be enabled with "NODE_DEBUG=hot-shots"
+## 11.4.0 (2025-12-7)
+
+* @bdeitte Add debug logging that can be enabled with "NODE_DEBUG=hot-shots"
 
 ## 11.3.0 (2025-11-30)
 
