@@ -1,6 +1,8 @@
 CHANGELOG
 =========
 
+Add debug logging that can be enabled with "NODE_DEBUG=hot-shots"
+
 ## 11.3.0 (2025-11-30)
 
 * @bdeitte Revert some buffering code to fix tag duplication issue seen with Datadog
