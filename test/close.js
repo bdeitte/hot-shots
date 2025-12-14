@@ -116,6 +116,32 @@ describe('#close', () => {
           socketRef.close();
         });
       });
+
+      it('should handle close when errorHandler is defined but socket is null', done => {
+        server = createServer(serverType, opts => {
+          statsd = createHotShotsClient(Object.assign(opts, {
+            errorHandler() {
+              assert.fail('errorHandler should not be called');
+            }
+          }), clientType);
+
+          // save the socket reference to close it later
+          const socketRef = statsd.socket;
+
+          // simulate a scenario where socket becomes null
+          statsd.socket = null;
+
+          // this should not throw an error
+          statsd.close(() => {
+            // cleanup socket
+            if (socketRef) {
+              socketRef.close();
+            }
+            server.close();
+            done();
+          });
+        });
+      });
     });
   });
 });

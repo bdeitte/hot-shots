@@ -38,6 +38,20 @@ describe('#event', () => {
         });
       });
 
+      it('should send proper event format for title with global prefix and suffix', done => {
+        server = createServer(serverType, opts => {
+          statsd = createHotShotsClient(Object.assign(opts, {
+            prefix: 'prefix.',
+            suffix: '.suffix',
+          }), clientType);
+          statsd.event('event.title');
+        });
+        server.on('metrics', event => {
+          assert.strictEqual(event, `_e{25,11}:prefix.event.title.suffix|event.title${metricEnd}`);
+          done();
+        });
+      });
+
       it('should send proper event format for title, text, and options', done => {
         const date = new Date();
         server = createServer(serverType, opts => {
