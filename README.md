@@ -69,6 +69,8 @@ Parameters (specified as one object passed into hot-shots):
   * `maxRetryDelayMs`: Maximum delay in milliseconds between retry attempts (caps exponential backoff). Defaults to `1000`.
   * `backoffFactor`: Exponential backoff multiplier for retry delays. Defaults to `2`.
 * `udpSocketOptions`: Used only when the protocol is `udp`. Specify the options passed into dgram.createSocket(). Defaults to `{ type: 'udp4' }`
+* `includeDatadogTelemetry`: Enable client-side telemetry to track metrics about the client itself. This helps diagnose high-throughput metric delivery issues. Telemetry metrics are prefixed with `datadog.dogstatsd.client.` and are not billed as custom metrics. `default: false`. See [Client-Side Telemetry](#client-side-telemetry) for details.
+* `telemetryFlushInterval`: When telemetry is enabled, how often (in ms) to send telemetry metrics. `default: 10000`
 
 ### StatsD methods
 All StatsD methods other than `event`, `close`, and `check` have the same API:
@@ -257,6 +259,45 @@ Some of the functionality mentioned above is specific to DogStatsD or Telegraf. 
 * histogram method- DogStatsD or Telegraf
 * event method- DogStatsD
 * check method- DogStatsD
+* includeDatadogTelemetry parameter- DogStatsD
+
+## Client-Side Telemetry
+
+When `includeDatadogTelemetry` is enabled, the client automatically sends telemetry metrics about itself to help diagnose metric delivery issues in high-throughput scenarios. This feature matches the behavior of official Datadog clients (Go, Python, etc.).
+
+**Note:** Telemetry is automatically disabled when using `mock: true`, `telegraf: true`, or in child clients.
+
+### Telemetry Metrics
+
+The following metrics are sent every `telemetryFlushInterval` milliseconds (default: 10 seconds):
+
+| Metric | Description |
+|--------|-------------|
+| `datadog.dogstatsd.client.metrics` | Total number of metrics sent |
+| `datadog.dogstatsd.client.metrics_by_type` | Metrics broken down by type (gauge, count, set, timing, histogram, distribution) |
+| `datadog.dogstatsd.client.events` | Total number of events sent |
+| `datadog.dogstatsd.client.service_checks` | Total number of service checks sent |
+| `datadog.dogstatsd.client.bytes_sent` | Total bytes successfully sent |
+| `datadog.dogstatsd.client.bytes_dropped` | Total bytes dropped |
+| `datadog.dogstatsd.client.packets_sent` | Total packets successfully sent |
+| `datadog.dogstatsd.client.packets_dropped` | Total packets dropped |
+
+### Telemetry Tags
+
+All telemetry metrics include these tags:
+* `client:nodejs` - Identifies the hot-shots client
+* `client_version:<version>` - The hot-shots version
+* `client_transport:<protocol>` - The transport protocol (udp, tcp, uds, stream)
+
+### Example
+
+```javascript
+var client = new StatsD({
+  host: 'localhost',
+  includeDatadogTelemetry: true,
+  telemetryFlushInterval: 10000  // Optional, default is 10 seconds
+});
+```
 
 ## Errors
 

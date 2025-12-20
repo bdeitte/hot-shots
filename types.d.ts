@@ -40,6 +40,8 @@ declare module "hot-shots" {
       maxRetryDelayMs?: number;
       backoffFactor?: number;
     };
+    includeDatadogTelemetry?: boolean;
+    telemetryFlushInterval?: number;
   }
 
   export interface ChildClientOptions {

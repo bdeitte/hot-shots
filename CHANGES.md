@@ -1,13 +1,15 @@
 CHANGELOG
 =========
 
+* @bdeitte Add client-side telemetry support with `includeDatadogTelemetry` option (disabled by default and in beta)
+
 ## 12.0.0 (2025-12-16)
 
 * @bdeitte event calls now use prefix and suffix
 * @bdeitte mock mode no longer creates a socket
 * @bdeitte using an IP no longer invokes DNS lookup
 * @bdeitte client close no longer fails when errorHandler is defined but socket is null
-* @bdeitte tags ending with '\' no longer breaks telegraph
+* @bdeitte tags ending with '\\' no longer breaks telegraph
 
 ## 11.4.0 (2025-12-7)
 
