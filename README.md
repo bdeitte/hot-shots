@@ -4,16 +4,17 @@ A Node.js client for [Etsy](http://etsy.com)'s [StatsD](https://github.com/etsy/
 
 This project was originally a fork off of [node-statsd](https://github.com/sivy/node-statsd).  This project
 includes all changes in the latest node-statsd and many additional changes, including:
+* uds (Unix domain socket) protocol support
+* raw stream protocol support
 * TypeScript types
 * Telegraf support
 * events
 * child clients
 * tcp protocol support
-* uds (Unix domain socket) protocol support
-* raw stream protocol support
 * mock mode
 * asyncTimer
 * asyncDistTimer
+* debug logging
 * much more, including many bug fixes
 
 You can read about all changes in [the changelog](CHANGES.md).
@@ -39,8 +40,8 @@ Parameters (specified as one object passed into hot-shots):
 * `cacheDns`:    Caches dns lookup to *host* for *cacheDnsTtl*, only used
   when protocol is `udp`, `default: false`
 * `cacheDnsTtl`: time-to-live of dns lookups in milliseconds, when *cacheDns* is enabled. `default: 60000`
-* `mock`:        Create a mock StatsD instance, sending no stats to
-  the server and allowing data to be read from mockBuffer.  Note that
+* `mock`:        Create a mock StatsD instance, using a mock transport that doesn't create real sockets.
+  Stats are not sent to the server but can be read from mockBuffer for testing.  Note that
   mockBuffer will keep growing, so only use for testing or clear out periodically. `default: false`
 * `globalTags`:  Tags that will be added to every metric. Can be either an object or list of tags. `default: {}`.
 * `includeDataDogTags`: Whether to include DataDog tags to the global tags. `default: true`. The following *Datadog* tags are appended to `globalTags` from the corresponding environment variable if the latter is set:

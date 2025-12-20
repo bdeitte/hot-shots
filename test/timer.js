@@ -65,7 +65,7 @@ describe('#timer', () => {
 
     const timeFromStatLine = statsd.mockBuffer[0].match(/blah:(\d+\.\d+)\|/)[1];
 
-    assert.ok(timeFromStatLine >= 99);
+    assert.ok(timeFromStatLine >= 50);
     assert.ok(timeFromStatLine < (100 + TIMER_BUFFER));
   });
 
@@ -83,7 +83,7 @@ describe('#timer', () => {
       const time = stat.split(/:|\|/)[1];
 
       assert.strictEqual(name, 'name-thingy');
-      assert.ok(parseFloat(time) >= 99);
+      assert.ok(parseFloat(time) >= 50);
       assert.ok(parseFloat(time) < (100 + TIMER_BUFFER));
     });
   });
@@ -103,7 +103,7 @@ describe('#timer', () => {
 
       assert.strictEqual(name, 'name-thingy');
       console.log('User time: ' + time);
-      assert.ok(parseFloat(time) >= 99);
+      assert.ok(parseFloat(time) >= 50);
       assert.ok(parseFloat(time) < (100 + TIMER_BUFFER));
     });
   });

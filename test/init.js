@@ -270,6 +270,15 @@ describe('#init', () => {
     assert.ok(statsd.mock);
   });
 
+  it('should create a mock transport when mock mode is enabled', () => {
+    statsd = createHotShotsClient({ mock: true }, clientType);
+    assert.ok(statsd.mock);
+    assert.ok(statsd.socket);
+    assert.strictEqual(statsd.socket.type, 'mock');
+    assert.strictEqual(typeof statsd.socket.send, 'function');
+    assert.strictEqual(typeof statsd.socket.close, 'function');
+  });
+
   it('should create a socket variable that is an instance of dgram.Socket', () => {
     statsd = createHotShotsClient({}, clientType);
     assert.strictEqual(statsd.socket.type, 'udp');

@@ -103,5 +103,6 @@ The project uses Mocha with 5-second timeouts. Tests are organized by feature:
 - TypeScript definitions in types.d.ts must be updated for API changes
 - Constructor parameter expansion is deprecated - use options object
 - Mock mode available for testing (prevents actual metric sending)
+- Add debug logging that can be enabled with "NODE_DEBUG=hot-shots"
 - Updates should be noted in CHANGES.md
 - API changes should be noted in README.md

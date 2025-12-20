@@ -188,6 +188,31 @@ describe('#helpersExtended', () => {
       const result = helpers.sanitizeTags(undefined);
       assert.strictEqual(result, 'undefined');
     });
+
+    it('should replace trailing backslash for Telegraf', () => {
+      const result = helpers.sanitizeTags('bar\\', true);
+      assert.strictEqual(result, 'bar_');
+    });
+
+    it('should not replace trailing backslash for StatsD (default)', () => {
+      const result = helpers.sanitizeTags('bar\\');
+      assert.strictEqual(result, 'bar\\');
+    });
+
+    it('should not replace backslashes in the middle for Telegraf', () => {
+      const result = helpers.sanitizeTags('ba\\r', true);
+      assert.strictEqual(result, 'ba\\r');
+    });
+
+    it('should handle multiple trailing backslashes for Telegraf', () => {
+      const result = helpers.sanitizeTags('bar\\\\', true);
+      assert.strictEqual(result, 'bar\\_');
+    });
+
+    it('should handle trailing backslash with other special chars for Telegraf', () => {
+      const result = helpers.sanitizeTags('tag:with|chars\\', true);
+      assert.strictEqual(result, 'tag_with_chars_');
+    });
   });
 
   describe('#overrideTags - exact results verification', () => {
