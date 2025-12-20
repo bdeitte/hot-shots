@@ -1,7 +1,7 @@
 {
   "name": "hot-shots",
   "description": "Node.js client for StatsD, DogStatsD, and Telegraf",
-  "version": "11.4.0",
+  "version": "12.0.0",
   "author": "Steve Ivy",
   "types": "./types.d.ts",
   "contributors": [
