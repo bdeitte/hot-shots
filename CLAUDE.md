@@ -14,6 +14,7 @@ hot-shots is a Node.js client library for StatsD, DogStatsD (Datadog), and Teleg
 - **lib/statsFunctions.js**: Core metric methods (timing, increment, gauge, etc.)
 - **lib/helpers.js**: Tag formatting, sanitization, and utility functions
 - **lib/constants.js**: Protocol constants and error codes
+- **lib/telemetry.js**: Client-side telemetry for DogStatsD (tracks metrics/bytes sent/dropped)
 - **index.js**: Main entry point (exports lib/statsd.js)
 - **types.d.ts**: TypeScript type definitions
 
@@ -40,7 +41,13 @@ npm run coverage          # Run tests with coverage report
 ```
 
 ### Linting
-The project uses ESLint 5.x with pretest hooks. All code must pass linting before tests run.
+The project uses ESLint 8.x with pretest hooks. All code must pass linting before tests run.
+
+Key linting rules to follow:
+- Use single quotes for strings (not double quotes or backticks for simple strings)
+- Always use curly braces for if/else blocks, even single-line ones
+- Ternary operators: put `?` and `:` at the end of lines, not the beginning
+- No trailing spaces or mixed indentation
 
 ### Running Single Tests
 ```bash
@@ -77,6 +84,13 @@ npx mocha test/specific-test.js --timeout 5000
 - Distribution metrics
 - Automatic DD_* environment variable tag injection
 - Unix Domain Socket support
+- Client-side telemetry (opt-in via `includeDatadogTelemetry`)
+
+### DogStatsD-Only Features Pattern
+Features specific to DogStatsD (not Telegraf) should:
+1. Check `this.telegraf` and throw/return error if true
+2. Be disabled in mock mode where appropriate
+3. Child clients should inherit parent behavior (e.g., share telemetry instance)
 
 ### Telegraf
 - Different tag separator format
@@ -91,6 +105,14 @@ The project uses Mocha with 5-second timeouts. Tests are organized by feature:
 - Error handling and edge cases
 - Child client functionality
 - Buffering and performance tests
+- Telemetry tests
+
+### Test Helpers
+Tests use helpers from `test/helpers/helpers.js`:
+- `createServer(serverType, callback)` - Creates a test server for the given protocol
+- `createHotShotsClient(opts, clientType)` - Creates a client ('client', 'child client', etc.)
+- `closeAll(server, statsd, allowErrors, done)` - Properly closes server and client in afterEach
+- `testTypes()` - Returns all protocol/client combinations for parameterized tests
 
 ## Dependencies
 
