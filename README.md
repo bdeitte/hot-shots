@@ -316,7 +316,7 @@ the uds feature.
 
 When `includeDatadogTelemetry` is enabled, the client automatically sends telemetry metrics about itself to help diagnose metric delivery issues in high-throughput scenarios. This feature matches the behavior of official Datadog clients (Go, Python, etc.).
 
-**Note:** Telemetry is automatically disabled when using `mock: true`, `telegraf: true`, or in child clients.
+Telemetry is automatically disabled when using `mock: true`, `telegraf: true`, or in child clients.
 
 ### Telemetry Metrics
 
@@ -332,6 +332,8 @@ The following metrics are sent every `telemetryFlushInterval` milliseconds (defa
 | `datadog.dogstatsd.client.bytes_dropped` | Total bytes dropped |
 | `datadog.dogstatsd.client.packets_sent` | Total packets successfully sent |
 | `datadog.dogstatsd.client.packets_dropped` | Total packets dropped |
+
+The `metric_dropped_on_receive` metric from the official Datadog clients is intentionally omitted. That metric tracks drops on an internal receive channel, which doesn't apply to hot-shots' architecture.
 
 ### Telemetry Tags
 
