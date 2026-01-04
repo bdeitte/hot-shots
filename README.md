@@ -260,6 +260,7 @@ Some of the functionality mentioned above is specific to DogStatsD or Telegraf. 
 * event method- DogStatsD
 * check method- DogStatsD
 * includeDatadogTelemetry parameter- DogStatsD
+* telemetryFlushInterval parameter- DogStatsD
 
 ## Errors
 
@@ -314,7 +315,7 @@ the uds feature.
 
 ## Datadog Telemetry
 
-When `includeDatadogTelemetry` is enabled, the client automatically sends telemetry metrics about itself to help diagnose metric delivery issues in high-throughput scenarios. This feature matches the behavior of official Datadog clients (Go, Python, etc.).
+When `includeDatadogTelemetry` is enabled, the client automatically sends telemetry metrics about itself to help diagnose metric delivery issues in high-throughput scenarios. This feature should matche the behavior of official Datadog clients as described in [the docs](https://docs.datadoghq.com/developers/dogstatsd/high_throughput/?tab=go#client-side-telemetry).
 
 Telemetry is automatically disabled when using `mock: true`, `telegraf: true`, or in child clients.
 
@@ -333,7 +334,7 @@ The following metrics are sent every `telemetryFlushInterval` milliseconds (defa
 | `datadog.dogstatsd.client.packets_sent` | Total packets successfully sent |
 | `datadog.dogstatsd.client.packets_dropped` | Total packets dropped |
 
-The `metric_dropped_on_receive` metric from the official Datadog clients is intentionally omitted. That metric tracks drops on an internal receive channel, which doesn't apply to hot-shots' architecture.
+The `metric_dropped_on_receive` from the official Datadog clients is intentionally omitted. That metric tracks drops on an internal receive channel, which doesn't apply to hot-shots' architecture. Also `bytes_dropped_queue` is omitted as this also didn't fit into how hot-shots works.
 
 ### Telemetry Tags
 

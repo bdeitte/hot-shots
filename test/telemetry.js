@@ -334,20 +334,6 @@ describe('#telemetry', () => {
       assert.strictEqual(telemetry.packetsDropped, 1);
       assert.strictEqual(telemetry.packetsDroppedWriter, 1);
     });
-
-    it('should track bytes dropped by queue', () => {
-      const telemetry = new Telemetry({
-        protocol: 'udp',
-        tagPrefix: '#',
-        tagSeparator: ','
-      });
-
-      telemetry.recordBytesDroppedQueue(75);
-      assert.strictEqual(telemetry.bytesDropped, 75);
-      assert.strictEqual(telemetry.bytesDroppedQueue, 75);
-      assert.strictEqual(telemetry.packetsDropped, 1);
-      assert.strictEqual(telemetry.packetsDroppedQueue, 1);
-    });
   });
 
   describe('telemetry flush', () => {
