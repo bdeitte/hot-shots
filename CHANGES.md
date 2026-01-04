@@ -1,6 +1,8 @@
 CHANGELOG
 =========
 
+## 12.1.0 (2026-1-4)
+
 * @bdeitte Add client-side telemetry support with `includeDatadogTelemetry` option (disabled by default and in beta) and telemetryFlushInterval
 
 ## 12.0.0 (2025-12-16)
