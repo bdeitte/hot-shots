@@ -82,6 +82,13 @@ declare module "hot-shots" {
     source_type_name?: string;
   }
 
+  export interface MetricOptions {
+    sampleRate?: number;
+    tags?: Tags;
+    /** Timestamp for the metric (DogStatsD only). Can be a Date or Unix timestamp in seconds. */
+    timestamp?: Date | number;
+  }
+
   export type StatsCb = (error?: Error, bytes?: number) => void;
 
   export class StatsD {
@@ -93,6 +100,7 @@ declare module "hot-shots" {
     increment(stat: string | string[], value: number, tags?: Tags, callback?: StatsCb): void;
     increment(stat: string | string[], value: number, callback?: StatsCb): void;
     increment(stat: string | string[], value: number, sampleRate?: number, callback?: StatsCb): void;
+    increment(stat: string | string[], value: number, options?: MetricOptions, callback?: StatsCb): void;
 
     decrement(stat: string): void;
     decrement(stat: string, tags?: Tags): void;
@@ -100,56 +108,67 @@ declare module "hot-shots" {
     decrement(stat: string | string[], value: number, tags?: Tags, callback?: StatsCb): void;
     decrement(stat: string | string[], value: number, callback?: StatsCb): void;
     decrement(stat: string | string[], value: number, sampleRate?: number, callback?: StatsCb): void;
+    decrement(stat: string | string[], value: number, options?: MetricOptions, callback?: StatsCb): void;
 
     timing(stat: string | string[], value: number | Date, sampleRate?: number, tags?: Tags, callback?: StatsCb): void;
     timing(stat: string | string[], value: number | Date, tags?: Tags, callback?: StatsCb): void;
     timing(stat: string | string[], value: number | Date, callback?: StatsCb): void;
     timing(stat: string | string[], value: number | Date, sampleRate?: number, callback?: StatsCb): void;
+    timing(stat: string | string[], value: number | Date, options?: MetricOptions, callback?: StatsCb): void;
 
     timer<P extends any[], R>(func: (...args: P) => R, stat: string | string[], sampleRate?: number, tags?: Tags, callback?: StatsCb): (...args: P) => R;
     timer<P extends any[], R>(func: (...args: P) => R, stat: string | string[], tags?: Tags, callback?: StatsCb): (...args: P) => R;
     timer<P extends any[], R>(func: (...args: P) => R, stat: string | string[], callback?: StatsCb): (...args: P) => R;
     timer<P extends any[], R>(func: (...args: P) => R, stat: string | string[], sampleRate?: number, callback?: StatsCb): (...args: P) => R;
+    timer<P extends any[], R>(func: (...args: P) => R, stat: string | string[], options?: MetricOptions, callback?: StatsCb): (...args: P) => R;
 
     asyncTimer<P extends any[], R>(func: (...args: P) => Promise<R>, stat: string | string[], sampleRate?: number, tags?: Tags, callback?: StatsCb): (...args: P) => Promise<R>;
     asyncTimer<P extends any[], R>(func: (...args: P) => Promise<R>, stat: string | string[], tags?: Tags, callback?: StatsCb): (...args: P) => Promise<R>;
     asyncTimer<P extends any[], R>(func: (...args: P) => Promise<R>, stat: string | string[], callback?: StatsCb): (...args: P) => Promise<R>;
     asyncTimer<P extends any[], R>(func: (...args: P) => Promise<R>, stat: string | string[], sampleRate?: number, callback?: StatsCb): (...args: P) => Promise<R>;
+    asyncTimer<P extends any[], R>(func: (...args: P) => Promise<R>, stat: string | string[], options?: MetricOptions, callback?: StatsCb): (...args: P) => Promise<R>;
 
     asyncDistTimer<P extends any[], R>(func: (...args: P) => Promise<R>, stat: string | string[], sampleRate?: number, tags?: Tags, callback?: StatsCb): (...args: P) => Promise<R>;
     asyncDistTimer<P extends any[], R>(func: (...args: P) => Promise<R>, stat: string | string[], tags?: Tags, callback?: StatsCb): (...args: P) => Promise<R>;
     asyncDistTimer<P extends any[], R>(func: (...args: P) => Promise<R>, stat: string | string[], callback?: StatsCb): (...args: P) => Promise<R>;
     asyncDistTimer<P extends any[], R>(func: (...args: P) => Promise<R>, stat: string | string[], sampleRate?: number, callback?: StatsCb): (...args: P) => Promise<R>;
+    asyncDistTimer<P extends any[], R>(func: (...args: P) => Promise<R>, stat: string | string[], options?: MetricOptions, callback?: StatsCb): (...args: P) => Promise<R>;
 
     histogram(stat: string | string[], value: number, sampleRate?: number, tags?: Tags, callback?: StatsCb): void;
     histogram(stat: string | string[], value: number, tags?: Tags, callback?: StatsCb): void;
     histogram(stat: string | string[], value: number, callback?: StatsCb): void;
     histogram(stat: string | string[], value: number, sampleRate?: number, callback?: StatsCb): void;
+    histogram(stat: string | string[], value: number, options?: MetricOptions, callback?: StatsCb): void;
 
     distribution(stat: string | string[], value: number, sampleRate?: number, tags?: Tags, callback?: StatsCb): void;
     distribution(stat: string | string[], value: number, tags?: Tags, callback?: StatsCb): void;
     distribution(stat: string | string[], value: number, callback?: StatsCb): void;
     distribution(stat: string | string[], value: number, sampleRate?: number, callback?: StatsCb): void;
+    distribution(stat: string | string[], value: number, options?: MetricOptions, callback?: StatsCb): void;
 
     gauge(stat: string | string[], value: number, sampleRate?: number, tags?: Tags, callback?: StatsCb): void;
     gauge(stat: string | string[], value: number, tags?: Tags, callback?: StatsCb): void;
     gauge(stat: string | string[], value: number, callback?: StatsCb): void;
     gauge(stat: string | string[], value: number, sampleRate?: number, callback?: StatsCb): void;
+    gauge(stat: string | string[], value: number, options?: MetricOptions, callback?: StatsCb): void;
 
     gaugeDelta(stat: string | string[], value: number, sampleRate?: number, tags?: Tags, callback?: StatsCb): void;
     gaugeDelta(stat: string | string[], value: number, tags?: Tags, callback?: StatsCb): void;
     gaugeDelta(stat: string | string[], value: number, callback?: StatsCb): void;
     gaugeDelta(stat: string | string[], value: number, sampleRate?: number, callback?: StatsCb): void;
+    gaugeDelta(stat: string | string[], value: number, options?: MetricOptions, callback?: StatsCb): void;
 
     set(stat: string | string[], value: number | string, sampleRate?: number, tags?: Tags, callback?: StatsCb): void;
     set(stat: string | string[], value: number | string, tags?: Tags, callback?: StatsCb): void;
     set(stat: string | string[], value: number | string, callback?: StatsCb): void;
     set(stat: string | string[], value: number | string, sampleRate?: number, callback?: StatsCb): void;
+    set(stat: string | string[], value: number | string, options?: MetricOptions, callback?: StatsCb): void;
 
     unique(stat: string | string[], value: number | string, sampleRate?: number, tags?: Tags, callback?: StatsCb): void;
     unique(stat: string | string[], value: number | string, tags?: Tags, callback?: StatsCb): void;
     unique(stat: string | string[], value: number | string, callback?: StatsCb): void;
     unique(stat: string | string[], value: number | string, sampleRate?: number, callback?: StatsCb): void;
+    unique(stat: string | string[], value: number | string, options?: MetricOptions, callback?: StatsCb): void;
 
     close(callback?: (error?: Error) => void): void;
 

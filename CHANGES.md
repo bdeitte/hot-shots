@@ -1,6 +1,13 @@
 CHANGELOG
 =========
 
+## 13.0.0 (unreleased)
+
+* @bdeitte Breaking: Prefix and suffix now automatically include period separators if needed. If you specify `prefix: 'myapp'`, it will be normalized to `'myapp.'`. Similarly, `suffix: 'prod'` becomes `'.prod'`. This ensures metrics like `myapp.request.time` instead of `myapprequest.time`. If your prefix/suffix already includes the period, no change is needed.
+* @bdeitte Auto-detect UDP socket type (udp4/udp6) based on host IP address. IPv6 addresses like `::1` will automatically use `udp6` sockets, fixing issues on Node.js 17+ where `localhost` may resolve to IPv6.
+* @bdeitte Add DogStatsD timestamp support via options object. Metric methods now accept an options object with `sampleRate`, `tags`, and `timestamp` properties. Timestamp can be a Date object or Unix seconds.
+* @bdeitte Add Sinon.js for fake timers in tests, speeding up DNS cache and UDP socket options tests
+
 ## 12.1.0 (2026-1-4)
 
 * @bdeitte Add client-side telemetry support with `includeDatadogTelemetry` option (disabled by default and in beta) and telemetryFlushInterval

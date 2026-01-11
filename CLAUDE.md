@@ -114,10 +114,46 @@ Tests use helpers from `test/helpers/helpers.js`:
 - `closeAll(server, statsd, allowErrors, done)` - Properly closes server and client in afterEach
 - `testTypes()` - Returns all protocol/client combinations for parameterized tests
 
+### Sinon Fake Timers
+Use Sinon fake timers to speed up tests that would otherwise wait for real delays (DNS cache TTL, timeouts, etc.):
+
+```javascript
+const sinon = require('sinon');
+let clock;
+
+afterEach(done => {
+  if (clock) {
+    clock.restore();
+    clock = null;
+  }
+  // ... other cleanup
+});
+
+it('should test something with timing', done => {
+  server = createServer(udpServerType, opts => {
+    // Install fake timers AFTER server is created (server uses real timers)
+    clock = sinon.useFakeTimers();
+
+    // ... setup client and test logic
+
+    clock.tick(1000);  // Advance time instantly instead of setTimeout
+    // ... assertions
+    done();
+  });
+});
+```
+
+Key points:
+- Install fake timers inside the `createServer` callback, after the server is ready
+- Restore the clock in `afterEach` to avoid affecting other tests
+- Use `clock.tick(ms)` to advance time instead of `setTimeout`
+
+See `test/udpDnsCacheTransport.js` and `test/udpSocketOptions.js` for examples.
+
 ## Dependencies
 
 - **Production**: No runtime dependencies (unix-dgram is optional)
-- **Development**: eslint, mocha, nyc for testing and linting
+- **Development**: eslint, mocha, nyc, sinon for testing and linting
 - **Optional**: unix-dgram for Unix Domain Socket support
 
 ## Important Notes
@@ -126,5 +162,5 @@ Tests use helpers from `test/helpers/helpers.js`:
 - Constructor parameter expansion is deprecated - use options object
 - Mock mode available for testing (prevents actual metric sending)
 - Add debug logging that can be enabled with "NODE_DEBUG=hot-shots"
-- Updates should be noted in CHANGES.md
+- Updates should be noted in CHANGES.md using the format: `* @username Description`. For breaking changes, prefix with `Breaking:` (e.g., `* @username BREAKING: Description`). Do not use bold section headers.
 - API changes should be noted in README.md

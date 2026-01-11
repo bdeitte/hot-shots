@@ -2,6 +2,7 @@ const assert = require('assert');
 const helpers = require('./helpers/helpers.js');
 const dns = require('dns');
 const dgram = require('dgram');
+const sinon = require('sinon');
 
 const closeAll = helpers.closeAll;
 const createServer = helpers.createServer;
@@ -48,8 +49,13 @@ describe('#udpDnsCacheTransport', () => {
   const originalDgramCreateSocket = dgram.createSocket;
   let server;
   let statsd;
+  let clock;
 
   afterEach(done => {
+    if (clock) {
+      clock.restore();
+      clock = null;
+    }
     dns.lookup = originalDnsLookup;
     dgram.createSocket = originalDgramCreateSocket;
     closeAll(server, statsd, false, done);
@@ -58,6 +64,7 @@ describe('#udpDnsCacheTransport', () => {
   describe('Sending first message', () => {
     it('should lookup dns once', done => {
       server = createServer(udpServerType, opts => {
+        clock = sinon.useFakeTimers();
         const socketMock = mockDgramSocket();
 
         statsd = createHotShotsClient(Object.assign(opts, {
@@ -73,14 +80,14 @@ describe('#udpDnsCacheTransport', () => {
 
         statsd.send('test title', {}, (error) => {
           assert.strictEqual(error, null);
-          setTimeout(() => {
-            assert.strictEqual(dnsLookupCount, 1);
-            assert.strictEqual(socketMock.sendCount, 1);
-            assert.strictEqual(socketMock.host, resolvedHostAddress);
-            assert.strictEqual(socketMock.buf.toString(), 'test title');
-            done();
-          }, 1000);
         });
+
+        clock.tick(1000);
+        assert.strictEqual(dnsLookupCount, 1);
+        assert.strictEqual(socketMock.sendCount, 1);
+        assert.strictEqual(socketMock.host, resolvedHostAddress);
+        assert.strictEqual(socketMock.buf.toString(), 'test title');
+        done();
       });
     });
   });
@@ -88,6 +95,7 @@ describe('#udpDnsCacheTransport', () => {
   describe('Sending messages within TTL', () => {
     it('should lookup dns once', done => {
       server = createServer(udpServerType, opts => {
+        clock = sinon.useFakeTimers();
         const socketMock = mockDgramSocket();
 
         statsd = createHotShotsClient(Object.assign(opts, {
@@ -107,13 +115,13 @@ describe('#udpDnsCacheTransport', () => {
 
         statsd.send('other message', {}, (error) => {
           assert.strictEqual(error, null);
-          setTimeout(() => {
-            assert.strictEqual(dnsLookupCount, 1);
-            assert.strictEqual(socketMock.sendCount, 2);
-            assert.strictEqual(socketMock.host, resolvedHostAddress);
-            done();
-          }, 1000);
         });
+
+        clock.tick(1000);
+        assert.strictEqual(dnsLookupCount, 1);
+        assert.strictEqual(socketMock.sendCount, 2);
+        assert.strictEqual(socketMock.host, resolvedHostAddress);
+        done();
       });
     });
   });
@@ -121,6 +129,7 @@ describe('#udpDnsCacheTransport', () => {
   describe('Sending messages after TTL expired', () => {
     it('should lookup dns twice', done => {
       server = createServer(udpServerType, opts => {
+        clock = sinon.useFakeTimers();
         const socketMock = mockDgramSocket();
 
         const cacheDnsTtl = 100;
@@ -144,16 +153,17 @@ describe('#udpDnsCacheTransport', () => {
           assert.strictEqual(error, null);
         });
 
-        setTimeout(() => {
-          statsd.send('message 1ms after TTL', {}, (error) => {
-            assert.strictEqual(error, null);
-            setTimeout(() => {
-              assert.strictEqual(dnsLookupCount, 2);
-              assert.strictEqual(socketMock.sendCount, 3);
-              done();
-            }, 1000);
-          });
-        }, cacheDnsTtl + 50);
+        // Advance time past TTL
+        clock.tick(cacheDnsTtl + 50);
+
+        statsd.send('message 1ms after TTL', {}, (error) => {
+          assert.strictEqual(error, null);
+        });
+
+        clock.tick(1000);
+        assert.strictEqual(dnsLookupCount, 2);
+        assert.strictEqual(socketMock.sendCount, 3);
+        done();
       });
     });
   });

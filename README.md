@@ -32,8 +32,8 @@ Parameters (specified as one object passed into hot-shots):
 * `host`:        The host to send stats to, if not set, the constructor tries to
   retrieve it from the `DD_AGENT_HOST` environment variable, `default: 'undefined'` which as per [UDP/datagram socket docs](https://nodejs.org/api/dgram.html#dgram_socket_send_msg_offset_length_port_address_callback) results in `127.0.0.1` or `::1` being used.
 * `port`:        The port to send stats to, if not set, the constructor tries to retrieve it from the `DD_DOGSTATSD_PORT` environment variable, `default: 8125`
-* `prefix`:      What to prefix each stat name with `default: ''`. Note prefix separator must be specified explicitly if desired (e.g. `my_prefix.`).
-* `suffix`:      What to suffix each stat name with `default: ''`. Note suffix separator must be specified explicitly if desired (e.g. `.my_suffix`).
+* `prefix`:      What to prefix each stat name with `default: ''`. A period separator is automatically added if not present (e.g. `my_prefix` becomes `my_prefix.`).
+* `suffix`:      What to suffix each stat name with `default: ''`. A period separator is automatically added if not present (e.g. `my_suffix` becomes `.my_suffix`).
 * `tagPrefix`:   Prefix tag list with character `default: '#'`. Note does not work with `telegraf` option.
 * `tagSeparator`: Separate tags with character `default: ','`. Note does not work with `telegraf` option.
 * `globalize`:   Expose this StatsD instance globally. `default: false`
@@ -68,7 +68,7 @@ Parameters (specified as one object passed into hot-shots):
   * `retryDelayMs`: Initial delay in milliseconds before retrying a failed packet send. Defaults to `100`.
   * `maxRetryDelayMs`: Maximum delay in milliseconds between retry attempts (caps exponential backoff). Defaults to `1000`.
   * `backoffFactor`: Exponential backoff multiplier for retry delays. Defaults to `2`.
-* `udpSocketOptions`: Used only when the protocol is `udp`. Specify the options passed into dgram.createSocket(). Defaults to `{ type: 'udp4' }`
+* `udpSocketOptions`: Used only when the protocol is `udp`. Specify the options passed into dgram.createSocket(). The socket type (`udp4` or `udp6`) is auto-detected based on the host: IPv6 addresses (e.g., `::1`) use `udp6`, IPv4 addresses use `udp4`, and hostnames default to `udp4`. You can override auto-detection by explicitly setting `type` (e.g., `{ type: 'udp6' }`).
 * `includeDatadogTelemetry`: Enable client-side telemetry to track metrics about the client itself. This helps diagnose high-throughput metric delivery issues. Telemetry metrics are prefixed with `datadog.dogstatsd.client.` and are not billed as custom metrics. `default: false`. See [Client-Side Telemetry](#client-side-telemetry) for details.
 * `telemetryFlushInterval`: When telemetry is enabled, how often (in ms) to send telemetry metrics. `default: 10000`
 
@@ -78,6 +78,13 @@ All StatsD methods other than `event`, `close`, and `check` have the same API:
 * `value`:      Stat value `required except in increment/decrement where it defaults to 1/-1 respectively`
 * `sampleRate`: Sends only a sample of data to StatsD `default: 1`
 * `tags`:       The tags to add to metrics. Can be either an object `{ tag: "value"}` or an array of tags. `default: []`
+* `callback`:   The callback to execute once the metric has been sent or buffered
+
+Alternatively, you can pass an options object in place of `sampleRate` and `tags`:
+* `options`:    An object with optional properties:
+  * `sampleRate`: Sends only a sample of data to StatsD `default: 1`
+  * `tags`:       The tags to add to metrics `default: []`
+  * `timestamp`:  A timestamp to associate with the metric. Can be a `Date` object or Unix timestamp in seconds. (DogStatsD only, ignored for Telegraf)
 * `callback`:   The callback to execute once the metric has been sent or buffered
 
 If an array is specified as the `name` parameter each item in that array will be sent along with the specified value.
@@ -164,6 +171,14 @@ The check method has the following API:
   // Tags, this will add user-defined tags to the data
   // (DataDog and Telegraf only)
   client.histogram('my_histogram', 42, ['foo', 'bar']);
+
+  // Options object, allows combining sampleRate, tags, and timestamp
+  // (DataDog only for timestamp)
+  client.gauge('my_gauge', 42, { sampleRate: 0.25, tags: ['foo', 'bar'] });
+
+  // Timestamp: send a metric with a specific timestamp (DataDog only)
+  client.gauge('my_gauge', 42, { timestamp: new Date('2022-01-01') });
+  client.increment('my_counter', 1, { timestamp: 1640995200 }); // Unix seconds
 
   // Using the callback.  This is the same format for the callback
   // with all non-close calls
