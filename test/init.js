@@ -91,6 +91,17 @@ describe('#init', () => {
     dns.lookup = originalLookup;
   });
 
+  it('should not double-add period separator to prefix/suffix', () => {
+    statsd = createHotShotsClient({
+      prefix: 'prefix.',  // Already has period
+      suffix: '.suffix',  // Already has period
+      mock: true
+    }, clientType);
+
+    assert.strictEqual(statsd.prefix, 'prefix.');
+    assert.strictEqual(statsd.suffix, '.suffix');
+  });
+
   it('should get host and port values from env vars when not specified', () => {
     // set the DD_AGENT_HOST and DD_DOGSTATSD_PORT env vars
     process.env.DD_AGENT_HOST = 'envhost';

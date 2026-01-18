@@ -48,6 +48,7 @@ declare module "hot-shots" {
     globalTags?: Tags;
     prefix?: string;
     suffix?: string;
+    errorHandler?: (err: Error) => void;
   }
 
   export interface CheckOptions {
