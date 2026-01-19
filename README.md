@@ -305,6 +305,46 @@ it is probably because you are sending large volumes of metrics to a single agen
 This error only arises when using the UDS protocol and means that packages are being dropped.
 Take a look at the [Datadog docs](https://docs.datadoghq.com/developers/dogstatsd/high_throughput/?#over-uds-unix-domain-socket) for some tips on tuning your connection.
 
+### Sending metrics during process shutdown
+
+Metrics sent from `process.on('exit')` handlers will **not** be delivered. This is a fundamental Node.js limitation, not a bug in hot-shots. When the `exit` event fires, the event loop has stopped processing async operations, so socket send callbacks will never execute.
+
+The same applies to `process.on('uncaughtExceptionMonitor')` since that handler is also synchronous.
+
+**Alternatives that work:**
+
+Use `beforeExit` for graceful shutdown (fires when event loop is empty but before exit):
+```javascript
+process.on('beforeExit', (code) => {
+  client.increment('app.shutdown');
+  client.close();
+});
+```
+
+Use signal handlers for external shutdown requests:
+```javascript
+function gracefulShutdown(signal) {
+  client.increment('app.shutdown', [`signal:${signal}`]);
+  client.close(() => {
+    process.exit(0);
+  });
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+```
+
+For uncaught exceptions, use `uncaughtException` (not `uncaughtExceptionMonitor`) and delay exit:
+```javascript
+process.on('uncaughtException', (err) => {
+  client.increment('app.crash');
+  client.close(() => {
+    console.error('Uncaught exception:', err);
+    process.exit(1);
+  });
+});
+```
+
 ## Debugging
 
 If you're having issues with metrics not being sent or want to understand what hot-shots is doing
