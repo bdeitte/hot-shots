@@ -141,9 +141,8 @@ describe('#transportExtended', () => {
       protocol: 'stream',
       stream: stream,
       errorHandler: (error) => {
-        // Error should be handled gracefully, not thrown
-        assert(error.message.includes('Stream is destroyed') ||
-               error.message.includes('destroyed'));
+        // Error should be handled gracefully and identified by the expected error code
+        assert.strictEqual(error.code, 'ERR_STREAM_DESTROYED');
         assert.strictEqual(writeAttempted, false, 'Should not attempt write to destroyed stream');
         client.close();
         done();
