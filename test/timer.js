@@ -107,6 +107,60 @@ describe('#timer', () => {
       assert.ok(parseFloat(time) < (100 + TIMER_BUFFER));
     });
   });
+
+  it('asyncTimer should return the resolved value from the wrapped function', () => {
+    statsd = new StatsD({ mock: true });
+
+    const valueFunc = (a, b) => Promise.resolve(a + b);
+    const instrumented = statsd.asyncTimer(valueFunc, 'test-stat');
+
+    return instrumented(5, 3).then((result) => {
+      assert.strictEqual(result, 8);
+    });
+  });
+
+  it('asyncTimer should propagate rejections from the wrapped function', () => {
+    statsd = new StatsD({ mock: true });
+
+    const expectedError = new Error('test-error');
+    const errorFunc = () => Promise.reject(expectedError);
+    const instrumented = statsd.asyncTimer(errorFunc, 'test-stat');
+
+    return instrumented().
+      then(() => {
+        assert.fail('Should have rejected');
+      }).
+      catch((err) => {
+        assert.strictEqual(err, expectedError);
+      });
+  });
+
+  it('asyncDistTimer should return the resolved value from the wrapped function', () => {
+    statsd = new StatsD({ mock: true });
+
+    const valueFunc = (a, b) => Promise.resolve(a + b);
+    const instrumented = statsd.asyncDistTimer(valueFunc, 'test-stat');
+
+    return instrumented(5, 3).then((result) => {
+      assert.strictEqual(result, 8);
+    });
+  });
+
+  it('asyncDistTimer should propagate rejections from the wrapped function', () => {
+    statsd = new StatsD({ mock: true });
+
+    const expectedError = new Error('test-error');
+    const errorFunc = () => Promise.reject(expectedError);
+    const instrumented = statsd.asyncDistTimer(errorFunc, 'test-stat');
+
+    return instrumented().
+      then(() => {
+        assert.fail('Should have rejected');
+      }).
+      catch((err) => {
+        assert.strictEqual(err, expectedError);
+      });
+  });
 });
 
 /**

@@ -41,7 +41,8 @@
   "devDependencies": {
     "eslint": "8.x",
     "mocha": "10.x",
-    "nyc": "15.x"
+    "nyc": "15.x",
+    "sinon": "19.x"
   },
   "license": "MIT",
   "dependencies": {}

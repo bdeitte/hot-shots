@@ -105,7 +105,7 @@ describe('#errorHandling', () => {
               done();
             }
           }), clientType);
-          statsd.sendStat = (item, value, type, sampleRate, tags, callback) => {
+          statsd.sendStat = (item, value, type, sampleRate, tags, timestamp, callback) => {
             callback(err);
           };
           statsd.sendAll(['test title'], 'another desc');

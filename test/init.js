@@ -42,8 +42,8 @@ describe('#init', () => {
 
     assert.strictEqual(statsd.host, 'host');
     assert.strictEqual(statsd.port, 1234);
-    assert.strictEqual(statsd.prefix, 'prefix');
-    assert.strictEqual(statsd.suffix, 'suffix');
+    assert.strictEqual(statsd.prefix, 'prefix.');
+    assert.strictEqual(statsd.suffix, '.suffix');
     assert.strictEqual(statsd, global.statsd);
     assert.strictEqual(statsd.mock, true);
     assert.deepStrictEqual(statsd.globalTags, ['gtag']);
@@ -77,8 +77,8 @@ describe('#init', () => {
 
     assert.strictEqual(statsd.host, 'host');
     assert.strictEqual(statsd.port, 1234);
-    assert.strictEqual(statsd.prefix, 'prefix');
-    assert.strictEqual(statsd.suffix, 'suffix');
+    assert.strictEqual(statsd.prefix, 'prefix.');
+    assert.strictEqual(statsd.suffix, '.suffix');
     assert.strictEqual(statsd, global.statsd);
     assert.strictEqual(statsd.mock, true);
     assert.strictEqual(statsd.sampleRate, 0.6);
@@ -89,6 +89,17 @@ describe('#init', () => {
     assert.strictEqual(statsd.protocol, 'tcp');
 
     dns.lookup = originalLookup;
+  });
+
+  it('should not double-add period separator to prefix/suffix', () => {
+    statsd = createHotShotsClient({
+      prefix: 'prefix.',  // Already has period
+      suffix: '.suffix',  // Already has period
+      mock: true
+    }, clientType);
+
+    assert.strictEqual(statsd.prefix, 'prefix.');
+    assert.strictEqual(statsd.suffix, '.suffix');
   });
 
   it('should get host and port values from env vars when not specified', () => {
