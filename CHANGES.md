@@ -1,8 +1,12 @@
 CHANGELOG
 =========
 
+## 13.1.0 (2026-1-24)
+
 * @bdeitte Add documentation for OpenTelemetry Collector StatsD receiver compatibility
 * @bdeitte Sanitize protocol-breaking characters in metric names and tags. Fixes #238. Characters like `|`, `:`, `\n`, `#`, and `,` in metric names or tags are now replaced with `_` to prevent malformed packets.
+* @bdeitte Document how to handle metrics on shutdown
+* @bdeitte Prevent "socket ended" errors and handle the client disconnection errors more gracefully. Fixes #247
 
 ## 13.0.0 (2026-1-19)
 

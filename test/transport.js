@@ -126,4 +126,57 @@ describe('#transportExtended', () => {
     client.increment('test.metric');
   });
 
+  it('should handle write to destroyed stream gracefully (issue #247)', done => {
+    let writeAttempted = false;
+
+    class TestStream extends Writable {
+      _write(chunk, encoding, callback) { // eslint-disable-line class-methods-use-this
+        writeAttempted = true;
+        callback();
+      }
+    }
+
+    const stream = new TestStream();
+    const client = new StatsD({
+      protocol: 'stream',
+      stream: stream,
+      errorHandler: (error) => {
+        // Error should be handled gracefully and identified by the expected error code
+        assert.strictEqual(error.code, 'ERR_STREAM_DESTROYED');
+        assert.strictEqual(writeAttempted, false, 'Should not attempt write to destroyed stream');
+        client.close();
+        done();
+      }
+    });
+
+    // Destroy the stream before sending - this sets stream.destroyed = true
+    stream.destroy();
+
+    // This should call errorHandler with a graceful error, not throw ERR_STREAM_DESTROYED
+    client.increment('test.metric');
+  });
+
+  it('should send metric when stream is writable', done => {
+    let writeAttempted = false;
+
+    class TestStream extends Writable {
+      _write(chunk, encoding, callback) { // eslint-disable-line class-methods-use-this
+        writeAttempted = true;
+        callback();
+        // Verify write was attempted
+        assert.strictEqual(writeAttempted, true);
+        client.close();
+        done();
+      }
+    }
+
+    const stream = new TestStream();
+    const client = new StatsD({
+      protocol: 'stream',
+      stream: stream
+    });
+
+    client.increment('test.metric');
+  });
+
 });
