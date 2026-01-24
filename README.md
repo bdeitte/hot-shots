@@ -1,6 +1,6 @@
 # hot-shots
 
-A Node.js client for Datadog's [DogStatsD](http://docs.datadoghq.com/guides/dogstatsd/) server, InfluxDB's [Telegraf](https://github.com/influxdb/telegraf) StatsD server, the OpenTelemetry Collector [[StatsD receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/statsdreceiver), and Etsy's [StatsD](https://github.com/etsy/statsd) server.
+A Node.js client for Datadog's [DogStatsD](http://docs.datadoghq.com/guides/dogstatsd/) server, InfluxDB's [Telegraf](https://github.com/influxdb/telegraf) StatsD server, the OpenTelemetry Collector [StatsD receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/statsdreceiver), and Etsy's [StatsD](https://github.com/etsy/statsd) server.
 
 This project was originally a fork off of [node-statsd](https://github.com/sivy/node-statsd).  This project
 includes all changes in the latest node-statsd and many additional changes, including:
