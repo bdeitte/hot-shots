@@ -213,6 +213,115 @@ describe('#helpersExtended', () => {
       const result = helpers.sanitizeTags('tag:with|chars\\', true);
       assert.strictEqual(result, 'tag_with_chars_');
     });
+
+    it('should sanitize newlines for StatsD (default)', () => {
+      const result = helpers.sanitizeTags('tag\nvalue');
+      assert.strictEqual(result, 'tag_value');
+    });
+
+    it('should sanitize newlines for Telegraf', () => {
+      const result = helpers.sanitizeTags('tag\nvalue', true);
+      assert.strictEqual(result, 'tag_value');
+    });
+
+    it('should sanitize hash character for StatsD (default)', () => {
+      const result = helpers.sanitizeTags('tag#value');
+      assert.strictEqual(result, 'tag_value');
+    });
+
+    it('should not sanitize hash character for Telegraf', () => {
+      const result = helpers.sanitizeTags('tag#value', true);
+      assert.strictEqual(result, 'tag#value');
+    });
+
+    it('should sanitize multiple protocol-breaking characters', () => {
+      const result = helpers.sanitizeTags('tag1,tag2,\ntag3#value');
+      assert.strictEqual(result, 'tag1_tag2__tag3_value');
+    });
+  });
+
+  describe('#sanitizeTagValue', () => {
+    it('should not sanitize colons in tag values (they are valid)', () => {
+      const result = helpers.sanitizeTagValue('https://example.com:8080');
+      assert.strictEqual(result, 'https://example.com:8080');
+    });
+
+    it('should sanitize pipes in tag values', () => {
+      const result = helpers.sanitizeTagValue('value|with|pipes');
+      assert.strictEqual(result, 'value_with_pipes');
+    });
+
+    it('should sanitize newlines in tag values', () => {
+      const result = helpers.sanitizeTagValue('value\nwith\nnewlines');
+      assert.strictEqual(result, 'value_with_newlines');
+    });
+
+    it('should sanitize commas in tag values', () => {
+      const result = helpers.sanitizeTagValue('value,with,commas');
+      assert.strictEqual(result, 'value_with_commas');
+    });
+
+    it('should sanitize hash in tag values for StatsD (default)', () => {
+      const result = helpers.sanitizeTagValue('value#with#hash');
+      assert.strictEqual(result, 'value_with_hash');
+    });
+
+    it('should not sanitize hash in tag values for Telegraf', () => {
+      const result = helpers.sanitizeTagValue('value#with#hash', true);
+      assert.strictEqual(result, 'value#with#hash');
+    });
+
+    it('should sanitize at sign in tag values for StatsD (default)', () => {
+      const result = helpers.sanitizeTagValue('value@with@at');
+      assert.strictEqual(result, 'value_with_at');
+    });
+
+    it('should not sanitize at sign in tag values for Telegraf', () => {
+      const result = helpers.sanitizeTagValue('value@with@at', true);
+      assert.strictEqual(result, 'value@with@at');
+    });
+  });
+
+  describe('#sanitizeMetricName', () => {
+    it('should sanitize colons in metric names', () => {
+      const result = helpers.sanitizeMetricName('check:value');
+      assert.strictEqual(result, 'check_value');
+    });
+
+    it('should sanitize pipes in metric names', () => {
+      const result = helpers.sanitizeMetricName('check|value');
+      assert.strictEqual(result, 'check_value');
+    });
+
+    it('should sanitize newlines in metric names', () => {
+      const result = helpers.sanitizeMetricName('check\nvalue');
+      assert.strictEqual(result, 'check_value');
+    });
+
+    it('should sanitize multiple protocol-breaking characters', () => {
+      const result = helpers.sanitizeMetricName('check:11|g#this:out');
+      assert.strictEqual(result, 'check_11_g#this_out');
+    });
+
+    it('should handle non-string values', () => {
+      const result = helpers.sanitizeMetricName(123);
+      assert.strictEqual(result, '123');
+    });
+
+    it('should handle null values', () => {
+      const result = helpers.sanitizeMetricName(null);
+      assert.strictEqual(result, 'null');
+    });
+
+    it('should handle undefined values', () => {
+      const result = helpers.sanitizeMetricName(undefined);
+      assert.strictEqual(result, 'undefined');
+    });
+
+    it('should preserve valid metric name characters', () => {
+      const result = helpers.sanitizeMetricName('my.metric_name-123');
+      assert.strictEqual(result, 'my.metric_name-123');
+    });
   });
 
   describe('#overrideTags - exact results verification', () => {
@@ -278,7 +387,8 @@ describe('#helpersExtended', () => {
         const child = [123, null, undefined, 'env:dev'];
         const result = helpers.overrideTags(parent, child);
 
-        assert.deepStrictEqual(result, ['version:1.0', 'env:dev', 123, null, undefined]);
+        // Non-string values are converted to strings during sanitization
+        assert.deepStrictEqual(result, ['version:1.0', 'env:dev', '123', 'null', 'undefined']);
       });
 
       it('should handle tags with colon as first character', () => {
@@ -286,7 +396,8 @@ describe('#helpersExtended', () => {
         const child = [':invalid', 'valid:tag'];
         const result = helpers.overrideTags(parent, child);
 
-        assert.deepStrictEqual(result, ['normal:tag', 'valid:tag', ':invalid']);
+        // ':invalid' is sanitized to '_invalid' because leading colons are invalid in tags
+        assert.deepStrictEqual(result, ['normal:tag', 'valid:tag', '_invalid']);
       });
     });
 
@@ -465,7 +576,8 @@ describe('#helpersExtended', () => {
       const child = [':invalid', 'valid:tag'];
       const result = helpers.overrideTags(parent, child);
 
-      assert(result.includes(':invalid'));
+      // ':invalid' is sanitized to '_invalid' because leading colons are invalid
+      assert(result.includes('_invalid'));
       assert(result.includes('valid:tag'));
       // normal:tag should remain because child doesn't override 'normal' key
       assert(result.includes('normal:tag'));

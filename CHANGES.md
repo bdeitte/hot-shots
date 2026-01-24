@@ -7,6 +7,8 @@ CHANGELOG
 * @bdeitte Auto-detect UDP socket type (udp4/udp6) based on host IP address. IPv6 addresses like `::1` will automatically use `udp6` sockets, fixing issues on Node.js 17+ where `localhost` may resolve to IPv6.
 * @bdeitte Add DogStatsD timestamp support via options object. Metric methods now accept an options object with `sampleRate`, `tags`, and `timestamp` properties. Timestamp can be a Date object or Unix seconds.
 * @bdeitte Add Sinon.js for fake timers in tests, speeding up DNS cache and UDP socket options tests
+* @bdeitte Add documentation for OpenTelemetry Collector StatsD receiver compatibility
+* @bdeitte Sanitize protocol-breaking characters in metric names and tags. Fixes #238. Characters like `|`, `:`, `\n`, `#`, and `,` in metric names or tags are now replaced with `_` to prevent malformed packets.
 
 ## 12.1.0 (2026-1-4)
 

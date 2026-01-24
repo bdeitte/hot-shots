@@ -361,4 +361,110 @@ describe('#statsFunctions', () => {
       });
     });
   });
+
+  describe('sanitization of protocol-breaking characters', () => {
+    it('should sanitize colons and pipes in metric names', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.gauge('check:11|g', 42);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'check_11_g:42|g');
+        done();
+      });
+    });
+
+    it('should sanitize newlines in metric names', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.gauge('metric\nname', 42);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'metric_name:42|g');
+        done();
+      });
+    });
+
+    it('should sanitize newlines in tags', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.gauge('test', 42, ['tag1,tag2,\ntag3']);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:42|g|#tag1_tag2__tag3');
+        done();
+      });
+    });
+
+    it('should sanitize hash characters in tags for DogStatsD', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.gauge('test', 42, ['tag#value']);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:42|g|#tag_value');
+        done();
+      });
+    });
+
+    it('should handle the exact example from issue #238', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.gauge('check:11|g#this:out', 42, 1, ['tag1,tag2,\ntag3']);
+      });
+      server.on('metrics', metrics => {
+        // Metric name: check:11|g#this:out -> check_11_g#this_out (: and | replaced, # preserved in metric name)
+        // Tags: tag1,tag2,\ntag3 -> tag1_tag2__tag3 (, and \n replaced)
+        assert.strictEqual(metrics, 'check_11_g#this_out:42|g|#tag1_tag2__tag3');
+        done();
+      });
+    });
+
+    it('should sanitize metric names with prefix and suffix', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(Object.assign(opts, {
+          prefix: 'foo.',
+          suffix: '.bar'
+        }), 'client');
+        statsd.gauge('test:metric|name', 42);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'foo.test_metric_name.bar:42|g');
+        done();
+      });
+    });
+
+    it('should sanitize tags passed as object with special characters', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.gauge('test', 42, { 'tag:key': 'value|with#special\nchars' });
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:42|g|#tag_key:value_with_special_chars');
+        done();
+      });
+    });
+
+    it('should sanitize increment metrics', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.increment('count:er|name', 1, ['bad\ntag']);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'count_er_name:1|c|#bad_tag');
+        done();
+      });
+    });
+
+    it('should sanitize timing metrics', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.timing('time:r|name', 100, ['bad\ntag']);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'time_r_name:100|ms|#bad_tag');
+        done();
+      });
+    });
+  });
 });

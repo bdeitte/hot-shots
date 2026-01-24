@@ -38,7 +38,8 @@ describe('#childClient', () => {
         assert.strictEqual(child.prefix, 'preff.prefix.');
         assert.strictEqual(child.suffix, '.suffix.suff');
         assert.strictEqual(statsd, global.statsd);
-        assert.deepEqual(child.globalTags, ['gtag', 'awesomeness:over9000', 'tag1:xxx', 'bar', ':baz']);
+        // Note: ':baz' is sanitized to '_baz' because tags starting with colon are malformed
+        assert.deepEqual(child.globalTags, ['gtag', 'awesomeness:over9000', 'tag1:xxx', 'bar', '_baz']);
       });
     });
 
