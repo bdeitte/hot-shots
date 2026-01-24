@@ -1,6 +1,6 @@
 # hot-shots
 
-A Node.js client for [Etsy](http://etsy.com)'s [StatsD](https://github.com/etsy/statsd) server, Datadog's [DogStatsD](http://docs.datadoghq.com/guides/dogstatsd/) server, and [InfluxDB's](http://influxdb.com) [Telegraf](https://github.com/influxdb/telegraf) StatsD server.
+A Node.js client for Datadog's [DogStatsD](http://docs.datadoghq.com/guides/dogstatsd/) server, InfluxDB's [Telegraf](https://github.com/influxdb/telegraf) StatsD server, the OpenTelemetry Collector [StatsD receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/statsdreceiver), and Etsy's [StatsD](https://github.com/etsy/statsd) server.
 
 This project was originally a fork off of [node-statsd](https://github.com/sivy/node-statsd).  This project
 includes all changes in the latest node-statsd and many additional changes, including:
@@ -264,18 +264,63 @@ The check method has the following API:
   });
 ```
 
-## DogStatsD and Telegraf functionality
+## DogStatsD, Telegraf, and OpenTelemetry functionality
 
-Some of the functionality mentioned above is specific to DogStatsD or Telegraf.  They will not do anything if you are using the regular statsd client.
-* globalTags parameter- DogStatsD or Telegraf
-* tags parameter- DogStatsD or Telegraf.
-* telegraf parameter- Telegraf
-* uds option in protocol parameter- DogStatsD
-* histogram method- DogStatsD or Telegraf
-* event method- DogStatsD
-* check method- DogStatsD
-* includeDatadogTelemetry parameter- DogStatsD
-* telemetryFlushInterval parameter- DogStatsD
+Some of the functionality mentioned above is specific to certain backends and will not work with others.
+
+* globalTags parameter - DogStatsD, Telegraf, or OpenTelemetry
+* tags parameter - DogStatsD, Telegraf, or OpenTelemetry
+* histogram method - DogStatsD, Telegraf, or OpenTelemetry
+* telegraf parameter - Telegraf
+* uds option in protocol parameter - DogStatsD
+* distribution method - DogStatsD
+* set / unique method - DogStatsD or Telegraf (not OpenTelemetry)
+* event method - DogStatsD
+* check method - DogStatsD
+* timestamp option - DogStatsD
+* includeDatadogTelemetry parameter - DogStatsD
+* telemetryFlushInterval parameter - DogStatsD
+
+## OpenTelemetry Collector Compatibility
+
+hot-shots is compatible with the [OpenTelemetry Collector's StatsD receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/statsdreceiver). The following features work out of the box:
+
+| Feature | hot-shots Method | OTel Support |
+|---------|------------------|--------------|
+| Counter | `increment()`, `decrement()` | Yes |
+| Gauge | `gauge()` | Yes |
+| Gauge delta (+/-) | `gaugeDelta()` | Yes |
+| Timer | `timing()` | Yes (converted to gauge/summary/histogram) |
+| Histogram | `histogram()` | Yes (treated as timer) |
+| Sample rate | All methods | Yes |
+| Tags | All methods | Yes |
+
+Example configuration for OpenTelemetry Collector:
+
+```javascript
+var client = new StatsD({
+  host: 'localhost',
+  port: 8125,
+  protocol: 'udp'  // or 'tcp'
+});
+
+// These all work with OpenTelemetry
+client.increment('requests');
+client.gauge('queue_size', 100);
+client.gaugeDelta('connections', 1);
+client.timing('response_time', 250);
+client.histogram('request_size', 1024);
+```
+
+## Sanitization
+
+To prevent malformed packets, hot-shots automatically replaces protocol-breaking characters with underscores (`_`).
+
+* **Metric names**: `:`, `|`, `\n`
+* **Tag keys**: `:`, `|`, `,`, `\n`, plus `@` and `#` for StatsD/DogStatsD
+* **Tag values**: `|`, `,`, `\n`, plus `@` and `#` for StatsD/DogStatsD
+
+Colons are allowed in tag values (e.g., `url:https://example.com:8080`).
 
 ## Errors
 
