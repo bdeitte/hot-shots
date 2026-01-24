@@ -1,6 +1,9 @@
 CHANGELOG
 =========
 
+* @bdeitte Add documentation for OpenTelemetry Collector StatsD receiver compatibility
+* @bdeitte Sanitize protocol-breaking characters in metric names and tags. Fixes #238. Characters like `|`, `:`, `\n`, `#`, and `,` in metric names or tags are now replaced with `_` to prevent malformed packets.
+
 ## 13.0.0 (2026-1-19)
 
 * @bdeitte Breaking: Prefix and suffix now automatically include period separators if needed. If you specify `prefix: 'myapp'`, it will be normalized to `'myapp.'`. Similarly, `suffix: 'prod'` becomes `'.prod'`. This ensures metrics like `myapp.request.time` instead of `myapprequest.time`. If your prefix/suffix already includes the period, no change is needed.
