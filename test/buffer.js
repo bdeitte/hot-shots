@@ -114,11 +114,11 @@ describe('#buffer', () => {
           }), clientType);
 
           // Send multiple messages that would exceed maxBufferSize if not flushed properly
-          // Each message is roughly 20-25 bytes
+          // Each message varies in size, and each takes up more bytes than string length due to é
           for (let i = 0; i < 10; i++) {
-            statsd.increment(`test.metric.${i}`, 1);
+            statsd.increment(`test.metric.${i}`, 1, { v: Array.from({ length: i }).fill('é').join('') });
             // Check buffer size after each enqueue - this is the key test
-            const bufferSize = statsd.bufferHolder.buffer.length;
+            const bufferSize = Buffer.byteLength(statsd.bufferHolder.buffer);
             assert.strictEqual(
               bufferSize <= maxSize,
               true,
