@@ -1,15 +1,18 @@
 CHANGELOG
 =========
 
+## Unreleased
+
+* @bdeitte Fix methods losing parameters when given empty object for sampleRate. Fixes #43
+* @bdeitte Fix increment/decrement losing tags when called with tags and callback but no value. Fixes #139
+* @bdeitte Add dynamic tag support for timer/asyncTimer/asyncDistTimer via context object. Fixes #202
+
 ## 13.2.0 (2026-2-1)
 
 * @boblauer Calculate buffer and message size in a way that accounts for non-ASCII characters
 
 ## 13.1.0 (2026-1-24)
 
-* @bdeitte Fix methods losing parameters when given empty object for sampleRate. Fixes #43
-* @bdeitte Fix increment/decrement losing tags when called with tags and callback but no value. Fixes #139
-* @bdeitte Add dynamic tag support for timer/asyncTimer/asyncDistTimer via context object. Fixes #202
 * @bdeitte Add documentation for OpenTelemetry Collector StatsD receiver compatibility
 * @bdeitte Sanitize protocol-breaking characters in metric names and tags. Fixes #238. Characters like `|`, `:`, `\n`, `#`, and `,` in metric names or tags are now replaced with `_` to prevent malformed packets.
 * @bdeitte Document how to handle metrics on shutdown

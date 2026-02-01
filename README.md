@@ -23,6 +23,15 @@ hot-shots supports Node 16.x and higher.
 
 ![Build Status](https://github.com/bdeitte/hot-shots/actions/workflows/node-test.js.yml/badge.svg)
 
+## Example
+
+```javascript
+const StatsD = require('hot-shots');
+const client = new StatsD();
+
+client.increment('my_counter');
+```
+
 ## Usage
 
 All initialization parameters are optional.
