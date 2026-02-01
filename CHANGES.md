@@ -1,6 +1,10 @@
 CHANGELOG
 =========
 
+## 13.2.0 (2026-2-1)
+
+* @boblauer Calculate buffer and message size in a way that accounts for non-ASCII characters
+
 ## 13.1.0 (2026-1-24)
 
 * @bdeitte Fix methods losing parameters when given empty object for sampleRate. Fixes #43
