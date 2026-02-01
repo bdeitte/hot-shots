@@ -165,6 +165,11 @@ The check method has the following API:
   // Incrementing with tags
   client.increment('my_counter', ['foo', 'bar']);
 
+  // Incrementing with tags and a callback (value defaults to 1)
+  client.increment('my_counter', { env: 'production' }, function(error, bytes) {
+    console.log('Sent counter with tags');
+  });
+
   // Sampling, this will sample 25% of the time the StatsD Daemon will compensate for sampling
   client.increment('my_counter', 1, 0.25);
 
@@ -223,6 +228,18 @@ The check method has the following API:
   var instrumented = statsd.asyncDistTimer(fn, 'fn_execution_time');
   instrumented().then(function() {
     console.log('Code run and metric sent');
+  });
+
+  // Async timer with dynamic tags: Add tags during function execution based on results
+  var fetchData = function (url, ctx) {
+    return fetch(url).then(function(response) {
+      ctx.addTags({ status: response.status, cached: 'false' });
+      return response.json();
+    });
+  };
+  var instrumentedFetch = statsd.asyncTimer(fetchData, 'api_call_time');
+  instrumentedFetch('/api/data').then(function(data) {
+    console.log('Data fetched with timing recorded');
   });
 
   // Sampling, tags and callback are optional and could be used in any combination (DataDog and Telegraf only)
