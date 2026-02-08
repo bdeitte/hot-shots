@@ -903,8 +903,8 @@ describe('#errorHandling', () => {
 });
 
 /**
- * Return system error code for a "bad connection" to a TCP socket (e.g. does not
- * exist). Returns the string error code matching Node.js socket error.code.
+ * Return the Node.js error code string for a "bad connection" to a TCP socket
+ * (e.g. server not accepting connections).
  *
  * - 'ECONNREFUSED' on Linux
  * - 'ECONNRESET' on macOS
@@ -923,8 +923,8 @@ function badTCPConnectionCode() {
 }
 
 /**
- * Return system error code for a "bad connection" to a UDS (e.g. does not
- * exist). Returns the string error code matching Node.js socket error.code.
+ * Return the Node.js error code string for a "bad connection" to a UDS
+ * (e.g. server not accepting connections or peer reset).
  *
  * - 'ECONNREFUSED' on Linux
  * - 'ECONNRESET' on macOS
@@ -943,8 +943,8 @@ function badUDSConnectionCode() {
 }
 
 /**
- * Return system error code for a "bad descriptor" (e.g. descriptor exists
- * but server is gone). Returns the string error code matching Node.js socket error.code.
+ * Return the Node.js error code string for a "bad descriptor" (e.g. descriptor
+ * exists but server is gone).
  *
  * - 'ENOTCONN' on Linux
  * - 'EDESTADDRREQ' on macOS
