@@ -1,5 +1,4 @@
 const assert = require('assert');
-const os = require('os');
 const process = require('process');
 const path = require('path');
 const helpers = require('./helpers/helpers.js');
@@ -904,22 +903,20 @@ describe('#errorHandling', () => {
 });
 
 /**
- * Return system error code for a "bad connection" to a TCP (e.g. does not
- * exist).
+ * Return system error code for a "bad connection" to a TCP socket (e.g. does not
+ * exist). Returns the string error code matching Node.js socket error.code.
  *
- * The value is negated because of the way errors are returned, e.g. by `libuv`.
- *
- * - 111 (ECONNREFUSED) on Linux
- * - 54 (ECONNRESET) on macOS
- * - "not-implemented" on other platforms
+ * - 'ECONNREFUSED' on Linux
+ * - 'ECONNRESET' on macOS
+ * - 'not-implemented' on other platforms
  */
- function badTCPConnectionCode() {
+function badTCPConnectionCode() {
   if (process.platform === 'linux') {
-    return -os.constants.errno.ECONNREFUSED;
+    return 'ECONNREFUSED';
   }
 
   if (process.platform === 'darwin') {
-    return -os.constants.errno.ECONNRESET;
+    return 'ECONNRESET';
   }
 
   return 'not-implemented';
@@ -927,21 +924,19 @@ describe('#errorHandling', () => {
 
 /**
  * Return system error code for a "bad connection" to a UDS (e.g. does not
- * exist).
+ * exist). Returns the string error code matching Node.js socket error.code.
  *
- * The value is negated because of the way errors are returned, e.g. by `libuv`.
- *
- * - 111 (ECONNREFUSED) on Linux
- * - 54 (ECONNRESET) on macOS
- * - "not-implemented" on other platforms
+ * - 'ECONNREFUSED' on Linux
+ * - 'ECONNRESET' on macOS
+ * - 'not-implemented' on other platforms
  */
 function badUDSConnectionCode() {
   if (process.platform === 'linux') {
-    return -os.constants.errno.ECONNREFUSED;
+    return 'ECONNREFUSED';
   }
 
   if (process.platform === 'darwin') {
-    return -os.constants.errno.ECONNRESET;
+    return 'ECONNRESET';
   }
 
   return 'not-implemented';
@@ -949,21 +944,19 @@ function badUDSConnectionCode() {
 
 /**
  * Return system error code for a "bad descriptor" (e.g. descriptor exists
- * but server is gone).
+ * but server is gone). Returns the string error code matching Node.js socket error.code.
  *
- * The value is negated because of the way errors are returned, e.g. by `libuv`.
- *
- * - 107 (ENOTCONN) on Linux
- * - 39 (EDESTADDRREQ) on macOS
- * - "not-implemented" on other platforms
+ * - 'ENOTCONN' on Linux
+ * - 'EDESTADDRREQ' on macOS
+ * - 'not-implemented' on other platforms
  */
- function badTCPDescriptorCode() {
+function badTCPDescriptorCode() {
   if (process.platform === 'linux') {
-    return -os.constants.errno.ENOTCONN;
+    return 'ENOTCONN';
   }
 
   if (process.platform === 'darwin') {
-    return -os.constants.errno.EDESTADDRREQ;
+    return 'EDESTADDRREQ';
   }
 
   return 'not-implemented';
@@ -971,21 +964,19 @@ function badUDSConnectionCode() {
 
 /**
  * Return system error code for a "bad descriptor" (e.g. descriptor exists
- * but server is gone).
+ * but server is gone). Returns the string error code matching Node.js socket error.code.
  *
- * The value is negated because of the way errors are returned, e.g. by `libuv`.
- *
- * - 107 (ENOTCONN) on Linux
- * - 39 (EDESTADDRREQ) on macOS
- * - "not-implemented" on other platforms
+ * - 'ENOTCONN' on Linux
+ * - 'EDESTADDRREQ' on macOS
+ * - 'not-implemented' on other platforms
  */
 function badUDSDescriptorCode() {
   if (process.platform === 'linux') {
-    return -os.constants.errno.ENOTCONN;
+    return 'ENOTCONN';
   }
 
   if (process.platform === 'darwin') {
-    return -os.constants.errno.EDESTADDRREQ;
+    return 'EDESTADDRREQ';
   }
 
   return 'not-implemented';
