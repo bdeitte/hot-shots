@@ -5,7 +5,7 @@ CHANGELOG
 
 * @bdeitte Fix methods losing parameters when given empty object for sampleRate. Fixes #43
 * @bdeitte Fix increment/decrement losing tags when called with tags and callback but no value. Fixes #139
-* @bdeitte Add dynamic tag support for timer/asyncTimer/asyncDistTimer via context object. Fixes #202
+* @bdeitte BREAKING: Add dynamic tag support for timer/asyncTimer/asyncDistTimer via context object. Wrapped functions now receive an additional `ctx` parameter as the last argument. Fixes #202
 
 ## 13.2.0 (2026-2-1)
 

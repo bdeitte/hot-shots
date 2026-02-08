@@ -240,6 +240,7 @@ The check method has the following API:
   });
 
   // Async timer with dynamic tags: Add tags during function execution based on results
+  // The ctx parameter is passed as the last argument to your function and is optional to use
   var fetchData = function (url, ctx) {
     return fetch(url).then(function(response) {
       ctx.addTags({ status: response.status, cached: 'false' });
@@ -250,6 +251,13 @@ The check method has the following API:
   instrumentedFetch('/api/data').then(function(data) {
     console.log('Data fetched with timing recorded');
   });
+
+  // Timer without using dynamic tags (ctx parameter can be ignored)
+  var simpleAdd = function (a, b) {
+    return a + b;
+  };
+  var instrumentedAdd = statsd.timer(simpleAdd, 'add_time');
+  instrumentedAdd(2, 3); // ctx is passed but simpleAdd doesn't use it
 
   // Sampling, tags and callback are optional and could be used in any combination (DataDog and Telegraf only)
   client.histogram('my_histogram', 42, 0.25); // 25% Sample Rate
@@ -487,7 +495,7 @@ Thanks for considering making any updates to this project! This project is entir
 2. Add your changes in your fork as well as any new tests needed
 3. Run "npm test"
 4. Update README.md with any needed documentation
-5. If you have made any API changes, update types.d.ts
+5. If you have made any API changes, update types.d.ts (note: timer/asyncTimer/asyncDistTimer type signatures require TypeScript 4.0+ for variadic tuple support)
 6. Push your changes and create the PR
 
 When you've done all this we're happy to try to get this merged in right away.

@@ -590,4 +590,43 @@ describe('#statsFunctions', () => {
       });
     });
   });
+
+  describe('null handling in parameters', () => {
+    it('should handle null passed as sampleRate', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.timing('test', 100, null, ['foo', 'bar']);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:100|ms|#foo,bar');
+        done();
+      });
+    });
+
+    it('should handle null passed as tags', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.timing('test', 100, null, null);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:100|ms');
+        done();
+      });
+    });
+
+    it('should handle null tags with callback', done => {
+      let called = false;
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.timing('test', 100, 1, null, () => {
+          called = true;
+        });
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:100|ms');
+        assert.strictEqual(called, true);
+        done();
+      });
+    });
+  });
 });

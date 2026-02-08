@@ -318,6 +318,85 @@ describe('#timer', () => {
       assert.ok(statsd.mockBuffer[0].includes('tag2:value2'));
       assert.ok(statsd.mockBuffer[0].includes('tag3:value3'));
     });
+
+    it('ctx.addTags with null should not crash', () => {
+      statsd = new StatsD({ mock: true });
+
+      const testFn = (ctx) => {
+        ctx.addTags(null);
+        ctx.addTags(['valid:tag']);
+        return 'done';
+      };
+      const instrumented = statsd.timer(testFn, 'test-stat');
+      instrumented();
+
+      assert.ok(statsd.mockBuffer[0].includes('valid:tag'));
+    });
+
+    it('ctx.addTags with undefined should not crash', () => {
+      statsd = new StatsD({ mock: true });
+
+      const testFn = (ctx) => {
+        ctx.addTags(undefined);
+        ctx.addTags(['valid:tag']);
+        return 'done';
+      };
+      const instrumented = statsd.timer(testFn, 'test-stat');
+      instrumented();
+
+      assert.ok(statsd.mockBuffer[0].includes('valid:tag'));
+    });
+
+    it('dynamic tags with special characters are sanitized', () => {
+      statsd = new StatsD({ mock: true });
+
+      const testFn = (ctx) => {
+        // These special characters should be sanitized when the metric is sent
+        ctx.addTags(['key:value|with|pipes']);
+        return 'done';
+      };
+      const instrumented = statsd.timer(testFn, 'test-stat');
+      instrumented();
+
+      // The tag should be in the output (sanitization happens in send path)
+      assert.ok(statsd.mockBuffer[0].includes('key:value'));
+      // Pipes should be sanitized to underscores
+      assert.ok(statsd.mockBuffer[0].includes('value_with_pipes'));
+    });
+
+    it('timer should work with Telegraf mode and dynamic tags', () => {
+      statsd = new StatsD({ mock: true, telegraf: true });
+
+      const testFn = (a, b, ctx) => {
+        ctx.addTags({ status: 'success' });
+        return a + b;
+      };
+      const instrumented = statsd.timer(testFn, 'test-stat', undefined, ['static:tag']);
+      const result = instrumented(2, 3);
+
+      assert.strictEqual(result, 5);
+      // Telegraf format uses = instead of : and puts tags inline
+      assert.ok(statsd.mockBuffer[0].includes('static=tag'));
+      assert.ok(statsd.mockBuffer[0].includes('status=success'));
+    });
+
+    it('asyncTimer should work with Telegraf mode and dynamic tags', () => {
+      statsd = new StatsD({ mock: true, telegraf: true });
+
+      const asyncFn = (value, ctx) => {
+        return delay(10).then(() => {
+          ctx.addTags({ result: 'ok' });
+          return value * 2;
+        });
+      };
+      const instrumented = statsd.asyncTimer(asyncFn, 'async-test', undefined, ['env:test']);
+
+      return instrumented(5).then((result) => {
+        assert.strictEqual(result, 10);
+        assert.ok(statsd.mockBuffer[0].includes('env=test'));
+        assert.ok(statsd.mockBuffer[0].includes('result=ok'));
+      });
+    });
   });
 });
 
