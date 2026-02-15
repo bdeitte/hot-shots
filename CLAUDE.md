@@ -48,6 +48,9 @@ Key linting rules to follow:
 - Always use curly braces for if/else blocks, even single-line ones
 - Ternary operators: put `?` and `:` at the end of lines, not the beginning
 - No trailing spaces or mixed indentation
+- JSDoc comments are required on all functions (`require-jsdoc` rule)
+- Import statements must be sorted (`sort-imports` rule)
+- Operator linebreak must be "after" style (operators at end of line, not beginning)
 
 ### Running Single Tests
 ```bash
@@ -158,6 +161,7 @@ See `test/udpDnsCacheTransport.js` and `test/udpSocketOptions.js` for examples.
 
 ## Important Notes
 
+- Node.js >= 16.0.0 required (see `engines` in package.json)
 - TypeScript definitions in types.d.ts must be updated for API changes
 - Constructor parameter expansion is deprecated - use options object
 - Mock mode available for testing (prevents actual metric sending)
