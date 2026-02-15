@@ -161,6 +161,243 @@ describe('#timer', () => {
         assert.strictEqual(err, expectedError);
       });
   });
+
+  describe('dynamic tags via context (issue #202)', () => {
+    it('timer should allow adding tags during execution with array', () => {
+      statsd = new StatsD({ mock: true });
+
+      const testFn = (a, b, ctx) => {
+        ctx.addTags(['dynamic:tag']);
+        return a + b;
+      };
+      const instrumented = statsd.timer(testFn, 'test-stat');
+      const result = instrumented(2, 3);
+
+      assert.strictEqual(result, 5);
+      assert.ok(statsd.mockBuffer[0].includes('dynamic:tag'));
+    });
+
+    it('timer should allow adding tags during execution with object', () => {
+      statsd = new StatsD({ mock: true });
+
+      const testFn = (a, b, ctx) => {
+        ctx.addTags({ status: 'success', code: 200 });
+        return a + b;
+      };
+      const instrumented = statsd.timer(testFn, 'test-stat');
+      instrumented(2, 3);
+
+      assert.ok(statsd.mockBuffer[0].includes('status:success'));
+      assert.ok(statsd.mockBuffer[0].includes('code:200'));
+    });
+
+    it('timer should merge dynamic tags with static tags', () => {
+      statsd = new StatsD({ mock: true });
+
+      const testFn = (a, b, ctx) => {
+        ctx.addTags(['dynamic:tag']);
+        return a + b;
+      };
+      const instrumented = statsd.timer(testFn, 'test-stat', undefined, ['static:tag']);
+      instrumented(2, 3);
+
+      assert.ok(statsd.mockBuffer[0].includes('static:tag'));
+      assert.ok(statsd.mockBuffer[0].includes('dynamic:tag'));
+    });
+
+    it('timer should work without using context', () => {
+      statsd = new StatsD({ mock: true });
+
+      // Function that ignores the context parameter
+      const testFn = (a, b) => {
+        return a + b;
+      };
+      const instrumented = statsd.timer(testFn, 'test-stat', undefined, ['static:tag']);
+      const result = instrumented(2, 3);
+
+      assert.strictEqual(result, 5);
+      assert.ok(statsd.mockBuffer[0].includes('static:tag'));
+    });
+
+    it('asyncTimer should allow adding tags during execution', () => {
+      statsd = new StatsD({ mock: true });
+
+      const asyncFn = (value, ctx) => {
+        return delay(10).then(() => {
+          ctx.addTags({ result: 'ok' });
+          return value * 2;
+        });
+      };
+      const instrumented = statsd.asyncTimer(asyncFn, 'async-test');
+
+      return instrumented(5).then((result) => {
+        assert.strictEqual(result, 10);
+        assert.ok(statsd.mockBuffer[0].includes('result:ok'));
+      });
+    });
+
+    it('asyncTimer should merge dynamic tags with static tags', () => {
+      statsd = new StatsD({ mock: true });
+
+      const asyncFn = (value, ctx) => {
+        return delay(10).then(() => {
+          ctx.addTags(['dynamic:value']);
+          return value;
+        });
+      };
+      const instrumented = statsd.asyncTimer(asyncFn, 'async-test', undefined, ['static:value']);
+
+      return instrumented(5).then(() => {
+        assert.ok(statsd.mockBuffer[0].includes('static:value'));
+        assert.ok(statsd.mockBuffer[0].includes('dynamic:value'));
+      });
+    });
+
+    it('asyncTimer should record tags even on rejection', () => {
+      statsd = new StatsD({ mock: true });
+
+      const asyncFn = (ctx) => {
+        ctx.addTags({ error: 'true' });
+        return Promise.reject(new Error('test error'));
+      };
+      const instrumented = statsd.asyncTimer(asyncFn, 'async-test');
+
+      return instrumented().catch(() => {
+        assert.ok(statsd.mockBuffer[0].includes('error:true'));
+      });
+    });
+
+    it('asyncDistTimer should allow adding tags during execution', () => {
+      statsd = new StatsD({ mock: true });
+
+      const asyncFn = (value, ctx) => {
+        return delay(10).then(() => {
+          ctx.addTags({ result: 'ok' });
+          return value * 2;
+        });
+      };
+      const instrumented = statsd.asyncDistTimer(asyncFn, 'dist-test');
+
+      return instrumented(5).then((result) => {
+        assert.strictEqual(result, 10);
+        assert.ok(statsd.mockBuffer[0].includes('result:ok'));
+        assert.ok(statsd.mockBuffer[0].includes('|d')); // distribution type
+      });
+    });
+
+    it('asyncDistTimer should merge dynamic tags with static tags', () => {
+      statsd = new StatsD({ mock: true });
+
+      const asyncFn = (value, ctx) => {
+        return delay(10).then(() => {
+          ctx.addTags(['dynamic:value']);
+          return value;
+        });
+      };
+      const instrumented = statsd.asyncDistTimer(asyncFn, 'dist-test', undefined, { static: 'value' });
+
+      return instrumented(5).then(() => {
+        assert.ok(statsd.mockBuffer[0].includes('static:value'));
+        assert.ok(statsd.mockBuffer[0].includes('dynamic:value'));
+      });
+    });
+
+    it('context addTags can be called multiple times', () => {
+      statsd = new StatsD({ mock: true });
+
+      const testFn = (ctx) => {
+        ctx.addTags(['tag1:value1']);
+        ctx.addTags({ tag2: 'value2' });
+        ctx.addTags(['tag3:value3']);
+        return 'done';
+      };
+      const instrumented = statsd.timer(testFn, 'test-stat');
+      instrumented();
+
+      assert.ok(statsd.mockBuffer[0].includes('tag1:value1'));
+      assert.ok(statsd.mockBuffer[0].includes('tag2:value2'));
+      assert.ok(statsd.mockBuffer[0].includes('tag3:value3'));
+    });
+
+    it('ctx.addTags with null should not crash', () => {
+      statsd = new StatsD({ mock: true });
+
+      const testFn = (ctx) => {
+        ctx.addTags(null);
+        ctx.addTags(['valid:tag']);
+        return 'done';
+      };
+      const instrumented = statsd.timer(testFn, 'test-stat');
+      instrumented();
+
+      assert.ok(statsd.mockBuffer[0].includes('valid:tag'));
+    });
+
+    it('ctx.addTags with undefined should not crash', () => {
+      statsd = new StatsD({ mock: true });
+
+      const testFn = (ctx) => {
+        ctx.addTags(undefined);
+        ctx.addTags(['valid:tag']);
+        return 'done';
+      };
+      const instrumented = statsd.timer(testFn, 'test-stat');
+      instrumented();
+
+      assert.ok(statsd.mockBuffer[0].includes('valid:tag'));
+    });
+
+    it('dynamic tags with special characters are sanitized', () => {
+      statsd = new StatsD({ mock: true });
+
+      const testFn = (ctx) => {
+        // These special characters should be sanitized when the metric is sent
+        ctx.addTags(['key:value|with|pipes']);
+        return 'done';
+      };
+      const instrumented = statsd.timer(testFn, 'test-stat');
+      instrumented();
+
+      // The tag should be in the output (sanitization happens in send path)
+      assert.ok(statsd.mockBuffer[0].includes('key:value'));
+      // Pipes should be sanitized to underscores
+      assert.ok(statsd.mockBuffer[0].includes('value_with_pipes'));
+    });
+
+    it('timer should work with Telegraf mode and dynamic tags', () => {
+      statsd = new StatsD({ mock: true, telegraf: true });
+
+      const testFn = (a, b, ctx) => {
+        ctx.addTags({ status: 'success' });
+        return a + b;
+      };
+      const instrumented = statsd.timer(testFn, 'test-stat', undefined, ['static:tag']);
+      const result = instrumented(2, 3);
+
+      assert.strictEqual(result, 5);
+      // Telegraf format uses = instead of : and puts tags inline
+      assert.ok(statsd.mockBuffer[0].includes('static=tag'));
+      assert.ok(statsd.mockBuffer[0].includes('status=success'));
+    });
+
+    it('asyncTimer should work with Telegraf mode and dynamic tags', () => {
+      statsd = new StatsD({ mock: true, telegraf: true });
+
+      const asyncFn = (value, ctx) => {
+        return delay(10).then(() => {
+          ctx.addTags({ result: 'ok' });
+          return value * 2;
+        });
+      };
+      const instrumented = statsd.asyncTimer(asyncFn, 'async-test', undefined, ['env:test']);
+
+      return instrumented(5).then((result) => {
+        assert.strictEqual(result, 10);
+        assert.ok(statsd.mockBuffer[0].includes('env=test'));
+        assert.ok(statsd.mockBuffer[0].includes('result=ok'));
+      });
+    });
+  });
 });
 
 /**

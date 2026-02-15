@@ -168,3 +168,11 @@ See `test/udpDnsCacheTransport.js` and `test/udpSocketOptions.js` for examples.
 - Add debug logging that can be enabled with "NODE_DEBUG=hot-shots"
 - Updates should be noted in CHANGES.md using the format: `* @username Description`. For breaking changes, prefix with `Breaking:` (e.g., `* @username BREAKING: Description`). Do not use bold section headers.
 - API changes should be noted in README.md
+
+## Follow for all code changes
+
+After making whatever changes are needed, you must do the following:
+1. Double-check that you've added the right tests needed and run again if needed
+2. Look at README.md and make an update only if needed
+3. Look at types.d.ts and make an update only if needed
+4. Add the updates to CHANGES.md

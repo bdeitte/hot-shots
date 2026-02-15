@@ -19,9 +19,18 @@ includes all changes in the latest node-statsd and many additional changes, incl
 
 You can read about all changes in [the changelog](CHANGES.md).
 
-hot-shots supports Node 16.x and higher.
+hot-shots supports Node 16.x and higher. When using types.d.ts, hot-shots require TypeScript 4.0 or higher.
 
 ![Build Status](https://github.com/bdeitte/hot-shots/actions/workflows/node-test.js.yml/badge.svg)
+
+## Example
+
+```javascript
+const StatsD = require('hot-shots');
+const client = new StatsD();
+
+client.increment('my_counter');
+```
 
 ## Usage
 
@@ -165,6 +174,11 @@ The check method has the following API:
   // Incrementing with tags
   client.increment('my_counter', ['foo', 'bar']);
 
+  // Incrementing with tags and a callback (value defaults to 1)
+  client.increment('my_counter', { env: 'production' }, function(error, bytes) {
+    console.log('Sent counter with tags');
+  });
+
   // Sampling, this will sample 25% of the time the StatsD Daemon will compensate for sampling
   client.increment('my_counter', 1, 0.25);
 
@@ -224,6 +238,26 @@ The check method has the following API:
   instrumented().then(function() {
     console.log('Code run and metric sent');
   });
+
+  // Async timer with dynamic tags: Add tags during function execution based on results
+  // The ctx parameter is passed as the last argument to your function and is optional to use
+  var fetchData = function (url, ctx) {
+    return fetch(url).then(function(response) {
+      ctx.addTags({ status: response.status, cached: 'false' });
+      return response.json();
+    });
+  };
+  var instrumentedFetch = statsd.asyncTimer(fetchData, 'api_call_time');
+  instrumentedFetch('/api/data').then(function(data) {
+    console.log('Data fetched with timing recorded');
+  });
+
+  // Timer without using dynamic tags (ctx parameter can be ignored)
+  var simpleAdd = function (a, b) {
+    return a + b;
+  };
+  var instrumentedAdd = statsd.timer(simpleAdd, 'add_time');
+  instrumentedAdd(2, 3); // ctx is passed but simpleAdd doesn't use it
 
   // Sampling, tags and callback are optional and could be used in any combination (DataDog and Telegraf only)
   client.histogram('my_histogram', 42, 0.25); // 25% Sample Rate
@@ -461,7 +495,7 @@ Thanks for considering making any updates to this project! This project is entir
 2. Add your changes in your fork as well as any new tests needed
 3. Run "npm test"
 4. Update README.md with any needed documentation
-5. If you have made any API changes, update types.d.ts
+5. If you have made any API changes, update types.d.ts (note: timer/asyncTimer/asyncDistTimer type signatures require TypeScript 4.0+ for variadic tuple support)
 6. Push your changes and create the PR
 
 When you've done all this we're happy to try to get this merged in right away.
