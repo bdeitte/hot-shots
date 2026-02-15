@@ -1,7 +1,7 @@
 CHANGELOG
 =========
 
-## Unreleased
+## 14.0.0 (2026-2-15)
 
 * @bdeitte Fix methods losing parameters when given empty object for sampleRate. Fixes #43
 * @bdeitte Fix increment/decrement losing tags when called with tags and callback but no value. Fixes #139
