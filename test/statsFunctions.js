@@ -467,4 +467,166 @@ describe('#statsFunctions', () => {
       });
     });
   });
+
+  describe('increment/decrement with tags and callback, no value (issue #139)', () => {
+    it('should handle increment with tags object and callback', done => {
+      let called = false;
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.increment('test', { tagName: 'tagValue' }, () => {
+          called = true;
+        });
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:1|c|#tagName:tagValue');
+        assert.strictEqual(called, true);
+        done();
+      });
+    });
+
+    it('should handle increment with tags array and callback', done => {
+      let called = false;
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.increment('test', ['foo', 'bar'], () => {
+          called = true;
+        });
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:1|c|#foo,bar');
+        assert.strictEqual(called, true);
+        done();
+      });
+    });
+
+    it('should handle decrement with tags object and callback', done => {
+      let called = false;
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.decrement('test', { tagName: 'tagValue' }, () => {
+          called = true;
+        });
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:-1|c|#tagName:tagValue');
+        assert.strictEqual(called, true);
+        done();
+      });
+    });
+
+    it('should handle decrement with tags array and callback', done => {
+      let called = false;
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.decrement('test', ['foo', 'bar'], () => {
+          called = true;
+        });
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:-1|c|#foo,bar');
+        assert.strictEqual(called, true);
+        done();
+      });
+    });
+
+    it('should still work with explicit value and tags', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.increment('test', 5, ['foo']);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:5|c|#foo');
+        done();
+      });
+    });
+  });
+
+  describe('empty object for sampleRate (issue #43)', () => {
+    it('should not lose tags when empty object is passed for sampleRate', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.timing('test', 100, {}, ['foo', 'bar']);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:100|ms|#foo,bar');
+        done();
+      });
+    });
+
+    it('should not lose tags when empty object is passed for sampleRate with callback', done => {
+      let called = false;
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.timing('test', 100, {}, ['foo', 'bar'], () => {
+          called = true;
+        });
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:100|ms|#foo,bar');
+        assert.strictEqual(called, true);
+        done();
+      });
+    });
+
+    it('should work with gauge and empty object for sampleRate', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.gauge('test', 42, {}, { tag: 'value' });
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:42|g|#tag:value');
+        done();
+      });
+    });
+
+    it('should work with histogram and empty object for sampleRate', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.histogram('test', 42, {}, ['mytag']);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:42|h|#mytag');
+        done();
+      });
+    });
+  });
+
+  describe('null handling in parameters', () => {
+    it('should handle null passed as sampleRate', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.timing('test', 100, null, ['foo', 'bar']);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:100|ms|#foo,bar');
+        done();
+      });
+    });
+
+    it('should handle null passed as tags', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.timing('test', 100, null, null);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:100|ms');
+        done();
+      });
+    });
+
+    it('should handle null tags with callback', done => {
+      let called = false;
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.timing('test', 100, 1, null, () => {
+          called = true;
+        });
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:100|ms');
+        assert.strictEqual(called, true);
+        done();
+      });
+    });
+  });
 });
