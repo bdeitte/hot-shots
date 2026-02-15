@@ -7,6 +7,7 @@ CHANGELOG
 * @bdeitte Fix increment/decrement losing tags when called with tags and callback but no value. Fixes #139
 * @bdeitte BREAKING: Add dynamic tag support for timer/asyncTimer/asyncDistTimer via context object. Wrapped functions now receive an additional `ctx` parameter as the last argument. Fixes #202
 * @bdeitte Fix TCP graceful reconnection not triggering due to string error comparison. Fixes #301
+* @bdeitte Allow ':' in telegraph values and add more tag tests. Fixes #303
 
 ## 13.2.0 (2026-2-1)
 

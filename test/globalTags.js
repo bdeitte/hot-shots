@@ -225,6 +225,70 @@ describe('#globalTags', () => {
           done();
         });
       });
+
+      it('should preserve colons in tag values using telegraf format', done => {
+        server = createServer(serverType, opts => {
+          statsd = createHotShotsClient(Object.assign(opts, {
+            telegraf: true,
+          }), clientType);
+          statsd.increment('test', 1, { path: '/:sample' });
+        });
+        server.on('metrics', metrics => {
+          assert.strictEqual(metrics, `test,path=/:sample:1|c${metricEnd}`);
+          done();
+        });
+      });
+
+      it('should preserve multiple colons in tag values using telegraf format', done => {
+        server = createServer(serverType, opts => {
+          statsd = createHotShotsClient(Object.assign(opts, {
+            telegraf: true,
+          }), clientType);
+          statsd.increment('test', 1, { url: 'http://example.com:8080/path' });
+        });
+        server.on('metrics', metrics => {
+          assert.strictEqual(metrics, `test,url=http://example.com:8080/path:1|c${metricEnd}`);
+          done();
+        });
+      });
+
+      it('should preserve colons in array tag values using telegraf format', done => {
+        server = createServer(serverType, opts => {
+          statsd = createHotShotsClient(Object.assign(opts, {
+            telegraf: true,
+          }), clientType);
+          statsd.increment('test', 1, ['url:http://host:8080']);
+        });
+        server.on('metrics', metrics => {
+          assert.strictEqual(metrics, `test,url=http://host:8080:1|c${metricEnd}`);
+          done();
+        });
+      });
+
+      it('should preserve colons in global and metric tag values using telegraf format', done => {
+        server = createServer(serverType, opts => {
+          statsd = createHotShotsClient(Object.assign(opts, {
+            globalTags: { endpoint: '/api:v2' },
+            telegraf: true,
+          }), clientType);
+          statsd.increment('test', 1, { path: '/:sample' });
+        });
+        server.on('metrics', metrics => {
+          assert.strictEqual(metrics, `test,endpoint=/api:v2,path=/:sample:1|c${metricEnd}`);
+          done();
+        });
+      });
+
+      it('should preserve colons in tag values for DogStatsD format', done => {
+        server = createServer(serverType, opts => {
+          statsd = createHotShotsClient(opts, clientType);
+          statsd.increment('test', 1, { url: 'http://example.com:8080' });
+        });
+        server.on('metrics', metrics => {
+          assert.strictEqual(metrics, `test:1|c|#url:http://example.com:8080${metricEnd}`);
+          done();
+        });
+      });
     });
   });
 });
