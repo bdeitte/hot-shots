@@ -90,6 +90,19 @@ declare module "hot-shots" {
     timestamp?: Date | number;
   }
 
+  /**
+   * Context object passed to timer/asyncTimer/asyncDistTimer wrapped functions.
+   * Allows adding tags dynamically during function execution.
+   */
+  export interface TimerContext {
+    /**
+     * Add tags to be included when the metric is recorded.
+     * Can be called multiple times to accumulate tags.
+     * @param tags Tags to add. Can be an object like {key: 'value'} or array like ['key:value']
+     */
+    addTags(tags: Tags): void;
+  }
+
   export type StatsCb = (error?: Error, bytes?: number) => void;
 
   export class StatsD {
@@ -117,23 +130,35 @@ declare module "hot-shots" {
     timing(stat: string | string[], value: number | Date, sampleRate?: number, callback?: StatsCb): void;
     timing(stat: string | string[], value: number | Date, options?: MetricOptions, callback?: StatsCb): void;
 
-    timer<P extends any[], R>(func: (...args: P) => R, stat: string | string[], sampleRate?: number, tags?: Tags, callback?: StatsCb): (...args: P) => R;
-    timer<P extends any[], R>(func: (...args: P) => R, stat: string | string[], tags?: Tags, callback?: StatsCb): (...args: P) => R;
-    timer<P extends any[], R>(func: (...args: P) => R, stat: string | string[], callback?: StatsCb): (...args: P) => R;
-    timer<P extends any[], R>(func: (...args: P) => R, stat: string | string[], sampleRate?: number, callback?: StatsCb): (...args: P) => R;
-    timer<P extends any[], R>(func: (...args: P) => R, stat: string | string[], options?: MetricOptions, callback?: StatsCb): (...args: P) => R;
+    /**
+     * Wraps a function to record its execution time. The wrapped function receives a TimerContext
+     * as its last argument, which can be used to add tags dynamically during execution.
+     */
+    timer<P extends any[], R>(func: (...args: [...P, TimerContext]) => R, stat: string | string[], sampleRate?: number, tags?: Tags, callback?: StatsCb): (...args: P) => R;
+    timer<P extends any[], R>(func: (...args: [...P, TimerContext]) => R, stat: string | string[], tags?: Tags, callback?: StatsCb): (...args: P) => R;
+    timer<P extends any[], R>(func: (...args: [...P, TimerContext]) => R, stat: string | string[], callback?: StatsCb): (...args: P) => R;
+    timer<P extends any[], R>(func: (...args: [...P, TimerContext]) => R, stat: string | string[], sampleRate?: number, callback?: StatsCb): (...args: P) => R;
+    timer<P extends any[], R>(func: (...args: [...P, TimerContext]) => R, stat: string | string[], options?: MetricOptions, callback?: StatsCb): (...args: P) => R;
 
-    asyncTimer<P extends any[], R>(func: (...args: P) => Promise<R>, stat: string | string[], sampleRate?: number, tags?: Tags, callback?: StatsCb): (...args: P) => Promise<R>;
-    asyncTimer<P extends any[], R>(func: (...args: P) => Promise<R>, stat: string | string[], tags?: Tags, callback?: StatsCb): (...args: P) => Promise<R>;
-    asyncTimer<P extends any[], R>(func: (...args: P) => Promise<R>, stat: string | string[], callback?: StatsCb): (...args: P) => Promise<R>;
-    asyncTimer<P extends any[], R>(func: (...args: P) => Promise<R>, stat: string | string[], sampleRate?: number, callback?: StatsCb): (...args: P) => Promise<R>;
-    asyncTimer<P extends any[], R>(func: (...args: P) => Promise<R>, stat: string | string[], options?: MetricOptions, callback?: StatsCb): (...args: P) => Promise<R>;
+    /**
+     * Wraps an async function to record its execution time. The wrapped function receives a TimerContext
+     * as its last argument, which can be used to add tags dynamically during execution.
+     */
+    asyncTimer<P extends any[], R>(func: (...args: [...P, TimerContext]) => Promise<R>, stat: string | string[], sampleRate?: number, tags?: Tags, callback?: StatsCb): (...args: P) => Promise<R>;
+    asyncTimer<P extends any[], R>(func: (...args: [...P, TimerContext]) => Promise<R>, stat: string | string[], tags?: Tags, callback?: StatsCb): (...args: P) => Promise<R>;
+    asyncTimer<P extends any[], R>(func: (...args: [...P, TimerContext]) => Promise<R>, stat: string | string[], callback?: StatsCb): (...args: P) => Promise<R>;
+    asyncTimer<P extends any[], R>(func: (...args: [...P, TimerContext]) => Promise<R>, stat: string | string[], sampleRate?: number, callback?: StatsCb): (...args: P) => Promise<R>;
+    asyncTimer<P extends any[], R>(func: (...args: [...P, TimerContext]) => Promise<R>, stat: string | string[], options?: MetricOptions, callback?: StatsCb): (...args: P) => Promise<R>;
 
-    asyncDistTimer<P extends any[], R>(func: (...args: P) => Promise<R>, stat: string | string[], sampleRate?: number, tags?: Tags, callback?: StatsCb): (...args: P) => Promise<R>;
-    asyncDistTimer<P extends any[], R>(func: (...args: P) => Promise<R>, stat: string | string[], tags?: Tags, callback?: StatsCb): (...args: P) => Promise<R>;
-    asyncDistTimer<P extends any[], R>(func: (...args: P) => Promise<R>, stat: string | string[], callback?: StatsCb): (...args: P) => Promise<R>;
-    asyncDistTimer<P extends any[], R>(func: (...args: P) => Promise<R>, stat: string | string[], sampleRate?: number, callback?: StatsCb): (...args: P) => Promise<R>;
-    asyncDistTimer<P extends any[], R>(func: (...args: P) => Promise<R>, stat: string | string[], options?: MetricOptions, callback?: StatsCb): (...args: P) => Promise<R>;
+    /**
+     * Wraps an async function to record its execution time as a distribution. The wrapped function receives
+     * a TimerContext as its last argument, which can be used to add tags dynamically during execution.
+     */
+    asyncDistTimer<P extends any[], R>(func: (...args: [...P, TimerContext]) => Promise<R>, stat: string | string[], sampleRate?: number, tags?: Tags, callback?: StatsCb): (...args: P) => Promise<R>;
+    asyncDistTimer<P extends any[], R>(func: (...args: [...P, TimerContext]) => Promise<R>, stat: string | string[], tags?: Tags, callback?: StatsCb): (...args: P) => Promise<R>;
+    asyncDistTimer<P extends any[], R>(func: (...args: [...P, TimerContext]) => Promise<R>, stat: string | string[], callback?: StatsCb): (...args: P) => Promise<R>;
+    asyncDistTimer<P extends any[], R>(func: (...args: [...P, TimerContext]) => Promise<R>, stat: string | string[], sampleRate?: number, callback?: StatsCb): (...args: P) => Promise<R>;
+    asyncDistTimer<P extends any[], R>(func: (...args: [...P, TimerContext]) => Promise<R>, stat: string | string[], options?: MetricOptions, callback?: StatsCb): (...args: P) => Promise<R>;
 
     histogram(stat: string | string[], value: number, sampleRate?: number, tags?: Tags, callback?: StatsCb): void;
     histogram(stat: string | string[], value: number, tags?: Tags, callback?: StatsCb): void;
