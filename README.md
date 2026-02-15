@@ -19,7 +19,7 @@ includes all changes in the latest node-statsd and many additional changes, incl
 
 You can read about all changes in [the changelog](CHANGES.md).
 
-hot-shots supports Node 16.x and higher.
+hot-shots supports Node 16.x and higher. When using types.d.ts, hot-shots require TypeScript 4.0 or higher.
 
 ![Build Status](https://github.com/bdeitte/hot-shots/actions/workflows/node-test.js.yml/badge.svg)
 
