@@ -145,6 +145,33 @@ describe('#check', () => {
           statsd.check('check.name', statsd.CHECKS.OK);
         });
       });
+
+      it('should send all CHECKS status values correctly', done => {
+        const expectedStatuses = [0, 1, 2, 3]; // OK, WARNING, CRITICAL, UNKNOWN
+        server = createServer(serverType, opts => {
+          statsd = createHotShotsClient(opts, clientType);
+          statsd.check('test.ok', statsd.CHECKS.OK);
+          statsd.check('test.warning', statsd.CHECKS.WARNING);
+          statsd.check('test.critical', statsd.CHECKS.CRITICAL);
+          statsd.check('test.unknown', statsd.CHECKS.UNKNOWN);
+        });
+        server.on('metrics', event => {
+          // TCP may concatenate messages, so check all status matches in the event
+          const statusMatches = event.match(/_sc\|[^|]+\|(\d)/g);
+          if (statusMatches) {
+            statusMatches.forEach(match => {
+              const status = parseInt(match.charAt(match.length - 1), 10);
+              const index = expectedStatuses.indexOf(status);
+              if (index >= 0) {
+                expectedStatuses.splice(index, 1);
+              }
+            });
+          }
+          if (expectedStatuses.length === 0) {
+            done();
+          }
+        });
+      });
     });
   });
 });

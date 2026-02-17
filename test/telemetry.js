@@ -334,6 +334,218 @@ describe('#telemetry', () => {
       assert.strictEqual(telemetry.packetsDropped, 1);
       assert.strictEqual(telemetry.packetsDroppedWriter, 1);
     });
+
+    it('should skip flush and call callback when no sendFn is set', done => {
+      const telemetry = new Telemetry({
+        protocol: 'udp',
+        tagPrefix: '#',
+        tagSeparator: ','
+      });
+
+      // Do not set sendFn
+      telemetry.recordMetric('c');
+      telemetry.flush(() => {
+        // callback should still be called even though no sendFn
+        done();
+      });
+    });
+
+    it('should skip flush without error when no sendFn and no callback', () => {
+      const telemetry = new Telemetry({
+        protocol: 'udp',
+        tagPrefix: '#',
+        tagSeparator: ','
+      });
+
+      telemetry.recordMetric('c');
+      // Should not throw
+      telemetry.flush();
+    });
+
+    it('should call callback when flush has no metrics to send', done => {
+      const telemetry = new Telemetry({
+        protocol: 'udp',
+        tagPrefix: '#',
+        tagSeparator: ','
+      });
+
+      const sentMessages = [];
+      telemetry.setSendFunction((message, callback) => {
+        sentMessages.push(message);
+        if (callback) {
+          callback();
+        }
+      });
+
+      // Flush with no metrics recorded but with callback
+      telemetry.flush(() => {
+        assert.strictEqual(sentMessages.length, 0);
+        done();
+      });
+    });
+
+    it('should flush bytesDropped and bytesDroppedWriter', () => {
+      const telemetry = new Telemetry({
+        protocol: 'udp',
+        tagPrefix: '#',
+        tagSeparator: ','
+      });
+
+      const sentMessages = [];
+      telemetry.setSendFunction((message, callback) => {
+        sentMessages.push(message);
+        if (callback) {
+          callback();
+        }
+      });
+
+      telemetry.recordBytesDroppedWriter(200);
+      telemetry.flush();
+
+      assert.strictEqual(sentMessages.length, 1);
+      const msg = sentMessages[0];
+      assert.ok(msg.includes('bytes_dropped:200'));
+      assert.ok(msg.includes('bytes_dropped_writer:200'));
+      assert.ok(msg.includes('packets_dropped:1'));
+      assert.ok(msg.includes('packets_dropped_writer:1'));
+    });
+
+    it('should flush packetsSent and bytesSent', () => {
+      const telemetry = new Telemetry({
+        protocol: 'udp',
+        tagPrefix: '#',
+        tagSeparator: ','
+      });
+
+      const sentMessages = [];
+      telemetry.setSendFunction((message, callback) => {
+        sentMessages.push(message);
+        if (callback) {
+          callback();
+        }
+      });
+
+      telemetry.recordBytesSent(500);
+      telemetry.recordBytesSent(300);
+      telemetry.flush();
+
+      assert.strictEqual(sentMessages.length, 1);
+      const msg = sentMessages[0];
+      assert.ok(msg.includes('bytes_sent:800'));
+      assert.ok(msg.includes('packets_sent:2'));
+    });
+
+    it('should flush events and service checks counts', () => {
+      const telemetry = new Telemetry({
+        protocol: 'udp',
+        tagPrefix: '#',
+        tagSeparator: ','
+      });
+
+      const sentMessages = [];
+      telemetry.setSendFunction((message, callback) => {
+        sentMessages.push(message);
+        if (callback) {
+          callback();
+        }
+      });
+
+      telemetry.recordEvent();
+      telemetry.recordEvent();
+      telemetry.recordServiceCheck();
+      telemetry.flush();
+
+      assert.strictEqual(sentMessages.length, 1);
+      const msg = sentMessages[0];
+      assert.ok(msg.includes('events:2'));
+      assert.ok(msg.includes('service_checks:1'));
+    });
+
+    it('should flush packetsDroppedQueue when set manually', () => {
+      const telemetry = new Telemetry({
+        protocol: 'udp',
+        tagPrefix: '#',
+        tagSeparator: ','
+      });
+
+      const sentMessages = [];
+      telemetry.setSendFunction((message, callback) => {
+        sentMessages.push(message);
+        if (callback) {
+          callback();
+        }
+      });
+
+      // Manually set packetsDroppedQueue to simulate queue drops
+      telemetry.packetsDroppedQueue = 3;
+      telemetry.packetsDropped = 3;
+      telemetry.flush();
+
+      assert.strictEqual(sentMessages.length, 1);
+      const msg = sentMessages[0];
+      assert.ok(msg.includes('packets_dropped:3'));
+      assert.ok(msg.includes('packets_dropped_queue:3'));
+    });
+
+    it('should start and stop flush interval', done => {
+      const telemetry = new Telemetry({
+        protocol: 'udp',
+        flushInterval: 50,
+        tagPrefix: '#',
+        tagSeparator: ','
+      });
+
+      let flushCount = 0;
+      telemetry.setSendFunction((message, callback) => {
+        flushCount++;
+        if (callback) {
+          callback();
+        }
+      });
+
+      // Record a metric so flush has something to send
+      telemetry.recordMetric('c');
+      telemetry.start();
+
+      // Double start should be no-op
+      telemetry.start();
+
+      setTimeout(() => {
+        telemetry.stop();
+        assert.ok(flushCount >= 1, `Expected at least 1 flush, got ${flushCount}`);
+        assert.strictEqual(telemetry.intervalHandle, null);
+        done();
+      }, 150);
+    });
+
+    it('should include metrics_by_type breakdown in flush', () => {
+      const telemetry = new Telemetry({
+        protocol: 'tcp',
+        tagPrefix: '#',
+        tagSeparator: ','
+      });
+
+      const sentMessages = [];
+      telemetry.setSendFunction((message, callback) => {
+        sentMessages.push(message);
+        if (callback) {
+          callback();
+        }
+      });
+
+      telemetry.recordMetric('c');
+      telemetry.recordMetric('c');
+      telemetry.recordMetric('g');
+      telemetry.recordMetric('ms');
+      telemetry.flush();
+
+      const msg = sentMessages[0];
+      assert.ok(msg.includes('metrics:4'));
+      assert.ok(msg.includes('metrics_by_type:2|c|#client:nodejs'));
+      assert.ok(msg.includes('metrics_type:count'));
+      assert.ok(msg.includes('metrics_type:gauge'));
+      assert.ok(msg.includes('metrics_type:timing'));
+    });
   });
 
   describe('telemetry flush', () => {

@@ -1,4 +1,5 @@
 const assert = require('assert');
+const net = require('net');
 const { Writable } = require('stream');
 const StatsD = require('../lib/statsd.js');
 
@@ -179,4 +180,88 @@ describe('#transportExtended', () => {
     client.increment('test.metric');
   });
 
+  it('should handle sendMessage when socket is null', done => {
+    const client = new StatsD({
+      protocol: 'udp',
+      host: 'localhost',
+      port: 8125,
+      errorHandler: (error) => {
+        assert.ok(error.message.includes('Socket not created properly'));
+        client.close(() => {
+          done();
+        });
+      }
+    });
+
+    // Force socket to null
+    client.socket.close();
+    client.socket = null;
+    client.sendMessage('test:1|c');
+  });
+
+  it('should handle mock transport emit and removeListener', () => {
+    const client = new StatsD({ mock: true });
+    let called = false;
+    const listener = () => {
+      called = true;
+    };
+
+    client.socket.on('test', listener);
+    client.socket.emit('test');
+    assert.strictEqual(called, true);
+
+    called = false;
+    client.socket.removeListener('test', listener);
+    client.socket.emit('test');
+    assert.strictEqual(called, false);
+
+    client.close();
+  });
+
+  it('should add newline to TCP messages', done => {
+    const tcpServer = net.createServer(socket => {
+      socket.setEncoding('ascii');
+      socket.on('data', data => {
+        // TCP messages should end with newline
+        assert.ok(data.endsWith('\n'), `Expected newline at end, got: ${JSON.stringify(data)}`);
+        client.close(() => {
+          tcpServer.close(() => {
+            done();
+          });
+        });
+      });
+    });
+
+    let client;
+    tcpServer.listen(0, 'localhost', () => {
+      const addr = tcpServer.address();
+      client = new StatsD({
+        protocol: 'tcp',
+        host: 'localhost',
+        port: addr.port,
+      });
+      client.increment('test.metric');
+    });
+  });
+
+  it('should add newline to stream messages', done => {
+    class TestStream extends Writable {
+      _write(chunk, encoding, callback) { // eslint-disable-line class-methods-use-this
+        const data = chunk.toString();
+        // Stream messages should end with newline
+        assert.ok(data.endsWith('\n'), `Expected newline at end, got: ${JSON.stringify(data)}`);
+        callback();
+        client.close();
+        done();
+      }
+    }
+
+    const stream = new TestStream();
+    const client = new StatsD({
+      protocol: 'stream',
+      stream: stream
+    });
+
+    client.increment('test.metric');
+  });
 });

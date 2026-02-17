@@ -156,6 +156,29 @@ describe('#event', () => {
           statsd.event('test title', 'another desc');
         });
       });
+
+      it('should send event with empty options object', done => {
+        server = createServer(serverType, opts => {
+          statsd = createHotShotsClient(opts, clientType);
+          statsd.event('test', 'text', {});
+        });
+        server.on('metrics', event => {
+          assert.strictEqual(event, `_e{4,4}:test|text${metricEnd}`);
+          done();
+        });
+      });
+
+      it('should handle event with special characters in title and text', done => {
+        server = createServer(serverType, opts => {
+          statsd = createHotShotsClient(opts, clientType);
+          statsd.event('title|with|pipes', 'text\nwith\nnewlines');
+        });
+        server.on('metrics', event => {
+          // Newlines should be escaped
+          assert.ok(event.includes('text\\nwith\\nnewlines'));
+          done();
+        });
+      });
     });
   });
 });

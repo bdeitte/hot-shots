@@ -629,4 +629,124 @@ describe('#statsFunctions', () => {
       });
     });
   });
+
+  describe('edge cases', () => {
+    it('should handle negative gauge values', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.gauge('test', -100);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:-100|g');
+        done();
+      });
+    });
+
+    it('should handle zero value for gauge', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.gauge('test', 0);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:0|g');
+        done();
+      });
+    });
+
+    it('should handle very large numbers', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.gauge('test', Number.MAX_SAFE_INTEGER);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, `test:${Number.MAX_SAFE_INTEGER}|g`);
+        done();
+      });
+    });
+
+    it('should handle floating point values', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.timing('test', 3.14159);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:3.14159|ms');
+        done();
+      });
+    });
+
+    it('should handle increment with value 0', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.increment('test', 0);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:0|c');
+        done();
+      });
+    });
+
+    it('should handle negative increment values', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.increment('test', -5);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:-5|c');
+        done();
+      });
+    });
+
+    it('should handle decrement with explicit value', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.decrement('test', 3);
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:-3|c');
+        done();
+      });
+    });
+
+    it('should handle set with string value', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.set('test', 'user-123');
+      });
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'test:user-123|s');
+        done();
+      });
+    });
+
+    it('should handle timing with Date object', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        const past = new Date(new Date() - 100);
+        statsd.timing('test', past);
+      });
+      server.on('metrics', metrics => {
+        // Should contain a numeric value >= 100
+        const match = metrics.match(/test:(\d+)\|ms/);
+        assert.ok(match, `Expected timing format, got: ${metrics}`);
+        const value = parseInt(match[1], 10);
+        assert.ok(value >= 90, `Expected timing >= 90ms, got: ${value}`);
+        done();
+      });
+    });
+
+    it('should send multiple stats as array', done => {
+      let metricsReceived = 0;
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(opts, 'client');
+        statsd.increment(['stat1', 'stat2', 'stat3']);
+      });
+      server.on('metrics', () => {
+        metricsReceived++;
+        if (metricsReceived >= 3) {
+          done();
+        }
+      });
+    });
+  });
 });

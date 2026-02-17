@@ -1,5 +1,6 @@
 const assert = require('assert');
 const helpers = require('./helpers/helpers.js');
+const sinon = require('sinon');
 
 const closeAll = helpers.closeAll;
 const testTypes = helpers.testTypes;
@@ -156,6 +157,106 @@ describe('#buffer', () => {
             }, 50);
           }
         });
+      });
+    });
+  });
+
+  describe('buffer edge cases', () => {
+    it('should handle a single metric larger than maxBufferSize', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(Object.assign(opts, {
+          maxBufferSize: 5,
+          bufferFlushInterval: 50,
+        }), 'client');
+        // This metric is larger than maxBufferSize but should still be sent
+        statsd.increment('a.very.long.metric.name', 1);
+      });
+      server.on('metrics', metrics => {
+        assert.ok(metrics.includes('a.very.long.metric.name:1|c'));
+        done();
+      });
+    });
+
+    it('should reset buffer state after flush', done => {
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(Object.assign(opts, {
+          maxBufferSize: 500,
+          bufferFlushInterval: 10000,
+        }), 'client');
+
+        statsd.increment('a', 1);
+        assert.ok(statsd.bufferHolder.buffer.length > 0);
+        assert.ok(statsd.bufferLength > 0);
+
+        statsd.flushQueue();
+        assert.strictEqual(statsd.bufferHolder.buffer, '');
+        assert.strictEqual(statsd.bufferLength, 0);
+        done();
+      });
+    });
+
+    it('should share buffer between parent and child clients', done => {
+      server = createServer('udp', opts => {
+        const parent = createHotShotsClient(Object.assign(opts, {
+          maxBufferSize: 500,
+        }), 'client');
+        statsd = parent;
+        const child = parent.childClient({ prefix: 'child.' });
+
+        parent.increment('parent.metric', 1);
+        child.increment('child.metric', 2);
+
+        // Both metrics should be in the same buffer
+        assert.ok(parent.bufferHolder.buffer.includes('parent.metric:1|c'));
+        assert.ok(parent.bufferHolder.buffer.includes('child.child.metric:2|c'));
+        assert.strictEqual(parent.bufferHolder, child.bufferHolder);
+        done();
+      });
+    });
+
+    it('should handle buffer with emoji and CJK characters correctly', done => {
+      server = createServer('udp', opts => {
+        const maxSize = 100;
+        statsd = createHotShotsClient(Object.assign(opts, {
+          maxBufferSize: maxSize,
+          bufferFlushInterval: 10000,
+        }), 'client');
+
+        // Send metrics with multi-byte characters in tags
+        statsd.increment('metric', 1, { tag: '🎉🎉🎉' });
+        const bufferSize = Buffer.byteLength(statsd.bufferHolder.buffer);
+        assert.strictEqual(
+          bufferSize <= maxSize,
+          true,
+          `Buffer size ${bufferSize} exceeded maxBufferSize ${maxSize} with emoji tags`
+        );
+        done();
+      });
+    });
+
+    it('should flush buffer on interval timer', done => {
+      let clock;
+
+      server = createServer('udp', opts => {
+        clock = sinon.useFakeTimers();
+        statsd = createHotShotsClient(Object.assign(opts, {
+          maxBufferSize: 5000,
+          bufferFlushInterval: 500,
+        }), 'client');
+
+        statsd.increment('test', 1);
+        assert.ok(statsd.bufferHolder.buffer.length > 0);
+
+        // Advance time past bufferFlushInterval
+        clock.tick(600);
+
+        // Buffer should have been flushed by the interval
+        assert.strictEqual(statsd.bufferHolder.buffer, '');
+        assert.strictEqual(statsd.bufferLength, 0);
+
+        clock.restore();
+        clock = null;
+        done();
       });
     });
   });
