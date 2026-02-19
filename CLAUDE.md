@@ -22,7 +22,7 @@ hot-shots is a Node.js client library for StatsD, DogStatsD (Datadog), and Teleg
 The library supports multiple transport protocols:
 - **UDP**: Default protocol using dgram sockets
 - **TCP**: Persistent connection with graceful error handling
-- **UDS**: Unix Domain Sockets (requires unix-dgram optional dependency)
+- **UDS**: Unix Domain Sockets (requires unix-dgram-rs dependency)
 - **Stream**: Raw stream protocol for custom transports
 
 ### Client Architecture
