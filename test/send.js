@@ -13,7 +13,7 @@ describe('#send', () => {
   let statsd;
 
   afterEach(done => {
-    closeAll(server, statsd, true, done);
+    closeAll(server, statsd, false, done);
     server = null;
     statsd = null;
   });

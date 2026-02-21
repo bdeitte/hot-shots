@@ -10,8 +10,13 @@ const createHotShotsClient = helpers.createHotShotsClient;
 describe('#buffer', () => {
   let server;
   let statsd;
+  let clock;
 
   afterEach(done => {
+    if (clock) {
+      clock.restore();
+      clock = null;
+    }
     closeAll(server, statsd, false, done);
     server = null;
     statsd = null;
@@ -235,8 +240,6 @@ describe('#buffer', () => {
     });
 
     it('should flush buffer on interval timer', done => {
-      let clock;
-
       server = createServer('udp', opts => {
         clock = sinon.useFakeTimers();
         statsd = createHotShotsClient(Object.assign(opts, {
@@ -254,8 +257,6 @@ describe('#buffer', () => {
         assert.strictEqual(statsd.bufferHolder.buffer, '');
         assert.strictEqual(statsd.bufferLength, 0);
 
-        clock.restore();
-        clock = null;
         done();
       });
     });

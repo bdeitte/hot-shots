@@ -80,6 +80,20 @@ npx mocha test/specific-test.js --timeout 5000
 - Can override prefix, suffix, globalTags
 - Nested child clients supported
 
+### Timer Context (Dynamic Tags)
+`timer`, `asyncTimer`, and `asyncDistTimer` pass a `ctx` object as the last argument to
+wrapped functions, enabling dynamic tags to be added during execution:
+
+```javascript
+const wrappedFn = statsd.timer(function (arg1, ctx) {
+  ctx.addTags({ result: 'success' });  // tags added at metric send time
+  // ... fn body
+}, 'my.metric');
+```
+
+The `ctx` object has `addTags(tags)` to attach tags that are merged with any
+static tags when the timing metric is sent.
+
 ## Protocol-Specific Features
 
 ### DataDog (DogStatsD)

@@ -1,5 +1,6 @@
 const assert = require('assert');
 const helpers = require('./helpers/helpers.js');
+const sinon = require('sinon');
 
 const closeAll = helpers.closeAll;
 const createServer = helpers.createServer;
@@ -236,6 +237,15 @@ describe('#telemetry', () => {
   });
 
   describe('Telemetry class', () => {
+    let clock;
+
+    afterEach(() => {
+      if (clock) {
+        clock.restore();
+        clock = null;
+      }
+    });
+
     it('should format metrics correctly', () => {
       const telemetry = new Telemetry({
         protocol: 'udp',
@@ -362,132 +372,82 @@ describe('#telemetry', () => {
       telemetry.flush();
     });
 
-    it('should call callback when flush has no metrics to send', done => {
-      const telemetry = new Telemetry({
-        protocol: 'udp',
-        tagPrefix: '#',
-        tagSeparator: ','
+    describe('with standard sendFn', () => {
+      let telemetry;
+      let sentMessages;
+
+      beforeEach(() => {
+        sentMessages = [];
+        telemetry = new Telemetry({
+          protocol: 'udp',
+          tagPrefix: '#',
+          tagSeparator: ','
+        });
+        telemetry.setSendFunction((message, callback) => {
+          sentMessages.push(message);
+          if (callback) {
+            callback();
+          }
+        });
       });
 
-      const sentMessages = [];
-      telemetry.setSendFunction((message, callback) => {
-        sentMessages.push(message);
-        if (callback) {
-          callback();
-        }
+      it('should call callback when flush has no metrics to send', done => {
+        // Flush with no metrics recorded but with callback
+        telemetry.flush(() => {
+          assert.strictEqual(sentMessages.length, 0);
+          done();
+        });
       });
 
-      // Flush with no metrics recorded but with callback
-      telemetry.flush(() => {
-        assert.strictEqual(sentMessages.length, 0);
-        done();
+      it('should flush bytesDropped and bytesDroppedWriter', () => {
+        telemetry.recordBytesDroppedWriter(200);
+        telemetry.flush();
+
+        assert.strictEqual(sentMessages.length, 1);
+        const msg = sentMessages[0];
+        assert.ok(msg.includes('bytes_dropped:200'));
+        assert.ok(msg.includes('bytes_dropped_writer:200'));
+        assert.ok(msg.includes('packets_dropped:1'));
+        assert.ok(msg.includes('packets_dropped_writer:1'));
+      });
+
+      it('should flush packetsSent and bytesSent', () => {
+        telemetry.recordBytesSent(500);
+        telemetry.recordBytesSent(300);
+        telemetry.flush();
+
+        assert.strictEqual(sentMessages.length, 1);
+        const msg = sentMessages[0];
+        assert.ok(msg.includes('bytes_sent:800'));
+        assert.ok(msg.includes('packets_sent:2'));
+      });
+
+      it('should flush events and service checks counts', () => {
+        telemetry.recordEvent();
+        telemetry.recordEvent();
+        telemetry.recordServiceCheck();
+        telemetry.flush();
+
+        assert.strictEqual(sentMessages.length, 1);
+        const msg = sentMessages[0];
+        assert.ok(msg.includes('events:2'));
+        assert.ok(msg.includes('service_checks:1'));
+      });
+
+      it('should flush packetsDroppedQueue when set manually', () => {
+        // Manually set packetsDroppedQueue to simulate queue drops
+        telemetry.packetsDroppedQueue = 3;
+        telemetry.packetsDropped = 3;
+        telemetry.flush();
+
+        assert.strictEqual(sentMessages.length, 1);
+        const msg = sentMessages[0];
+        assert.ok(msg.includes('packets_dropped:3'));
+        assert.ok(msg.includes('packets_dropped_queue:3'));
       });
     });
 
-    it('should flush bytesDropped and bytesDroppedWriter', () => {
-      const telemetry = new Telemetry({
-        protocol: 'udp',
-        tagPrefix: '#',
-        tagSeparator: ','
-      });
-
-      const sentMessages = [];
-      telemetry.setSendFunction((message, callback) => {
-        sentMessages.push(message);
-        if (callback) {
-          callback();
-        }
-      });
-
-      telemetry.recordBytesDroppedWriter(200);
-      telemetry.flush();
-
-      assert.strictEqual(sentMessages.length, 1);
-      const msg = sentMessages[0];
-      assert.ok(msg.includes('bytes_dropped:200'));
-      assert.ok(msg.includes('bytes_dropped_writer:200'));
-      assert.ok(msg.includes('packets_dropped:1'));
-      assert.ok(msg.includes('packets_dropped_writer:1'));
-    });
-
-    it('should flush packetsSent and bytesSent', () => {
-      const telemetry = new Telemetry({
-        protocol: 'udp',
-        tagPrefix: '#',
-        tagSeparator: ','
-      });
-
-      const sentMessages = [];
-      telemetry.setSendFunction((message, callback) => {
-        sentMessages.push(message);
-        if (callback) {
-          callback();
-        }
-      });
-
-      telemetry.recordBytesSent(500);
-      telemetry.recordBytesSent(300);
-      telemetry.flush();
-
-      assert.strictEqual(sentMessages.length, 1);
-      const msg = sentMessages[0];
-      assert.ok(msg.includes('bytes_sent:800'));
-      assert.ok(msg.includes('packets_sent:2'));
-    });
-
-    it('should flush events and service checks counts', () => {
-      const telemetry = new Telemetry({
-        protocol: 'udp',
-        tagPrefix: '#',
-        tagSeparator: ','
-      });
-
-      const sentMessages = [];
-      telemetry.setSendFunction((message, callback) => {
-        sentMessages.push(message);
-        if (callback) {
-          callback();
-        }
-      });
-
-      telemetry.recordEvent();
-      telemetry.recordEvent();
-      telemetry.recordServiceCheck();
-      telemetry.flush();
-
-      assert.strictEqual(sentMessages.length, 1);
-      const msg = sentMessages[0];
-      assert.ok(msg.includes('events:2'));
-      assert.ok(msg.includes('service_checks:1'));
-    });
-
-    it('should flush packetsDroppedQueue when set manually', () => {
-      const telemetry = new Telemetry({
-        protocol: 'udp',
-        tagPrefix: '#',
-        tagSeparator: ','
-      });
-
-      const sentMessages = [];
-      telemetry.setSendFunction((message, callback) => {
-        sentMessages.push(message);
-        if (callback) {
-          callback();
-        }
-      });
-
-      // Manually set packetsDroppedQueue to simulate queue drops
-      telemetry.packetsDroppedQueue = 3;
-      telemetry.packetsDropped = 3;
-      telemetry.flush();
-
-      assert.strictEqual(sentMessages.length, 1);
-      const msg = sentMessages[0];
-      assert.ok(msg.includes('packets_dropped:3'));
-      assert.ok(msg.includes('packets_dropped_queue:3'));
-    });
-
-    it('should start and stop flush interval', done => {
+    it('should start and stop flush interval', () => {
       const telemetry = new Telemetry({
         protocol: 'udp',
         flushInterval: 50,
@@ -505,17 +465,17 @@ describe('#telemetry', () => {
 
       // Record a metric so flush has something to send
       telemetry.recordMetric('c');
+      clock = sinon.useFakeTimers();
       telemetry.start();
 
       // Double start should be no-op
       telemetry.start();
 
-      setTimeout(() => {
-        telemetry.stop();
-        assert.ok(flushCount >= 1, `Expected at least 1 flush, got ${flushCount}`);
-        assert.strictEqual(telemetry.intervalHandle, null);
-        done();
-      }, 150);
+      clock.tick(51);
+      assert.ok(flushCount >= 1, `Expected at least 1 flush, got ${flushCount}`);
+
+      telemetry.stop();
+      assert.strictEqual(telemetry.intervalHandle, null);
     });
 
     it('should include metrics_by_type breakdown in flush', () => {
