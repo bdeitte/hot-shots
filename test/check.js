@@ -155,7 +155,7 @@ describe('#check', () => {
           statsd.check('test.critical', statsd.CHECKS.CRITICAL);
           statsd.check('test.unknown', statsd.CHECKS.UNKNOWN);
         });
-        server.on('metrics', event => {
+        const onMetrics = event => {
           // TCP may concatenate messages, so check all status matches in the event
           const statusMatches = event.match(/_sc\|[^|]+\|(\d)/g);
           if (statusMatches) {
@@ -168,9 +168,11 @@ describe('#check', () => {
             });
           }
           if (expectedStatuses.length === 0) {
+            server.removeListener('metrics', onMetrics);
             done();
           }
-        });
+        };
+        server.on('metrics', onMetrics);
       });
     });
   });
