@@ -142,6 +142,45 @@ describe('#close', () => {
           });
         });
       });
+
+      it('should force close after 10 attempts when messagesInFlight stays positive', done => {
+        server = createServer(serverType, opts => {
+          statsd = createHotShotsClient(Object.assign(opts, {
+            closingFlushInterval: 5,
+          }), clientType);
+
+          // Simulate stuck messages in flight
+          statsd.messagesInFlight = 5;
+
+          statsd.close(() => {
+            // The force close resets messagesInFlight to 0
+            assert.strictEqual(statsd.messagesInFlight, 0);
+            server.close();
+            done();
+          });
+        });
+      });
+
+      it('should close with telemetry enabled', done => {
+        server = createServer(serverType, opts => {
+          statsd = createHotShotsClient(Object.assign(opts, {
+            includeDatadogTelemetry: true,
+            telemetryFlushInterval: 60000,
+          }), clientType);
+
+          statsd.increment('test.counter');
+          assert.ok(statsd.telemetry !== null);
+
+          let calledDone = false;
+          statsd.close(() => {
+            if (!calledDone) {
+              calledDone = true;
+              server.close();
+              done();
+            }
+          });
+        });
+      });
     });
   });
 });

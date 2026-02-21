@@ -1,6 +1,10 @@
 CHANGELOG
 =========
 
+## Unreleased
+
+* @bdeitte Fill in some missing areas for automated tests
+
 ## 14.0.0 (2026-2-15)
 
 * @bdeitte Fix methods losing parameters when given empty object for sampleRate. Fixes #43
