@@ -6,3 +6,4 @@ coverage
 test/helpers/test.sock
 .vscode/
 .claude/
+.worktrees/
