@@ -4,6 +4,7 @@ CHANGELOG
 ## Unreleased
 
 * @bdeitte Fill in some missing areas for automated tests
+* @bdeitte CPU performance improvements: pre-join global tags, eliminate Buffer round-trip for TCP/stream, cache byteLength, use hrtime.bigint, optimize overrideTags
 
 ## 14.0.0 (2026-2-15)
 
