@@ -183,6 +183,10 @@ See `test/udpDnsCacheTransport.js` and `test/udpSocketOptions.js` for examples.
 - Updates should be noted in CHANGES.md using the format: `* @username Description`. For breaking changes, prefix with `Breaking:` (e.g., `* @username BREAKING: Description`). Do not use bold section headers.
 - API changes should be noted in README.md
 
+## Planning
+
+When planning non-trivial features or changes, write a plan file to the `plans/` directory before touching code. Name the file with the date and a short description (e.g., `2026-02-21-add-new-transport.md`). Plans should describe the goal, approach, and key implementation steps.
+
 ## Follow for all code changes
 
 After making whatever changes are needed, you must do the following:
