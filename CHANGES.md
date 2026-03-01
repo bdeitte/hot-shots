@@ -1,6 +1,10 @@
 CHANGELOG
 =========
 
+## 14.1.1 (2026-3-1)
+
+* @bdeitte Version 14.1.0 published without a README for an unknown reason. Ensuring everything is reset locally and running publish again to attempt to fix.
+
 ## 14.1.0 (2026-3-1)
 
 * @bdeitte Fill in some missing areas for automated tests
