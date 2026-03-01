@@ -1,7 +1,7 @@
 CHANGELOG
 =========
 
-## Unreleased
+## 14.1.0 (2026-3-1)
 
 * @bdeitte Fill in some missing areas for automated tests
 * @bdeitte CPU performance improvements: cache byteLength in sendMessage, use hrtime.bigint in timer functions, use Map in overrideTags
