@@ -6,17 +6,8 @@ const os = require('os');
 const StatsD = require('../../lib/statsd.js');
 const EventEmitter = require('events');
 const { Writable } = require('stream');
+const unixDgram = require('unix_dgram_rs');
 const { STREAM, TCP, UDP, UDS } = require('../../lib/constants').PROTOCOL;
-let unixDgram;
-try {
-  // this will not always be available
-  unixDgram = require('unix-dgram'); // eslint-disable-line global-require
-}
-catch (err) {
-  if (os.platform() !== 'win32') {
-    console.error('Error installing unix-dgram: ', err);
-  }
-}
 
 const CLIENT = 'client';
 const CHILD_CLIENT = 'child client';

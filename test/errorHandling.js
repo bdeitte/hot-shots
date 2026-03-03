@@ -619,12 +619,7 @@ describe('#errorHandling', () => {
              */
             function createUdsTestServer(socketPath, messageHandler) {
               const fs = require('fs'); // eslint-disable-line global-require
-              let unixDgram;
-              try {
-                unixDgram = require('unix-dgram'); // eslint-disable-line global-require
-              } catch (e) {
-                return null;
-              }
+              const unixDgram = require('unix_dgram_rs'); // eslint-disable-line global-require
 
               // Clean up socket file if it exists
               try {
@@ -663,8 +658,8 @@ describe('#errorHandling', () => {
                 return done();
               }
 
-              // Mock unix-dgram socket to fail first `maxRetries` attempts, then succeed
-              const unixDgramModule = require('unix-dgram'); // eslint-disable-line global-require
+              // Mock unix-dgram-rs socket to fail first `maxRetries` attempts, then succeed
+              const unixDgramModule = require('unix_dgram_rs'); // eslint-disable-line global-require
               const realCreateSocket = unixDgramModule.createSocket;
               let sendAttempts = 0;
               unixDgramModule.createSocket = function(type) {
@@ -717,8 +712,8 @@ describe('#errorHandling', () => {
                return done();
               }
 
-              // Mock unix-dgram socket to always fail
-              const unixDgramModule = require('unix-dgram'); // eslint-disable-line global-require
+              // Mock unix_dgram_rs socket to always fail
+              const unixDgramModule = require('unix_dgram_rs'); // eslint-disable-line global-require
               const realCreateSocket = unixDgramModule.createSocket;
               unixDgramModule.createSocket = function(type) {
                 const realSocket = realCreateSocket(type);
@@ -793,7 +788,7 @@ describe('#errorHandling', () => {
                 }
                 cleanedUp = true;
                 udsServer.cleanup();
-                // restore unix-dgram createSocket if we patched it
+                // restore unix_dgram_rs createSocket if we patched it
                 try {
                   if (unixDgramModule && realCreateSocket) {
                     unixDgramModule.createSocket = realCreateSocket;
@@ -816,11 +811,11 @@ describe('#errorHandling', () => {
                 return done();
               }
 
-              // Monkey-patch unix-dgram socket to simulate buffer overflow (EAGAIN) at the socket level
+              // Monkey-patch unix_dgram_rs socket to simulate buffer overflow (EAGAIN) at the socket level
               // so that the transport's retry logic is exercised instead of being bypassed.
               try {
                 // eslint-disable-next-line global-require
-                unixDgramModule = require('unix-dgram');
+                unixDgramModule = require('unix_dgram_rs');
                 realCreateSocket = unixDgramModule.createSocket;
                 unixDgramModule.createSocket = function(type) {
                   const realSocket = realCreateSocket(type);
@@ -844,7 +839,7 @@ describe('#errorHandling', () => {
                   return realSocket;
                 };
               } catch (e) {
-                // If unix-dgram is not available, skip
+                // If unix_dgram_rs is not available, skip
                 return done();
               }
 
