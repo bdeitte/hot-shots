@@ -1,6 +1,10 @@
 CHANGELOG
 =========
 
+## 14.1.2 (2026-3-8)
+
+* @bdeitte Upgrade mocha from 10.x to 11.x and fix all dev dependency security vulnerabilities (serialize-javascript, diff, ajv)
+
 ## 14.1.1 (2026-3-1)
 
 * @bdeitte Version 14.1.0 published without a README for an unknown reason. Ensuring everything is reset locally and running publish again to attempt to fix.
