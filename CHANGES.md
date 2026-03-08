@@ -1,7 +1,7 @@
 CHANGELOG
 =========
 
-## 14.1.2 (2026-3-8)
+## Unreleased
 
 * @bdeitte Upgrade mocha from 10.x to 11.x and fix all dev dependency security vulnerabilities (serialize-javascript, diff, ajv)
 
