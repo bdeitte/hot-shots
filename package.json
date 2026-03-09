@@ -27,7 +27,7 @@
     "lib": "./lib/"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=18.0.0"
   },
   "scripts": {
     "coverage": "nyc --reporter=lcov --reporter=text npm test",
@@ -47,7 +47,6 @@
   },
   "license": "MIT",
   "overrides": {
-    "serialize-javascript": "7.x",
-    "diff": "8.x"
+    "serialize-javascript": "7.x"
   }
 }
