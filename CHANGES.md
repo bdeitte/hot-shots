@@ -1,6 +1,11 @@
 CHANGELOG
 =========
 
+## Unreleased
+
+* @bdeitte Upgrade mocha from 10.x to 11.x and fix all dev dependency security vulnerabilities (serialize-javascript, ajv)
+* @bdeitte BREAKING: Drop Node.js 16 support, now requires Node.js >= 18.0.0
+
 ## 14.1.1 (2026-3-1)
 
 * @bdeitte Version 14.1.0 published without a README for an unknown reason. Ensuring everything is reset locally and running publish again to attempt to fix.

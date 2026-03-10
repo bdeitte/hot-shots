@@ -27,7 +27,7 @@
     "lib": "./lib/"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=18.0.0"
   },
   "scripts": {
     "coverage": "nyc --reporter=lcov --reporter=text npm test",
@@ -41,10 +41,12 @@
   },
   "devDependencies": {
     "eslint": "8.x",
-    "mocha": "10.x",
+    "mocha": "11.x",
     "nyc": "15.x",
     "sinon": "19.x"
   },
   "license": "MIT",
-  "dependencies": {}
+  "overrides": {
+    "serialize-javascript": "7.x"
+  }
 }
