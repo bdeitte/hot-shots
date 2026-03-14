@@ -180,7 +180,7 @@ See `test/udpDnsCacheTransport.js` and `test/udpSocketOptions.js` for examples.
 - Constructor parameter expansion is deprecated - use options object
 - Mock mode available for testing (prevents actual metric sending)
 - Add debug logging that can be enabled with "NODE_DEBUG=hot-shots"
-- Updates should be noted in CHANGES.md using the format: `* @username Description`. For breaking changes, prefix with `Breaking:` (e.g., `* @username BREAKING: Description`). Do not use bold section headers.
+- Updates should be noted in CHANGES.md using the format: `* [@username](https://github.com/username) Description`. For breaking changes, prefix with `Breaking:` (e.g., `* [@username](https://github.com/username) BREAKING: Description`). Do not use bold section headers. Always link `@username` mentions to their GitHub profiles and `#NNN` issue/PR references to `https://github.com/bdeitte/hot-shots/issues/NNN`.
 - API changes should be noted in README.md
 
 ## Follow for all code changes
