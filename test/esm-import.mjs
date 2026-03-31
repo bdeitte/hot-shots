@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import hotShots, { StatsD } from '../index.mjs';
+import hotShots, { StatsD } from 'hot-shots';
 
 // Default export is the Client constructor
 assert.strictEqual(typeof hotShots, 'function', 'default export should be a function');

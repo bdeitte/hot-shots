@@ -15,7 +15,8 @@
         "types": "./types.d.ts",
         "default": "./index.js"
       }
-    }
+    },
+    "./*": "./*"
   },
   "contributors": [
     "Russ Bradberry <rbradberry@gmail.com>",
@@ -44,7 +45,7 @@
   },
   "scripts": {
     "coverage": "nyc --reporter=lcov --reporter=text npm test",
-    "test": "mocha -R spec --timeout 5000 test/*.js",
+    "test": "mocha -R spec --timeout 5000 test/*.js && node test/esm-import.mjs",
     "lint": "eslint \"./lib/**/*.js\" \"./test/**/*.js\"",
     "perf": "node perfTest/test.js",
     "pretest": "npm run lint"
