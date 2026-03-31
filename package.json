@@ -46,7 +46,7 @@
   "scripts": {
     "coverage": "nyc --reporter=lcov --reporter=text npm test",
     "test": "mocha -R spec --timeout 5000 test/*.js && node test/esm-import.mjs",
-    "lint": "eslint \"./lib/**/*.js\" \"./test/**/*.js\"",
+    "lint": "eslint \"./lib/**/*.js\" \"./test/**/*.{js,mjs}\"",
     "perf": "node perfTest/test.js",
     "pretest": "npm run lint"
   },
