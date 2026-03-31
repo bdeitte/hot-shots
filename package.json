@@ -3,7 +3,20 @@
   "description": "Node.js client for StatsD, DogStatsD, and Telegraf",
   "version": "14.2.0",
   "author": "Steve Ivy",
+  "main": "./index.js",
   "types": "./types.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./types.d.ts",
+        "default": "./index.mjs"
+      },
+      "require": {
+        "types": "./types.d.ts",
+        "default": "./index.js"
+      }
+    }
+  },
   "contributors": [
     "Russ Bradberry <rbradberry@gmail.com>",
     "Brian Deitte <bdeitte@gmail.com>"
