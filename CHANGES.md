@@ -1,7 +1,7 @@
 CHANGELOG
 =========
 
-## Unreleased
+## 14.3.0 (2026-4-3)
 
 * [@bdeitte](https://github.com/bdeitte) Add ESM support via `exports` field in package.json and `index.mjs` wrapper, enabling `import StatsD from 'hot-shots'` in ES module projects
 
