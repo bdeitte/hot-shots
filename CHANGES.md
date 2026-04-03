@@ -1,6 +1,10 @@
 CHANGELOG
 =========
 
+## Unreleased
+
+* [@bdeitte](https://github.com/bdeitte) Add ESM support via `exports` field in package.json and `index.mjs` wrapper, enabling `import StatsD from 'hot-shots'` in ES module projects
+
 ## 14.2.0 (2026-3-14)
 
 * [@bdeitte](https://github.com/bdeitte) Upgrade mocha from 10.x to 11.x and fix all dev dependency security vulnerabilities (serialize-javascript, ajv)

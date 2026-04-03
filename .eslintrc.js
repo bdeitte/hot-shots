@@ -8,6 +8,21 @@ module.exports = {
     "parserOptions": {
         "ecmaVersion": 2015
     },
+    "overrides": [
+        {
+            "files": ["**/*.mjs"],
+            "parserOptions": {
+                "ecmaVersion": 2022,
+                "sourceType": "module"
+            },
+            "rules": {
+                "global-require": "off",
+                "no-duplicate-imports": "off",
+                "require-jsdoc": "off",
+                "sort-imports": "off"
+            }
+        }
+    ],
     "rules": {
         "accessor-pairs": "error",
         "array-bracket-newline": "off",

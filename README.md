@@ -26,7 +26,16 @@ hot-shots supports Node 18.x and higher. When using types.d.ts, hot-shots requir
 ## Example
 
 ```javascript
+// CommonJS
 const StatsD = require('hot-shots');
+const client = new StatsD();
+
+client.increment('my_counter');
+```
+
+```javascript
+// ESM
+import StatsD from 'hot-shots';
 const client = new StatsD();
 
 client.increment('my_counter');
