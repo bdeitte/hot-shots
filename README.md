@@ -43,7 +43,7 @@ client.gauge('my_gauge', 123.45);
 
 ```typescript
 // TypeScript
-import StatsD, { ClientOptions } from 'hot-shots';
+import StatsD, { type ClientOptions } from 'hot-shots';
 const options: ClientOptions = {
   port: 8125,
   globalTags: { env: 'production' }
