@@ -1,6 +1,9 @@
 CHANGELOG
 =========
 
+* [@72636c](https://github.com/72636c) Omit Claude and GitHub dev files from bundle
+* [@bdeitte](https://github.com/bdeitte) Fix TypeScript error from ESM support changes and add TypeScript tests ([#316](https://github.com/bdeitte/hot-shots/issues/316))
+
 ## 14.3.0 (2026-4-3)
 
 * [@bdeitte](https://github.com/bdeitte) Add ESM support via `exports` field in package.json and `index.mjs` wrapper, enabling `import StatsD from 'hot-shots'` in ES module projects
