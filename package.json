@@ -8,7 +8,7 @@
   "exports": {
     ".": {
       "import": {
-        "types": "./types.d.ts",
+        "types": "./types.d.mts",
         "default": "./index.mjs"
       },
       "require": {
@@ -54,10 +54,12 @@
     "unix-dgram": "2.x"
   },
   "devDependencies": {
+    "@types/node": "25.x",
     "eslint": "8.x",
     "mocha": "11.x",
     "nyc": "15.x",
-    "sinon": "19.x"
+    "sinon": "19.x",
+    "typescript": "5.x"
   },
   "license": "MIT",
   "overrides": {
