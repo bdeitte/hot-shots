@@ -38,7 +38,15 @@ client.increment('my_counter');
 import StatsD from 'hot-shots';
 const client = new StatsD();
 
-client.increment('my_counter');
+client.gauge('my_gauge', 123.45);
+```
+
+```typescript
+// TypeScript
+import StatsD from 'hot-shots';
+const client: StatsD = new StatsD()
+
+client.histogram('my_histogram', 42)
 ```
 
 ## Usage
