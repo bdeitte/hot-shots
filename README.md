@@ -43,8 +43,12 @@ client.gauge('my_gauge', 123.45);
 
 ```typescript
 // TypeScript
-import StatsD from 'hot-shots';
-const client: StatsD = new StatsD()
+import StatsD, { ClientOptions } from 'hot-shots';
+const options: ClientOptions = {
+  port: 8125,
+  globalTags: { env: 'production' }
+};
+const client = new StatsD(options);
 
 client.histogram('my_histogram', 42)
 ```
