@@ -828,7 +828,17 @@ Client.prototype.close = function (callback) {
       }
     });
 
-    Promise.race([this._drainPromise, timeoutPromise]).then(() => {
+    // Defensive: if _drainPromise is null while messagesInFlight > 0
+    // (possible if a caller mutates messagesInFlight directly without going through
+    // sendMessage — see close.js: the existing 'force close after 10 attempts' test does
+    // exactly this), fall back to waiting on the timeout alone. We must NOT pass `null`
+    // to Promise.race — non-thenables are treated as already-resolved and would skip
+    // the wait entirely.
+    const racers = this._drainPromise ?
+      [this._drainPromise, timeoutPromise] :
+      [timeoutPromise];
+
+    Promise.race(racers).then(() => {
       if (timer) {
         clearTimeout(timer);
       }
@@ -843,7 +853,10 @@ Client.prototype.close = function (callback) {
 - [ ] **Step 8.4: Run full suite, focus on close tests**
 
 Run: `npx mocha test/close.js --timeout 5000`
-Expected: all tests PASS, including `should force close after 10 attempts when messagesInFlight stays positive`. The test sets `statsd.messagesInFlight = 5` before calling close — the timeout path triggers, `finish()` zeros it out, the assertion passes.
+Expected: all tests PASS. Two cases worth understanding:
+
+1. The normal path — a real `set()`/`increment()` followed by `close()` — uses `_drainPromise` because `sendMessage` allocates it on the 0→1 transition; `close()` resolves as soon as the last in-flight callback decrements the counter to 0.
+2. The `should force close after 10 attempts when messagesInFlight stays positive` test sets `statsd.messagesInFlight = 5` *directly* without going through `sendMessage`, so `_drainPromise` is `null`. The defensive fallback above ensures we wait on the timeout alone (~50ms with `closingFlushInterval: 5`), then `finish()` zeros the counter and the test's `assert.strictEqual(statsd.messagesInFlight, 0)` passes.
 
 Run: `npm test`
 Expected: full suite PASS.
