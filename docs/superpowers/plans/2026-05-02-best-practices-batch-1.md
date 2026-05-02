@@ -799,9 +799,12 @@ Client.prototype.close = function (callback) {
       }
     }
 
-    // Wait for in-flight messages to drain, with the same overall budget the
-    // previous polling implementation used (closingFlushInterval * 10).
-    const drainTimeoutMs = this.closingFlushInterval * 10;
+    // Wait for in-flight messages to drain. Match the existing polling implementation's
+    // budget exactly: it increments intervalAttempts before checking `> 10`, so the
+    // force-close fires on the 11th tick — i.e. closingFlushInterval * 11 ms after close().
+    // Using * 10 would shorten the grace period by one tick and could force-close a
+    // message that would have drained under the prior implementation.
+    const drainTimeoutMs = this.closingFlushInterval * 11;
 
     const finish = () => {
       if (this.messagesInFlight > 0) {
@@ -856,7 +859,7 @@ Run: `npx mocha test/close.js --timeout 5000`
 Expected: all tests PASS. Two cases worth understanding:
 
 1. The normal path — a real `set()`/`increment()` followed by `close()` — uses `_drainPromise` because `sendMessage` allocates it on the 0→1 transition; `close()` resolves as soon as the last in-flight callback decrements the counter to 0.
-2. The `should force close after 10 attempts when messagesInFlight stays positive` test sets `statsd.messagesInFlight = 5` *directly* without going through `sendMessage`, so `_drainPromise` is `null`. The defensive fallback above ensures we wait on the timeout alone (~50ms with `closingFlushInterval: 5`), then `finish()` zeros the counter and the test's `assert.strictEqual(statsd.messagesInFlight, 0)` passes.
+2. The `should force close after 10 attempts when messagesInFlight stays positive` test sets `statsd.messagesInFlight = 5` *directly* without going through `sendMessage`, so `_drainPromise` is `null`. The defensive fallback above ensures we wait on the timeout alone (~55ms with `closingFlushInterval: 5`, matching the prior 11-tick budget), then `finish()` zeros the counter and the test's `assert.strictEqual(statsd.messagesInFlight, 0)` passes.
 
 Run: `npm test`
 Expected: full suite PASS.
