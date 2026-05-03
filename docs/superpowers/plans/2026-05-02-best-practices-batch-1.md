@@ -306,13 +306,19 @@ git commit -m "Invoke buffered-message callback when overflow triggers flush"
 
 ---
 
-## Task 4: Convert Client and ChildClient to ES6 classes (#3)
+## Task 4: Convert Client and ChildClient to ES6 classes (#3) — SKIPPED / REVERTED
+
+**Status:** Implemented in `73cc140`, reverted in `eaaeae2`. Do not retry without an API-compat plan.
+
+**Reason for revert:** Converting the exported `StatsD` constructor from an ES5 function to a native `class` is a runtime-visible breaking change for callers using `StatsD.call(this, ...)` or `util.inherits(StatsD, ...)` — those patterns now throw `TypeError: Class constructor cannot be invoked without 'new'`. Hot-shots is library code with broad consumption; that is a hard runtime break, not a soft degradation. Per user direction the win (internal cleanliness) is not worth the back-compat cost.
+
+**If you revisit this later:** the path forward would be to keep ES6 classes internally but export a function wrapper that delegates — or treat as a semver-major release. Both are out of scope for this batch.
 
 **Files:**
 - Modify: `lib/statsd.js` (Client constructor, ChildClient constructor, util.inherits call, top-level requires)
 
-### Why
-`util.inherits` plus `Function`-style constructors is the pre-ES2015 inheritance pattern. Node ≥18 supports `class extends` natively, the eslint config's parserOptions already permits it (ecmaVersion 2015), and `applyStatsFns(Client)` continues to work because class prototypes are extensible. Public API (callable with `new Client(...)` or `new Client({...})`) is preserved.
+### Why (original motivation, no longer pursued)
+`util.inherits` plus `Function`-style constructors is the pre-ES2015 inheritance pattern. Node ≥18 supports `class extends` natively, the eslint config's parserOptions already permits it (ecmaVersion 2015), and `applyStatsFns(Client)` continues to work because class prototypes are extensible. Public API (callable with `new Client(...)` or `new Client({...})`) is preserved — **this claim turned out to be wrong**; see "Reason for revert" above.
 
 This task is purely structural — no behavior change.
 
@@ -1010,7 +1016,6 @@ Open `CHANGES.md`. Add the following entries under the next unreleased version s
 ```
 * [@bdeitte](https://github.com/bdeitte) Wrap setInterval flush callbacks in try/catch so a buggy errorHandler or transport cannot crash the host process.
 * [@bdeitte](https://github.com/bdeitte) Fix bug where the buffered-message callback was misrouted to the prior buffer's flush; the new message's callback now fires inline, matching the non-overflow path.
-* [@bdeitte](https://github.com/bdeitte) Convert Client and ChildClient to ES6 classes (replacing util.inherits). No public API change.
 * [@bdeitte](https://github.com/bdeitte) Attach a default 'error' listener on every transport socket so emitted errors do not crash the process when no errorHandler is supplied.
 * [@bdeitte](https://github.com/bdeitte) Short-circuit per-call tag merging when the per-call tag list is empty.
 * [@bdeitte](https://github.com/bdeitte) Breaking: Validate port, sampleRate, and bufferFlushInterval at construction; clearly invalid values now throw TypeError instead of silently producing broken metrics.

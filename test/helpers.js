@@ -399,6 +399,15 @@ describe('#helpersExtended', () => {
         // ':invalid' is sanitized to '_invalid' because leading colons are invalid in tags
         assert.deepStrictEqual(result, ['normal:tag', 'valid:tag', '_invalid']);
       });
+
+      it('returns a different array instance when child is empty (no aliasing)', () => {
+        const parent = ['env:prod', 'region:us-east'];
+        const result = helpers.overrideTags(parent, []);
+
+        assert.deepStrictEqual(result, parent);
+        assert.notStrictEqual(result, parent,
+          'empty-child fast path must not return the parent reference');
+      });
     });
 
     describe('Object child tags', () => {
@@ -464,6 +473,15 @@ describe('#helpersExtended', () => {
         const result = helpers.overrideTags(parent, child, true);
 
         assert.deepStrictEqual(result, ['env:prod', 'key_with_commas:value_with_commas']);
+      });
+
+      it('returns a different array instance when child is an empty object (no aliasing)', () => {
+        const parent = ['env:prod', 'region:us-east'];
+        const result = helpers.overrideTags(parent, {});
+
+        assert.deepStrictEqual(result, parent);
+        assert.notStrictEqual(result, parent,
+          'empty-object child fast path must not return the parent reference');
       });
     });
 
