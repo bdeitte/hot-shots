@@ -76,7 +76,9 @@ describe('#transportDefaultErrorListener', () => {
       statsd = null;
 
       // No callback — the cleanup path must still run (motivation for unconditional
-      // on('close') in _close). Wait one tick for stream.destroy() to emit 'close'.
+      // on('close') in _close). Wait long enough for: (a) the provisional drain check
+      // (one closingFlushInterval tick, default 50ms), (b) stream.destroy() to emit
+      // 'close', (c) onClose to remove the listeners.
       wrapped.close();
       setTimeout(() => {
         const errorAfter = callerStream.listenerCount('error');
@@ -90,11 +92,11 @@ describe('#transportDefaultErrorListener', () => {
         server.close();
         server = null;
         done();
-      }, 50);
+      }, 200);
     });
   });
 
-  it('cleans up _close listeners even when socket.close() throws synchronously', done => {
+  it('cleans up _close listeners and restores the default error listener when destroy throws synchronously', done => {
     server = createServer('stream', opts => {
       const callerStream = opts.stream;
       const baselineErrorCount = callerStream.listenerCount('error');
@@ -103,23 +105,61 @@ describe('#transportDefaultErrorListener', () => {
       statsd = createHotShotsClient(opts, 'client');
 
       // Force the underlying stream.destroy() to throw. The transport's close() runs
-      // first (and removes its own default listener), then the throw propagates up
-      // through transport.close() into Client._close's try/catch — exercising the
-      // catch-path cleanup of handleErr and onClose.
+      // first (removes default listener, then destroy() throws → catch re-attaches it),
+      // then the throw propagates up to Client._close's try/catch which cleans up
+      // handleErr and onClose.
       callerStream.destroy = () => { throw new Error('synthetic destroy failure'); };
 
       const wrapped = statsd;
       statsd = null;
       wrapped.close((err) => {
         assert.ok(err, 'close callback should receive the synthetic error');
+        // After: handleErr + onClose are gone, but the transport's default listener
+        // was re-attached so the surviving stream still has crash protection.
         const errorAfter = callerStream.listenerCount('error');
         const closeAfter = callerStream.listenerCount('close');
-        assert.strictEqual(errorAfter, baselineErrorCount,
-          'error listeners must clean up on synchronous close failure; ' +
+        assert.strictEqual(errorAfter, baselineErrorCount + 1,
+          'default error listener must be re-attached when destroy throws; ' +
           `baseline=${baselineErrorCount}, after=${errorAfter}`);
         assert.strictEqual(closeAfter, baselineCloseCount,
           'close listeners must clean up on synchronous close failure; ' +
           `baseline=${baselineCloseCount}, after=${closeAfter}`);
+        // Verify the surviving stream actually does NOT crash on a future error emit.
+        assert.doesNotThrow(() => {
+          callerStream.emit('error', new Error('post-close emit'));
+        }, 'surviving stream must not crash on later error emits');
+        server.close();
+        server = null;
+        done();
+      });
+    });
+  });
+
+  it('restores user errorHandler on the surviving stream when destroy throws synchronously', done => {
+    server = createServer('stream', opts => {
+      const callerStream = opts.stream;
+      const received = [];
+      const userHandler = err => received.push(err);
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        errorHandler: userHandler,
+      }), 'client');
+
+      callerStream.destroy = () => { throw new Error('synthetic destroy failure'); };
+
+      const wrapped = statsd;
+      statsd = null;
+      wrapped.close(() => {
+        // Note: the close-time error goes only to the close callback (callback takes
+        // precedence over errorHandler in handleErr). What we want to verify here is
+        // that the user's errorHandler was re-attached to the surviving stream — so
+        // emitting a NEW error after close completes must reach it.
+        const beforeEmit = received.length;
+        callerStream.emit('error', new Error('post-close stream error'));
+        assert.strictEqual(received.length, beforeEmit + 1,
+          'post-close emit should land in user errorHandler exactly once');
+        assert.strictEqual(received[received.length - 1].message, 'post-close stream error',
+          'restored user errorHandler must receive post-close stream errors');
         server.close();
         server = null;
         done();

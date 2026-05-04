@@ -277,6 +277,16 @@ describe('#close', () => {
       });
     });
 
+    // Note: there is no direct regression test for the provisional-drain budget cap
+    // (Math.min(this.closingFlushInterval, remaining) in lib/statsd.js's close()
+    // drain). The cap saves at most closingFlushInterval - remaining ms over the
+    // buggy path, which is comparable to OS timer precision (~16ms), so any
+    // real-clock assertion either lets the buggy path pass within slack or is
+    // flaky. A fully deterministic version would require sinon fake timers wrapped
+    // around the Promise.race + setImmediate machinery in the drain loop —
+    // possible but disproportionate for a 4-character correctness-by-inspection
+    // change. Tracked as follow-up work; correctness is currently verified by
+    // code review only.
     it('waits for sends queued asynchronously (setImmediate) during the drain window', done => {
       server = createServer('udp', opts => {
         statsd = createHotShotsClient(Object.assign(opts, {
@@ -318,6 +328,43 @@ describe('#close', () => {
           server.close();
           server = null;
           statsd = null;
+          done();
+        });
+      });
+    });
+  });
+
+  describe('child close', () => {
+    it('does not double-deliver close-time errors via the inherited parent errorHandler', done => {
+      let parentHandlerCalls = 0;
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(Object.assign(opts, {
+          errorHandler: () => { parentHandlerCalls++; },
+        }), 'client');
+
+        const child = statsd.childClient();
+
+        // Pre-fix: child._close removed the user errorHandler, attached handleErr,
+        // attempted close, then restored. With the parent's errorHandler still on
+        // the shared socket AND handleErr also attached, an async close-time 'error'
+        // emit would fire both — the user callback gets the err via handleErr AND
+        // the parent's errorHandler fires unexpectedly. Post-fix: children skip the
+        // listener machinery entirely (synchronous close + sync callback). Force a
+        // close failure and assert: the child's callback receives the error, AND
+        // the parent's errorHandler is NOT called as a side effect.
+        const originalClose = statsd.socket.close.bind(statsd.socket);
+        statsd.socket.close = () => {
+          throw new Error('synthetic close failure');
+        };
+
+        child.close((err) => {
+          // Restore early so any subsequent close (e.g. afterEach) doesn't re-throw.
+          statsd.socket.close = originalClose;
+          assert.ok(err, 'child close callback should receive the error');
+          assert.ok((/synthetic close failure/).test(err.message),
+            `expected wrapped synthetic error, got: ${err && err.message}`);
+          assert.strictEqual(parentHandlerCalls, 0,
+            `parent errorHandler must not be invoked during child close; got ${parentHandlerCalls}`);
           done();
         });
       });
