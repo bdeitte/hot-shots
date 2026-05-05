@@ -335,38 +335,175 @@ describe('#close', () => {
   });
 
   describe('child close', () => {
-    it('does not double-deliver close-time errors via the inherited parent errorHandler', done => {
-      let parentHandlerCalls = 0;
+    // Helper: delay socket.close so _close's listener window stays open long enough
+    // for our synthetic emit to land while handleSocketErr is still attached.
+    const delaySocketClose = (statsdClient, ms) => {
+      const origClose = statsdClient.socket.close.bind(statsdClient.socket);
+      statsdClient.socket.close = () => {
+        setTimeout(origClose, ms);
+      };
+    };
+
+    it('async close-time error reaches inherited errorHandler exactly once (no double-delivery)', done => {
+      let inheritedHandlerCalls = 0;
       server = createServer('udp', opts => {
         statsd = createHotShotsClient(Object.assign(opts, {
-          errorHandler: () => { parentHandlerCalls++; },
+          errorHandler: () => { inheritedHandlerCalls++; },
+          closingFlushInterval: 5,
         }), 'client');
 
         const child = statsd.childClient();
+        delaySocketClose(statsd, 100);
 
-        // Pre-fix: child._close removed the user errorHandler, attached handleErr,
-        // attempted close, then restored. With the parent's errorHandler still on
-        // the shared socket AND handleErr also attached, an async close-time 'error'
-        // emit would fire both — the user callback gets the err via handleErr AND
-        // the parent's errorHandler fires unexpectedly. Post-fix: children skip the
-        // listener machinery entirely (synchronous close + sync callback). Force a
-        // close failure and assert: the child's callback receives the error, AND
-        // the parent's errorHandler is NOT called as a side effect.
-        const originalClose = statsd.socket.close.bind(statsd.socket);
-        statsd.socket.close = () => {
-          throw new Error('synthetic close failure');
-        };
+        child.close(() => { /* close callback */ });
 
-        child.close((err) => {
-          // Restore early so any subsequent close (e.g. afterEach) doesn't re-throw.
-          statsd.socket.close = originalClose;
-          assert.ok(err, 'child close callback should receive the error');
-          assert.ok((/synthetic close failure/).test(err.message),
-            `expected wrapped synthetic error, got: ${err && err.message}`);
-          assert.strictEqual(parentHandlerCalls, 0,
-            `parent errorHandler must not be invoked during child close; got ${parentHandlerCalls}`);
+        // Emit AFTER _close attaches listeners but BEFORE the delayed socket.close
+        // completes. Pre-fix: parent's listener fires AND handleSocketErr →
+        // this.errorHandler (same inherited fn) fires = 2 calls. Post-fix: only
+        // parent's listener fires.
+        setTimeout(() => {
+          statsd.socket.emit('error', new Error('synthetic async error'));
+        }, 30);
+        setTimeout(() => {
+          assert.strictEqual(inheritedHandlerCalls, 1,
+            `inherited errorHandler should fire exactly once; got ${inheritedHandlerCalls}`);
+          server.close();
+          server = null;
           done();
+        }, 200);
+      });
+    });
+
+    it('async close-time error reaches close callback when child has overridden errorHandler', done => {
+      let parentCalls = 0;
+      let childCalls = 0;
+      let callbackErr = null;
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(Object.assign(opts, {
+          errorHandler: () => { parentCalls++; },
+          closingFlushInterval: 5,
+        }), 'client');
+
+        const child = statsd.childClient({
+          errorHandler: () => { childCalls++; },
         });
+        delaySocketClose(statsd, 100);
+
+        child.close((err) => { callbackErr = err; });
+
+        setTimeout(() => {
+          statsd.socket.emit('error', new Error('synthetic async error'));
+        }, 30);
+        setTimeout(() => {
+          assert.strictEqual(parentCalls, 1, `parent errorHandler should fire once; got ${parentCalls}`);
+          assert.strictEqual(childCalls, 0,
+            'child callback was supplied — child errorHandler should not be called');
+          assert.ok(callbackErr, 'child close callback should receive the async error');
+          assert.ok((/synthetic async error/).test(callbackErr.message),
+            `expected wrapped synthetic error, got: ${callbackErr && callbackErr.message}`);
+          server.close();
+          server = null;
+          done();
+        }, 200);
+      });
+    });
+
+    it('async close-time error reaches overridden child errorHandler when no close callback is supplied', done => {
+      let parentCalls = 0;
+      let childCalls = 0;
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(Object.assign(opts, {
+          errorHandler: () => { parentCalls++; },
+          closingFlushInterval: 5,
+        }), 'client');
+
+        const child = statsd.childClient({
+          errorHandler: () => { childCalls++; },
+        });
+        delaySocketClose(statsd, 100);
+
+        child.close();
+
+        setTimeout(() => {
+          statsd.socket.emit('error', new Error('synthetic async error'));
+        }, 30);
+        setTimeout(() => {
+          assert.strictEqual(parentCalls, 1, `parent errorHandler should fire once; got ${parentCalls}`);
+          assert.strictEqual(childCalls, 1,
+            `child overridden errorHandler should fire exactly once; got ${childCalls}`);
+          server.close();
+          server = null;
+          done();
+        }, 200);
+      });
+    });
+
+    it('async close-time error reaches root errorHandler when no close callback (regression for stale on-socket flag)', done => {
+      // The persistent _errorHandlerIsOnSocket flag is true for a root client with
+      // an errorHandler at construction. But _close() removes the user's handler
+      // from the socket, so by the time handleSocketErr fires it must NOT use the
+      // stale flag — the local errorHandlerOnSocketDuringClose tracks the runtime
+      // state. Pre-fix: root errorHandler was suppressed and the close-time error
+      // dropped entirely.
+      let rootCalls = 0;
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(Object.assign(opts, {
+          errorHandler: () => { rootCalls++; },
+          closingFlushInterval: 5,
+        }), 'client');
+        delaySocketClose(statsd, 100);
+
+        // No close callback — handleSocketErr must route to errorHandler.
+        statsd.close();
+
+        setTimeout(() => {
+          statsd.socket.emit('error', new Error('synthetic async error'));
+        }, 30);
+        setTimeout(() => {
+          assert.strictEqual(rootCalls, 1,
+            `root errorHandler should receive the async error; got ${rootCalls}`);
+          server.close();
+          server = null;
+          // Null out so afterEach doesn't try to close again.
+          statsd = null;
+          done();
+        }, 200);
+      });
+    });
+
+    it('grandchild inheriting through an overriding child does not lose async error delivery', done => {
+      let rootCalls = 0;
+      let intermediateCalls = 0;
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(Object.assign(opts, {
+          errorHandler: () => { rootCalls++; },
+          closingFlushInterval: 5,
+        }), 'client');
+
+        const intermediate = statsd.childClient({
+          errorHandler: () => { intermediateCalls++; },
+        });
+
+        // Grandchild inherits intermediate's overridden handler. The handler is NOT
+        // on the shared socket (only root's is), so the propagation must result in
+        // grandchild._errorHandlerIsOnSocket === false; handleSocketErr must call it
+        // explicitly on async errors.
+        const grandchild = intermediate.childClient();
+        delaySocketClose(statsd, 100);
+
+        grandchild.close();
+
+        setTimeout(() => {
+          statsd.socket.emit('error', new Error('synthetic async error'));
+        }, 30);
+        setTimeout(() => {
+          assert.strictEqual(rootCalls, 1, `root errorHandler should fire once; got ${rootCalls}`);
+          assert.strictEqual(intermediateCalls, 1,
+            `grandchild's inherited handler should fire once; got ${intermediateCalls}`);
+          server.close();
+          server = null;
+          done();
+        }, 200);
       });
     });
   });

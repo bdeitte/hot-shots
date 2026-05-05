@@ -1,6 +1,20 @@
 CHANGELOG
 =========
 
+## Unreleased
+
+* [@bdeitte](https://github.com/bdeitte) Wrap setInterval flush callbacks (buffer flush, telemetry flush) in try/catch so a buggy errorHandler or transport cannot crash the host process; thread errorHandler through Telemetry and surface real failures via console.error fallback.
+* [@bdeitte](https://github.com/bdeitte) Fix bug where the buffered-message callback was misrouted to the prior buffer's flush; the new message's callback now fires synchronously after enqueue, matching the non-overflow path. Errors from overflow-driven flushes are now routed to errorHandler instead of an unrelated metric's callback.
+* [@bdeitte](https://github.com/bdeitte) Guard the final telemetry flush in close() so a synchronous failure during shutdown reaches errorHandler / console.error instead of aborting close and skipping the caller's callback.
+* [@bdeitte](https://github.com/bdeitte) Attach a default 'error' listener on every transport socket (UDP, TCP, UDS) so emitted errors do not crash the process when no errorHandler is supplied. Stream transport gets a removable named listener that is cleaned up on close so caller-owned streams don't accumulate listeners across client lifecycles.
+* [@bdeitte](https://github.com/bdeitte) Short-circuit per-call tag merging when the per-call tag list is empty.
+* [@bdeitte](https://github.com/bdeitte) Breaking: Validate `port`, `sampleRate`, and `bufferFlushInterval` at construction; clearly invalid values now throw `TypeError` instead of silently producing broken metrics. `sampleRate` must be in `(0, 1]` (zero is rejected — to drop a metric, simply do not call the method); per-call `sampleRate: 0` is also rejected.
+* [@bdeitte](https://github.com/bdeitte) Replace setInterval polling in close() with a Promise-based drain. Provisional zero-drain check waits one closingFlushInterval tick (capped to remaining budget) so async-queued follow-up sends — including those queued via Promise/setImmediate/setTimeout(0) from within send callbacks — complete before close finishes. Total close budget unchanged.
+* [@bdeitte](https://github.com/bdeitte) Improve close-time error routing: child clients that inherit the parent's errorHandler no longer double-deliver async close-time errors; child clients with overridden handlers correctly receive errors via callback or handler; root clients receive async close errors that previously went to a stale on-socket flag; listener cleanup tolerates synchronous close failures and incomplete socket mocks.
+* [@bdeitte](https://github.com/bdeitte) Override `uuid` to 14.x in dev dependencies to address [GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq) (transitive via `nyc` → `istanbul-lib-processinfo`).
+* [@bdeitte](https://github.com/bdeitte) Misc cleanups: `for-of` over array routes in helpers, simplified EAGAIN access, deduped `Buffer.byteLength` in `sendMessage`, allocation-free telegraf tag insertion in the per-metric send path.
+* [@bdeitte](https://github.com/bdeitte) Document buffered-mode callback semantics, unbuffered failure paths, and close-time error routing in README. errorHandler covers most paths but does not catch buffered close-time flush failures — supply a `close` callback to observe those.
+
 ## 14.3.1 (2026-4-6)
 
 * [@72636c](https://github.com/72636c) Omit Claude and GitHub dev files from bundle
