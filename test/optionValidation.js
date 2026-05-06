@@ -1,70 +1,162 @@
 const assert = require('assert');
+const sinon = require('sinon');
 const StatsD = require('../lib/statsd');
 
 describe('#optionValidation', () => {
-  it('throws TypeError when port is not an integer in [1, 65535]', () => {
-    assert.throws(() => new StatsD({ port: 0 }), TypeError);
-    assert.throws(() => new StatsD({ port: -1 }), TypeError);
-    assert.throws(() => new StatsD({ port: 70000 }), TypeError);
-    assert.throws(() => new StatsD({ port: 'abc' }), TypeError);
-    assert.throws(() => new StatsD({ port: 1.5 }), TypeError);
+  let consoleErrorStub;
+
+  beforeEach(() => {
+    consoleErrorStub = sinon.stub(console, 'error');
   });
 
-  it('accepts valid port values', () => {
-    // mock: true so no socket is actually created
-    assert.doesNotThrow(() => new StatsD({ port: 1, mock: true }));
-    assert.doesNotThrow(() => new StatsD({ port: 8125, mock: true }));
-    assert.doesNotThrow(() => new StatsD({ port: 65535, mock: true }));
-    // omitted port -> defaults to 8125, no throw
-    assert.doesNotThrow(() => new StatsD({ mock: true }));
+  afterEach(() => {
+    if (consoleErrorStub) {
+      consoleErrorStub.restore();
+      consoleErrorStub = null;
+    }
   });
 
-  it('throws TypeError when sampleRate is outside (0, 1] or not a number', () => {
-    // 0 is rejected: dropping every metric is not a valid use case (just stop calling
-    // the metric methods). Negative values and > 1 are also nonsense.
-    assert.throws(() => new StatsD({ sampleRate: 0, mock: true }), TypeError);
-    assert.throws(() => new StatsD({ sampleRate: -0.1, mock: true }), TypeError);
-    assert.throws(() => new StatsD({ sampleRate: 1.1, mock: true }), TypeError);
-    assert.throws(() => new StatsD({ sampleRate: 'half', mock: true }), TypeError);
+  /**
+   * Returns true iff console.error was called with a string matching needle.
+   */
+  const warnedAbout = (needle) => {
+    return consoleErrorStub.getCalls().some(c => {
+      return typeof c.args[0] === 'string' && c.args[0].includes(needle);
+    });
+  };
+
+  describe('port', () => {
+    it('warns (does not throw) when port is not an integer in [1, 65535]', () => {
+      // Note: invalid values are NOT rejected — preserved for backwards compatibility.
+      // Construction continues with the value; later code falls back to defaults
+      // for falsy values via existing `||` chains.
+      assert.doesNotThrow(() => new StatsD({ port: 0, mock: true }));
+      assert.doesNotThrow(() => new StatsD({ port: -1, mock: true }));
+      assert.doesNotThrow(() => new StatsD({ port: 70000, mock: true }));
+      assert.doesNotThrow(() => new StatsD({ port: 'abc', mock: true }));
+      assert.doesNotThrow(() => new StatsD({ port: 1.5, mock: true }));
+      assert.ok(warnedAbout('\'port\''),
+        'expected at least one console.error mentioning port');
+    });
+
+    it('does not warn for valid port values', () => {
+      assert.doesNotThrow(() => new StatsD({ port: 1, mock: true }));
+      assert.doesNotThrow(() => new StatsD({ port: 8125, mock: true }));
+      assert.doesNotThrow(() => new StatsD({ port: 65535, mock: true }));
+      assert.doesNotThrow(() => new StatsD({ mock: true }));
+      assert.strictEqual(warnedAbout('\'port\''), false,
+        'expected no port warnings');
+    });
   });
 
-  it('accepts valid sampleRate values', () => {
-    assert.doesNotThrow(() => new StatsD({ sampleRate: 0.001, mock: true }));
-    assert.doesNotThrow(() => new StatsD({ sampleRate: 0.5, mock: true }));
-    assert.doesNotThrow(() => new StatsD({ sampleRate: 1, mock: true }));
-    assert.doesNotThrow(() => new StatsD({ mock: true }));
+  describe('sampleRate', () => {
+    it('warns (does not throw) when sampleRate is outside (0, 1] or not a number', () => {
+      assert.doesNotThrow(() => new StatsD({ sampleRate: 0, mock: true }));
+      assert.doesNotThrow(() => new StatsD({ sampleRate: -0.1, mock: true }));
+      assert.doesNotThrow(() => new StatsD({ sampleRate: 1.1, mock: true }));
+      assert.doesNotThrow(() => new StatsD({ sampleRate: 'half', mock: true }));
+      assert.ok(warnedAbout('\'sampleRate\''),
+        'expected at least one console.error mentioning sampleRate');
+    });
+
+    it('does not warn for valid sampleRate values', () => {
+      assert.doesNotThrow(() => new StatsD({ sampleRate: 0.001, mock: true }));
+      assert.doesNotThrow(() => new StatsD({ sampleRate: 0.5, mock: true }));
+      assert.doesNotThrow(() => new StatsD({ sampleRate: 1, mock: true }));
+      assert.doesNotThrow(() => new StatsD({ mock: true }));
+      assert.strictEqual(warnedAbout('\'sampleRate\''), false);
+    });
+
+    it('defaults sampleRate to 1 when omitted', () => {
+      const client = new StatsD({ mock: true });
+      assert.strictEqual(client.sampleRate, 1);
+    });
   });
 
-  it('defaults sampleRate to 1 when omitted', () => {
-    const client = new StatsD({ mock: true });
-    assert.strictEqual(client.sampleRate, 1);
+  describe('bufferFlushInterval', () => {
+    it('warns (does not throw) when bufferFlushInterval is not a positive number', () => {
+      assert.doesNotThrow(() => new StatsD({ bufferFlushInterval: 0, mock: true }));
+      assert.doesNotThrow(() => new StatsD({ bufferFlushInterval: -100, mock: true }));
+      assert.doesNotThrow(() => new StatsD({ bufferFlushInterval: 'soon', mock: true }));
+      assert.ok(warnedAbout('\'bufferFlushInterval\''),
+        'expected at least one console.error mentioning bufferFlushInterval');
+    });
+
+    it('rejects Infinity (Node clamps oversized setTimeout delays to 1ms → hot loop)', () => {
+      const client = new StatsD({ bufferFlushInterval: Infinity, maxBufferSize: 1000, mock: true });
+      assert.ok(warnedAbout('\'bufferFlushInterval\''));
+      assert.strictEqual(client.bufferFlushInterval, 1000,
+        `expected default 1000, got ${client.bufferFlushInterval}`);
+    });
+
+    it('rejects values above setTimeout max (2^31 - 1)', () => {
+      const client = new StatsD({ bufferFlushInterval: 2147483648, maxBufferSize: 1000, mock: true });
+      assert.ok(warnedAbout('\'bufferFlushInterval\''));
+      assert.strictEqual(client.bufferFlushInterval, 1000);
+    });
+
+    it('accepts the maximum supported setTimeout value', () => {
+      const client = new StatsD({ bufferFlushInterval: 2147483647, maxBufferSize: 1000, mock: true });
+      assert.strictEqual(warnedAbout('\'bufferFlushInterval\''), false);
+      assert.strictEqual(client.bufferFlushInterval, 2147483647);
+    });
   });
 
-  it('throws TypeError when bufferFlushInterval is not a positive number', () => {
-    assert.throws(() => new StatsD({ bufferFlushInterval: 0, mock: true }), TypeError);
-    assert.throws(() => new StatsD({ bufferFlushInterval: -100, mock: true }), TypeError);
-    assert.throws(() => new StatsD({ bufferFlushInterval: 'soon', mock: true }), TypeError);
+  describe('invalid value sanitization', () => {
+    it('falls back to default port when invalid value is provided', () => {
+      // Without sanitization, this.port would be the raw 'abc' string.
+      const client = new StatsD({ port: 'abc', mock: true });
+      assert.strictEqual(client.port, 8125, `expected default port 8125, got ${client.port}`);
+    });
+
+    it('falls back to default sampleRate when invalid value is provided', () => {
+      const client = new StatsD({ sampleRate: 'half', mock: true });
+      assert.strictEqual(client.sampleRate, 1, `expected default sampleRate 1, got ${client.sampleRate}`);
+    });
+
+    it('falls back to default bufferFlushInterval when invalid value is provided', () => {
+      // Without sanitization, this.bufferFlushInterval would be 'soon' (or -100), and
+      // setInterval('soon') / setInterval(-100) would create a hot flush loop.
+      const client = new StatsD({ bufferFlushInterval: 'soon', maxBufferSize: 1000, mock: true });
+      assert.strictEqual(client.bufferFlushInterval, 1000,
+        `expected default bufferFlushInterval 1000, got ${client.bufferFlushInterval}`);
+    });
+
+    it('handles non-serializable values without throwing during warning', () => {
+      // safeStringify protects the warning path from JSON.stringify failures
+      // (BigInt, circular refs, etc).
+      const circular = {};
+      circular.self = circular;
+      assert.doesNotThrow(() => new StatsD({ sampleRate: circular, mock: true }));
+      // Function value — JSON.stringify returns undefined; safeStringify falls back to String().
+      const fn = function () { return 0; };
+      assert.doesNotThrow(() => new StatsD({ port: fn, mock: true }));
+    });
   });
 
   describe('per-call sampleRate', () => {
-    it('throws TypeError when per-call sampleRate is 0 (positional)', () => {
+    it('warns (does not throw) when per-call sampleRate is 0 (positional)', () => {
       const client = new StatsD({ mock: true });
-      assert.throws(() => client.increment('a', 1, 0), TypeError);
-      assert.throws(() => client.gauge('a', 1, 0), TypeError);
-      assert.throws(() => client.histogram('a', 1, 0), TypeError);
+      assert.doesNotThrow(() => client.increment('a', 1, 0));
+      assert.doesNotThrow(() => client.gauge('a', 1, 0));
+      assert.doesNotThrow(() => client.histogram('a', 1, 0));
+      assert.ok(warnedAbout('\'sampleRate\' of 0'),
+        'expected at least one console.error mentioning per-call sampleRate=0');
     });
 
-    it('throws TypeError when per-call sampleRate is 0 (options object)', () => {
+    it('warns (does not throw) when per-call sampleRate is 0 (options object)', () => {
       const client = new StatsD({ mock: true });
-      assert.throws(() => client.gauge('a', 1, { sampleRate: 0 }), TypeError);
-      assert.throws(() => client.increment('a', 1, { sampleRate: 0 }), TypeError);
+      assert.doesNotThrow(() => client.gauge('a', 1, { sampleRate: 0 }));
+      assert.doesNotThrow(() => client.increment('a', 1, { sampleRate: 0 }));
+      assert.ok(warnedAbout('\'sampleRate\' of 0'));
     });
 
-    it('accepts valid per-call sampleRate values', () => {
+    it('does not warn for valid per-call sampleRate values', () => {
       const client = new StatsD({ mock: true });
-      assert.doesNotThrow(() => client.increment('a', 1, 0.5));
-      assert.doesNotThrow(() => client.gauge('a', 1, { sampleRate: 0.001 }));
-      assert.doesNotThrow(() => client.histogram('a', 1, 1));
+      client.increment('a', 1, 0.5);
+      client.gauge('a', 1, { sampleRate: 0.001 });
+      client.histogram('a', 1, 1);
+      assert.strictEqual(warnedAbout('\'sampleRate\''), false);
     });
   });
 });

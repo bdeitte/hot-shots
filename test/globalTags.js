@@ -1,4 +1,5 @@
 const assert = require('assert');
+const StatsD = require('../lib/statsd');
 const helpers = require('./helpers/helpers.js');
 
 const closeAll = helpers.closeAll;
@@ -224,6 +225,21 @@ describe('#globalTags', () => {
           assert.strictEqual(metrics, `test,gtag=gvalue,foo=bar:1337|c${metricEnd}`);
           done();
         });
+      });
+
+      it('handles a no-colon message in telegraf mode (preserves trailing colon for byte-identical output)', () => {
+        // Tests Client.prototype.send directly for the no-colon edge case. Internal
+        // metric construction always includes a colon (`name:value|type`), but `send`
+        // is on the documented prototype and external callers may pass a message
+        // without one. Pre-fix `split(':')` produced `${msg},${tags}:` (trailing
+        // colon); the post-fix `indexOf` path must produce the same output.
+        // Assign to outer-scope `statsd` so afterEach's closeAll handles teardown.
+        server = null;
+        statsd = new StatsD({ telegraf: true, mock: true });
+        statsd.send('nocolon', ['env:prod']);
+        assert.strictEqual(statsd.mockBuffer.length, 1);
+        assert.strictEqual(statsd.mockBuffer[0], 'nocolon,env=prod:',
+          `expected 'nocolon,env=prod:' (with trailing colon to match pre-fix split-based behavior), got: ${statsd.mockBuffer[0]}`);
       });
 
       it('should preserve colons in tag values using telegraf format', done => {
