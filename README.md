@@ -372,48 +372,44 @@ client.histogram('request_size', 1024);
 
 To prevent malformed packets, hot-shots automatically replaces protocol-breaking characters with underscores (`_`).
 
-* **Metric names**: `:`, `|`, `\n`
-* **Tag keys**: `:`, `|`, `,`, `\n`, plus `@` and `#` for StatsD/DogStatsD
-* **Tag values**: `|`, `,`, `\n`, plus `@` and `#` for StatsD/DogStatsD
+* Metric names: `:`, `|`, `\n`
+* Tag keys: `:`, `|`, `,`, `\n`, plus `@` and `#` for StatsD/DogStatsD
+* Tag values: `|`, `,`, `\n`, plus `@` and `#` for StatsD/DogStatsD
 
 Colons are allowed in tag values (e.g., `url:https://example.com:8080`).
 
 ## Errors
 
-You can have an error in both the message and close callbacks. See [Callback semantics](#callback-semantics) below for the precise contract per mode.
+You can have an error in both the message and close callbacks. See [Callback semantics](#callback-semantics) below for the exact contract per mode.
 
-If the optional callback is not given, an error is thrown in some
-cases and a console.log message is used in others.  An error will only
-be explicitly thrown when there is a missing callback or if it is some potential configuration issue to be fixed.
+If the optional callback is not given, an error is thrown in some cases and a console.error message is used in others. An error will only be explicitly thrown when there is a missing callback or if it is some potential configuration issue to be fixed.
 
-For broad error coverage, specify an `errorHandler` in your root
-client. It catches errors in socket setup, sending of messages,
-and closing of the socket — but it does not cover every path. In particular, a buffered close-time flush error is delivered to the `close` callback if one was supplied, otherwise it is only logged; it does **not** reach `errorHandler`. To observe that failure mode you must supply a `close` callback in addition to `errorHandler`.
+For broad error coverage, specify an `errorHandler` in your root client. It catches errors in socket setup, sending of messages, and closing of the socket. But it does not cover every path. In particular, a buffered close-time flush error is delivered to the `close` callback if one was supplied, otherwise it is only logged- it does not reach `errorHandler`. To observe that failure mode you must supply a `close` callback in addition to `errorHandler`.
 
-In unbuffered mode (`maxBufferSize === 0`), if you specify both an `errorHandler` and a per-metric callback, the callback takes precedence. In buffered mode (`maxBufferSize > 0`), per-metric callbacks do not receive send errors — those errors go to `errorHandler` (or are logged) for periodic and overflow-driven flushes; the close-time flush is the exception described above. See [Callback semantics](#callback-semantics) for details.
+In unbuffered mode (`maxBufferSize === 0`), if you specify both an `errorHandler` and a per-metric callback, the callback takes precedence. In buffered mode (`maxBufferSize > 0`), per-metric callbacks do not receive send errors — those errors go to `errorHandler` (or are logged) for periodic and overflow-driven flushes. The close-time flush is the exception described above. See [Callback semantics](#callback-semantics) for details.
 
 ### Callback semantics
 
 The per-metric `callback` argument has different behavior depending on whether buffering is enabled:
 
-**Unbuffered mode (`maxBufferSize === 0`, the default for UDP/TCP):**
+Unbuffered mode (`maxBufferSize === 0`, the default for UDP/TCP):
 - On the successful send path the callback is invoked asynchronously after the underlying transport completes, with signature `(error, bytes)` — `error` is `null` and `bytes` is the number of bytes written.
-- On failure `error` is set. Some failure paths invoke the callback **synchronously** before any async send happens — for example, a cached DNS lookup error or a missing socket. Sampled-out metrics also invoke the callback synchronously, with no arguments.
+- On failure `error` is set. Some failure paths invoke the callback synchronously before any async send happens — for example, a cached DNS lookup error or a missing socket. Sampled-out metrics also invoke the callback synchronously, with no arguments.
 - If you specify both `errorHandler` and `callback`, the callback takes precedence — the error is reported to the callback only.
 
-**Buffered mode (`maxBufferSize > 0`):**
+Buffered mode (`maxBufferSize > 0`):
 - The callback is a synchronous completion signal for the client call: it is invoked synchronously with no arguments once `hot-shots` has finished handling the call (queued into the buffer, or skipped because of sampling).
-- It is **not** a delivery signal — the actual UDP/TCP/UDS send happens later, when the buffer fills or the flush interval fires.
+- It is not a delivery signal — the actual UDP/TCP/UDS send happens later, when the buffer fills or the flush interval fires.
 - Send failures from the periodic flush interval and overflow-driven flush are routed to `errorHandler` (or logged), never to the per-metric callback.
-- The flush performed inside `close()` is the exception: if you supplied a `close` callback its error goes there; otherwise the error is logged. It is **not** routed to `errorHandler` or to any per-metric callback.
+- The flush performed inside `close()` is the exception: if you supplied a `close` callback its error goes there, otherwise the error is logged. It is not routed to `errorHandler` or to any per-metric callback.
 
-`close`'s callback receives an error as its first parameter on failure. On the success path it fires after the socket close completes. On a flush failure it fires **early** with the error and the socket close is skipped — your code should not assume the socket has been closed when the callback receives an error.
+`close`'s callback receives an error as its first parameter on failure. On the success path it fires after the socket close completes. On a flush failure it fires early with the error and the socket close is skipped — your code should not assume the socket has been closed when the callback receives an error.
 
 ```javascript
 // Using errorHandler
 var client = new StatsD({
   errorHandler: function (error) {
-    console.log("Socket errors caught here: ", error);
+    console.error("Socket errors caught here: ", error);
   }
 })
 ```
@@ -431,7 +427,7 @@ Metrics sent from `process.on('exit')` handlers will **not** be delivered. This 
 
 The same applies to `process.on('uncaughtExceptionMonitor')` since that handler is also synchronous.
 
-**Alternatives that work:**
+Alternatives that work:
 
 Use `beforeExit` for graceful shutdown (fires when event loop is empty but before exit):
 ```javascript

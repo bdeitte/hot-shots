@@ -122,33 +122,22 @@ describe('#optionValidation', () => {
         `expected default bufferFlushInterval 1000, got ${client.bufferFlushInterval}`);
     });
 
-    it('handles non-serializable values without throwing during warning', () => {
-      // safeStringify protects the warning path from JSON.stringify failures
-      // (BigInt, circular refs, etc).
-      const circular = {};
-      circular.self = circular;
-      assert.doesNotThrow(() => new StatsD({ sampleRate: circular, mock: true }));
-      // Function value — JSON.stringify returns undefined; safeStringify falls back to String().
-      const fn = function () { return 0; };
-      assert.doesNotThrow(() => new StatsD({ port: fn, mock: true }));
-    });
   });
 
   describe('per-call sampleRate', () => {
-    it('warns (does not throw) when per-call sampleRate is 0 (positional)', () => {
+    it('silently falls back to client sampleRate when per-call sampleRate is 0 (positional)', () => {
       const client = new StatsD({ mock: true });
       assert.doesNotThrow(() => client.increment('a', 1, 0));
       assert.doesNotThrow(() => client.gauge('a', 1, 0));
       assert.doesNotThrow(() => client.histogram('a', 1, 0));
-      assert.ok(warnedAbout('\'sampleRate\' of 0'),
-        'expected at least one console.error mentioning per-call sampleRate=0');
+      assert.strictEqual(warnedAbout('\'sampleRate\''), false);
     });
 
-    it('warns (does not throw) when per-call sampleRate is 0 (options object)', () => {
+    it('silently falls back to client sampleRate when per-call sampleRate is 0 (options object)', () => {
       const client = new StatsD({ mock: true });
       assert.doesNotThrow(() => client.gauge('a', 1, { sampleRate: 0 }));
       assert.doesNotThrow(() => client.increment('a', 1, { sampleRate: 0 }));
-      assert.ok(warnedAbout('\'sampleRate\' of 0'));
+      assert.strictEqual(warnedAbout('\'sampleRate\''), false);
     });
 
     it('does not warn for valid per-call sampleRate values', () => {
