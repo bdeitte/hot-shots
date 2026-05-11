@@ -13,7 +13,7 @@ CHANGELOG
 - [@bdeitte](https://github.com/bdeitte) A number of updates to generally improve the code:
      - Replace polling in close() with a Promise-based drain that handles async-queued follow-up sends
      - Warn (via console.error) on invalid `port`, `sampleRate`, `bufferFlushInterval` config values and use default config values
-     - Misc cleanups: `for-of` over array routes, simpler EAGAIN access, dedup `Buffer.byteLength` in `sendMessage`, faster telegraf tag insertion
+     - Misc cleanups: `for-of` over array routes, simpler EAGAIN access, dedup `Buffer.byteLength` in `sendMessage`
 - [@bdeitte](https://github.com/bdeitte) Override `uuid` to 14.x to fix [GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq)
 
 ## 14.3.1 (2026-4-6)

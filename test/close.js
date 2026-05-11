@@ -211,7 +211,7 @@ describe('#close', () => {
         statsd.increment('a', 1, undefined, undefined, () => {
           aFired = true;
           // Issue a new send from inside the user callback. Pre-fix, the close drain
-          // snapshotted _drainPromise and then force-closed when this new send was
+          // snapshotted drainPromise and then force-closed when this new send was
           // still in flight. Post-fix, the re-check loop waits for it to drain too.
           statsd.increment('b', 1, undefined, undefined, () => {
             bFired = true;
