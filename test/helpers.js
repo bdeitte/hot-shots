@@ -224,6 +224,16 @@ describe('#helpersExtended', () => {
       assert.strictEqual(result, 'tag_value');
     });
 
+    it('should sanitize carriage returns for StatsD (default)', () => {
+      const result = helpers.sanitizeTags('tag\rvalue');
+      assert.strictEqual(result, 'tag_value');
+    });
+
+    it('should sanitize carriage returns for Telegraf', () => {
+      const result = helpers.sanitizeTags('tag\rvalue', true);
+      assert.strictEqual(result, 'tag_value');
+    });
+
     it('should sanitize hash character for StatsD (default)', () => {
       const result = helpers.sanitizeTags('tag#value');
       assert.strictEqual(result, 'tag_value');
@@ -254,6 +264,11 @@ describe('#helpersExtended', () => {
     it('should sanitize newlines in tag values', () => {
       const result = helpers.sanitizeTagValue('value\nwith\nnewlines');
       assert.strictEqual(result, 'value_with_newlines');
+    });
+
+    it('should sanitize carriage returns in tag values', () => {
+      const result = helpers.sanitizeTagValue('value\rwith\rcarriagereturns');
+      assert.strictEqual(result, 'value_with_carriagereturns');
     });
 
     it('should sanitize commas in tag values', () => {
@@ -295,6 +310,11 @@ describe('#helpersExtended', () => {
 
     it('should sanitize newlines in metric names', () => {
       const result = helpers.sanitizeMetricName('check\nvalue');
+      assert.strictEqual(result, 'check_value');
+    });
+
+    it('should sanitize carriage returns in metric names', () => {
+      const result = helpers.sanitizeMetricName('check\rvalue');
       assert.strictEqual(result, 'check_value');
     });
 

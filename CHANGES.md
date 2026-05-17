@@ -15,6 +15,8 @@ CHANGELOG
      - Warn (via console.error) on invalid `port`, `sampleRate`, `bufferFlushInterval` config values and use default config values
      - Misc cleanups: `for-of` over array routes, simpler EAGAIN access, dedup `Buffer.byteLength` in `sendMessage`
 - [@bdeitte](https://github.com/bdeitte) Override `uuid` to 14.x to fix [GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq)
+- [@bdeitte](https://github.com/bdeitte) Sanitize carriage returns (`\r`) in metric names, tag keys, and tag values alongside newlines, since some receivers split lines on `\r` and could otherwise be tricked into accepting injected metrics
+- [@bdeitte](https://github.com/bdeitte) Add `files` allowlist to package.json so npm publishes only `index.js`, `index.mjs`, `lib/`, and the TypeScript definitions — guards against accidental publication of dev or sensitive files added to the repo
 
 ## 14.3.1 (2026-4-6)
 
