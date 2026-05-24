@@ -27,9 +27,8 @@ describe('#optionValidation', () => {
 
   describe('port', () => {
     it('warns (does not throw) when port is not an integer in [1, 65535]', () => {
-      // Note: invalid values are NOT rejected — preserved for backwards compatibility.
-      // Construction continues with the value; later code falls back to defaults
-      // for falsy values via existing `||` chains.
+      // Note: invalid values do not throw — construction continues with the option
+      // sanitized to `undefined`, so the client falls back to the default port.
       assert.doesNotThrow(() => new StatsD({ port: 0, mock: true }));
       assert.doesNotThrow(() => new StatsD({ port: -1, mock: true }));
       assert.doesNotThrow(() => new StatsD({ port: 70000, mock: true }));

@@ -372,9 +372,9 @@ client.histogram('request_size', 1024);
 
 To prevent malformed packets, hot-shots automatically replaces protocol-breaking characters with underscores (`_`).
 
-* Metric names: `:`, `|`, `\n`
-* Tag keys: `:`, `|`, `,`, `\n`, plus `@` and `#` for StatsD/DogStatsD
-* Tag values: `|`, `,`, `\n`, plus `@` and `#` for StatsD/DogStatsD
+* Metric names: `:`, `|`, `\n`, `\r`
+* Tag keys: `:`, `|`, `,`, `\n`, `\r`, plus `@` and `#` for StatsD/DogStatsD
+* Tag values: `|`, `,`, `\n`, `\r`, plus `@` and `#` for StatsD/DogStatsD
 
 Colons are allowed in tag values (e.g., `url:https://example.com:8080`).
 
@@ -386,7 +386,7 @@ If the optional callback is not given, an error is thrown in some cases and a co
 
 For broad error coverage, specify an `errorHandler` in your root client. It catches errors in socket setup, sending of messages, and closing of the socket.
 
-In unbuffered mode (`maxBufferSize === 0`), if you specify both an `errorHandler` and a per-metric callback, the callback takes precedence. In buffered mode (`maxBufferSize > 0`), per-metric callbacks do not receive send errors — those errors go to `errorHandler` (or are logged). See [Callback semantics](#callback-semantics) for details.
+In unbuffered mode (`maxBufferSize === 0`), if you specify both an `errorHandler` and a per-metric callback, the callback takes precedence. In buffered mode (`maxBufferSize > 0`), per-metric callbacks do not receive send errors from periodic or overflow-driven flushes — those errors go to `errorHandler` (or are logged). Close-time flush failures are an exception: when a `close` callback is supplied, it receives the flush error instead. See [Callback semantics](#callback-semantics) for details.
 
 ### Callback semantics
 
