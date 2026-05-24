@@ -13,7 +13,7 @@ describe('#typescript', function () {
   // Each test shells out to tsc, which on Windows CI runners can take ~4s per
   // compilation (vs ~1-2s on macOS/Linux). The default 5s mocha timeout leaves
   // no headroom under load, so give the whole suite a much larger budget.
-  this.timeout(30000);
+  this.timeout(30000); // eslint-disable-line no-invalid-this
 
   let tmpDir;
 
