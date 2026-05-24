@@ -9,7 +9,12 @@ const os = require('os');
 
 const projectRoot = path.join(__dirname, '..');
 
-describe('#typescript', () => {
+describe('#typescript', function () {
+  // Each test shells out to tsc, which on Windows CI runners can take ~4s per
+  // compilation (vs ~1-2s on macOS/Linux). The default 5s mocha timeout leaves
+  // no headroom under load, so give the whole suite a much larger budget.
+  this.timeout(30000);
+
   let tmpDir;
 
   beforeEach(() => {
