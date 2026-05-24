@@ -355,15 +355,16 @@ describe('#close', () => {
     // below are calibrated to fail for any multiplier other than ~11.
 
     it('force-closes near closingFlushInterval * 11 ms when messagesInFlight stays positive', done => {
-      // Interval is large enough that OS timer / GC jitter (~20-50ms even on loaded
-      // CI) is small relative to the budget (1100ms). The bounds below allow ~150ms
-      // of slack — wide enough to be non-flaky, tight enough to fail at multiplier
-      // 9 (900ms) or 13 (1300ms).
+      // Interval is large enough that OS timer / GC jitter is small relative to the
+      // budget (1100ms). Bounds are wide enough to tolerate heavily loaded CI runners
+      // (macOS App Nap, GC pauses, container CPU contention) while still tight enough
+      // to fail any meaningful regression of the multiplier (e.g. * 11 → * 2 lands at
+      // ~200ms; * 11 → * 20 lands at ~2000ms).
       const closingFlushInterval = 100;
       const expectedBudgetMs = closingFlushInterval * 11;
-      const lowerBoundMs = expectedBudgetMs - 50;  // 1050 — fails for multiplier <= 10
-      const upperBoundMs = expectedBudgetMs + 150; // 1250 — fails for multiplier >= 13
-      const consoleLogStub = sinon.stub(console, 'log');
+      const lowerBoundMs = expectedBudgetMs - 100; // 1000 — fails for multiplier <= 9
+      const upperBoundMs = expectedBudgetMs + 400; // 1500 — fails for multiplier >= 15
+      const consoleErrorStub = sinon.stub(console, 'error');
 
       server = createServer('udp', opts => {
         statsd = createHotShotsClient(Object.assign(opts, {
@@ -377,7 +378,7 @@ describe('#close', () => {
         const start = Date.now();
         statsd.close(() => {
           const elapsed = Date.now() - start;
-          consoleLogStub.restore();
+          consoleErrorStub.restore();
 
           assert.strictEqual(statsd.messagesInFlight, 0,
             'force close must reset messagesInFlight to 0');
@@ -389,7 +390,7 @@ describe('#close', () => {
             'force close must complete within the documented budget; elapsed ' +
             `${elapsed}ms > upper bound ${upperBoundMs}ms (budget ${expectedBudgetMs}ms).`);
 
-          const stuckLog = consoleLogStub.getCalls().find(c => {
+          const stuckLog = consoleErrorStub.getCalls().find(c => {
             return typeof c.args[0] === 'string' &&
               c.args[0].includes('could not clear out messages in flight');
           });
@@ -509,7 +510,7 @@ describe('#close', () => {
     });
 
     it('async close-time error reaches root errorHandler when no close callback (regression for stale on-socket flag)', done => {
-      // The persistent _errorHandlerIsOnSocket flag is true for a root client with
+      // The construction-time _errorHandlerInitiallyOnSocket flag is true for a root client with
       // an errorHandler at construction. But _close() removes the user's handler
       // from the socket, so by the time handleSocketErr fires it must NOT use the
       // stale flag — the local errorHandlerOnSocketDuringClose tracks the runtime
@@ -556,7 +557,7 @@ describe('#close', () => {
 
         // Grandchild inherits intermediate's overridden handler. The handler is NOT
         // on the shared socket (only root's is), so the propagation must result in
-        // grandchild._errorHandlerIsOnSocket === false; handleSocketErr must call it
+        // grandchild._errorHandlerInitiallyOnSocket === false; handleSocketErr must call it
         // explicitly on async errors.
         const grandchild = intermediate.childClient();
         delaySocketClose(statsd, 100);

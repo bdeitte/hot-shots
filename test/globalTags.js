@@ -227,6 +227,30 @@ describe('#globalTags', () => {
         });
       });
 
+      it('does not alias globalTags when send is called with empty tags', () => {
+        // Client.send has a fast path: when tags are empty it skips overrideTags and
+        // sets `mergedTags = this.globalTags` directly. This test guards against a
+        // future change that mutates mergedTags after assignment, which would
+        // silently corrupt the shared globalTags array.
+        server = null;
+        statsd = new StatsD({ mock: true, globalTags: ['env:prod', 'region:us-east'] });
+        const originalGlobalTags = statsd.globalTags.slice();
+
+        // Send with empty tags (both array and object forms exercise the fast path).
+        statsd.send('m1:1|c', []);
+        statsd.send('m2:1|c', {});
+        statsd.send('m3:1|c');
+
+        assert.deepStrictEqual(statsd.globalTags, originalGlobalTags,
+          'send with empty tags must not mutate globalTags');
+
+        // Now send with non-empty tags — this goes through overrideTags. Verify
+        // globalTags still survives unchanged.
+        statsd.send('m4:1|c', ['extra:tag']);
+        assert.deepStrictEqual(statsd.globalTags, originalGlobalTags,
+          'send with non-empty tags must not mutate globalTags');
+      });
+
       it('handles a no-colon message in telegraf mode (preserves trailing colon)', () => {
         // Tests Client.prototype.send directly for the no-colon edge case. Internal
         // metric construction always includes a colon (`name:value|type`), but `send`
