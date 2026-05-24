@@ -345,16 +345,24 @@ describe('#close', () => {
   });
 
   describe('force-close budget', () => {
-    // Pins the documented "11 ticks of closingFlushInterval" upper bound. The Promise.race
-    // drain in lib/statsd.js intentionally preserves this budget from the prior polling
-    // implementation so callers that mutate messagesInFlight directly (or whose sends
-    // genuinely fail to drain) close in a bounded time. Without this test, refactors
-    // to the drain loop could silently change the budget — and stuck callers would
-    // either close too aggressively (losing valid in-flight sends) or hang.
+    // Pins the documented "11 ticks of closingFlushInterval" budget. The drain in
+    // lib/statsd.js's close() intentionally preserves this from the prior polling
+    // implementation so callers that mutate messagesInFlight directly (or whose
+    // sends genuinely fail to drain) close in a bounded time. Without tight bounds
+    // here, a refactor could silently shorten the multiplier (e.g. * 11 → * 2) and
+    // stuck callers would force-close in 40ms instead of 220ms, losing in-flight
+    // sends that the prior implementation would have allowed to drain. The bounds
+    // below are calibrated to fail for any multiplier other than ~11.
 
-    it('force-closes within closingFlushInterval * 11 ms when messagesInFlight stays positive', done => {
-      const closingFlushInterval = 20;
-      const expectedMaxMs = closingFlushInterval * 11;
+    it('force-closes near closingFlushInterval * 11 ms when messagesInFlight stays positive', done => {
+      // Interval is large enough that OS timer / GC jitter (~20-50ms even on loaded
+      // CI) is small relative to the budget (1100ms). The bounds below allow ~150ms
+      // of slack — wide enough to be non-flaky, tight enough to fail at multiplier
+      // 9 (900ms) or 13 (1300ms).
+      const closingFlushInterval = 100;
+      const expectedBudgetMs = closingFlushInterval * 11;
+      const lowerBoundMs = expectedBudgetMs - 50;  // 1050 — fails for multiplier <= 10
+      const upperBoundMs = expectedBudgetMs + 150; // 1250 — fails for multiplier >= 13
       const consoleLogStub = sinon.stub(console, 'log');
 
       server = createServer('udp', opts => {
@@ -373,14 +381,13 @@ describe('#close', () => {
 
           assert.strictEqual(statsd.messagesInFlight, 0,
             'force close must reset messagesInFlight to 0');
-          // Upper bound: budget plus generous OS timer / GC slack. Pre-fix polling used
-          // closingFlushInterval * 11; this asserts we have not shortened the budget.
-          assert.ok(elapsed <= expectedMaxMs + 100,
-            `force close must complete near the documented budget (${expectedMaxMs}ms), took ${elapsed}ms`);
-          // Lower bound: must not have force-closed early. The drain has to wait at
-          // least one full closingFlushInterval before giving up.
-          assert.ok(elapsed >= closingFlushInterval,
-            `force close must wait at least one closingFlushInterval (${closingFlushInterval}ms), took ${elapsed}ms`);
+          assert.ok(elapsed >= lowerBoundMs,
+            'force close must wait close to the full budget; elapsed ' +
+            `${elapsed}ms < lower bound ${lowerBoundMs}ms (budget ${expectedBudgetMs}ms). ` +
+            'A regression that shortened the multiplier (e.g. * 11 → * 2) would land here.');
+          assert.ok(elapsed <= upperBoundMs,
+            'force close must complete within the documented budget; elapsed ' +
+            `${elapsed}ms > upper bound ${upperBoundMs}ms (budget ${expectedBudgetMs}ms).`);
 
           const stuckLog = consoleLogStub.getCalls().find(c => {
             return typeof c.args[0] === 'string' &&
