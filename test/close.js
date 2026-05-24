@@ -577,4 +577,131 @@ describe('#close', () => {
       });
     });
   });
+
+  describe('close-time buffer flush errors', () => {
+    let consoleErrorStub;
+
+    afterEach(done => {
+      if (consoleErrorStub) {
+        consoleErrorStub.restore();
+        consoleErrorStub = null;
+      }
+      helpers.closeAll(server, statsd, true, done);
+      server = null;
+      statsd = null;
+    });
+
+    it('routes buffered close-time flush error to errorHandler when no close callback is given', done => {
+      let handlerErr = null;
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(Object.assign(opts, {
+          maxBufferSize: 1024,
+          errorHandler: err => {
+            handlerErr = err;
+          },
+        }), 'client');
+
+        statsd.flushQueue = function (cb) {
+          if (cb) {
+            cb(new Error('boom from close-time flush'));
+          }
+        };
+
+        statsd.close();
+
+        setTimeout(() => {
+          assert.ok(handlerErr, 'errorHandler should have received the flush error');
+          assert.strictEqual(handlerErr.message, 'boom from close-time flush');
+          done();
+        }, 50);
+      });
+    });
+
+    it('prefers close callback over errorHandler for buffered close-time flush error', done => {
+      let handlerCalled = false;
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(Object.assign(opts, {
+          maxBufferSize: 1024,
+          errorHandler: () => {
+            handlerCalled = true;
+          },
+        }), 'client');
+
+        statsd.flushQueue = function (cb) {
+          if (cb) {
+            cb(new Error('boom from close-time flush'));
+          }
+        };
+
+        statsd.close(err => {
+          assert.ok(err, 'close callback should receive the flush error');
+          assert.strictEqual(err.message, 'boom from close-time flush');
+          setTimeout(() => {
+            assert.strictEqual(handlerCalled, false,
+              'errorHandler must not be called when close callback is supplied');
+            done();
+          }, 20);
+        });
+      });
+    });
+
+    it('falls back to console.error when neither close callback nor errorHandler is set', done => {
+      server = createServer('udp', opts => {
+        consoleErrorStub = sinon.stub(console, 'error');
+
+        statsd = createHotShotsClient(Object.assign(opts, {
+          maxBufferSize: 1024,
+        }), 'client');
+
+        statsd.flushQueue = function (cb) {
+          if (cb) {
+            cb(new Error('boom from close-time flush'));
+          }
+        };
+
+        statsd.close();
+
+        setTimeout(() => {
+          const calls = consoleErrorStub.getCalls().filter(c => {
+            return c.args[0] && c.args[0].message === 'boom from close-time flush';
+          });
+          assert.ok(calls.length >= 1, 'console.error should have been called with the flush error');
+          done();
+        }, 50);
+      });
+    });
+
+    it('falls back to console.error preserving original when errorHandler throws', done => {
+      server = createServer('udp', opts => {
+        consoleErrorStub = sinon.stub(console, 'error');
+
+        statsd = createHotShotsClient(Object.assign(opts, {
+          maxBufferSize: 1024,
+          errorHandler: () => { throw new Error('handler exploded'); },
+        }), 'client');
+
+        statsd.flushQueue = function (cb) {
+          if (cb) {
+            cb(new Error('boom from close-time flush'));
+          }
+        };
+
+        statsd.close();
+
+        setTimeout(() => {
+          const calls = consoleErrorStub.getCalls().filter(c => {
+            return typeof c.args[0] === 'string' &&
+              c.args[0].includes('errorHandler threw inside final buffer flush');
+          });
+          assert.ok(calls.length >= 1, 'console.error should have been called when handler throws');
+          const msg = calls[0].args[0];
+          assert.ok(msg.includes('boom from close-time flush'),
+            `console.error must preserve original flush error, got: ${msg}`);
+          assert.ok(msg.includes('handler exploded'),
+            `console.error must include handler error, got: ${msg}`);
+          done();
+        }, 50);
+      });
+    });
+  });
 });

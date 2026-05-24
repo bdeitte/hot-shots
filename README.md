@@ -384,7 +384,7 @@ You can have an error in both the message and close callbacks. See [Callback sem
 
 If the optional callback is not given, an error is thrown in some cases and a console.error message is used in others. An error will only be explicitly thrown when there is a missing callback or if it is some potential configuration issue to be fixed.
 
-For broad error coverage, specify an `errorHandler` in your root client. It catches errors in socket setup, sending of messages, and closing of the socket. But it does not cover every path. In particular, a buffered close-time flush error is delivered to the `close` callback if one was supplied, otherwise it is only logged- it does not reach `errorHandler`. To observe that failure mode you must supply a `close` callback in addition to `errorHandler`.
+For broad error coverage, specify an `errorHandler` in your root client. It catches errors in socket setup, sending of messages, and closing of the socket. A buffered close-time flush error is delivered to the `close` callback if one was supplied, otherwise it is routed to `errorHandler`, otherwise it is logged.
 
 In unbuffered mode (`maxBufferSize === 0`), if you specify both an `errorHandler` and a per-metric callback, the callback takes precedence. In buffered mode (`maxBufferSize > 0`), per-metric callbacks do not receive send errors — those errors go to `errorHandler` (or are logged) for periodic and overflow-driven flushes. The close-time flush is the exception described above. See [Callback semantics](#callback-semantics) for details.
 
@@ -401,7 +401,7 @@ Buffered mode (`maxBufferSize > 0`):
 - The callback is a synchronous completion signal for the client call: it is invoked synchronously with no arguments once `hot-shots` has finished handling the call (queued into the buffer, or skipped because of sampling).
 - It is not a delivery signal — the actual UDP/TCP/UDS send happens later, when the buffer fills or the flush interval fires.
 - Send failures from the periodic flush interval and overflow-driven flush are routed to `errorHandler` (or logged), never to the per-metric callback.
-- The flush performed inside `close()` is the exception: if you supplied a `close` callback its error goes there, otherwise the error is logged. It is not routed to `errorHandler` or to any per-metric callback.
+- The flush performed inside `close()` follows the same pattern: if you supplied a `close` callback its error goes there, otherwise it is routed to `errorHandler` if set, otherwise it is logged. It is never routed to per-metric callbacks.
 
 `close`'s callback receives an error as its first parameter on failure. On the success path it fires after the socket close completes. On a flush failure it fires early with the error and the socket close is skipped — your code should not assume the socket has been closed when the callback receives an error.
 
