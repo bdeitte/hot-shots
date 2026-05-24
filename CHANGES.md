@@ -3,6 +3,7 @@ CHANGELOG
 
 ## Unreleased
 
+- [@bdeitte](https://github.com/bdeitte) Add `diff` override to `^8.0.3` to resolve [GHSA-73rr-hh4g-fpgx](https://github.com/advisories/GHSA-73rr-hh4g-fpgx) transitively pulled in via `mocha` and `sinon` (dev-only)
 - [@bdeitte](https://github.com/bdeitte) A number of updates to improve error handling:
      - Route errors through errorHandler with a console.error fallback so a buggy handler can't crash the host
      - Default error listener on every transport socket so that in the cases we didn't have one, an error doesn't crash the host

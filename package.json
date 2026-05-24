@@ -70,6 +70,7 @@
   },
   "license": "MIT",
   "overrides": {
+    "diff": "^8.0.3",
     "serialize-javascript": "7.x",
     "uuid": "14.x"
   }
