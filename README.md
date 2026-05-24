@@ -397,7 +397,7 @@ Unbuffered mode (`maxBufferSize === 0`, the default for UDP/TCP):
 - On failure `error` is set. Some failure paths invoke the callback synchronously before any async send happens — for example, a cached DNS lookup error or a missing socket. Sampled-out metrics also invoke the callback synchronously, with no arguments.
 - If you specify both `errorHandler` and `callback`, the callback takes precedence — the error is reported to the callback only.
 
-Buffered mode (`maxBufferSize > 0`):
+Buffered mode (`maxBufferSize > 0`, the default for UDS):
 - The callback is a synchronous completion signal for the client call: it is invoked synchronously with no arguments once `hot-shots` has finished handling the call (queued into the buffer, or skipped because of sampling).
 - It is not a delivery signal — the actual UDP/TCP/UDS send happens later, when the buffer fills or the flush interval fires.
 - Send failures from the periodic flush interval and overflow-driven flush are routed to `errorHandler` (or logged), never to the per-metric callback.

@@ -18,7 +18,6 @@ CHANGELOG
 - [@bdeitte](https://github.com/bdeitte) A few smaller cleanups and fixups:
      - Replace polling in close() with a Promise-based drain that handles async-queued follow-up sends
      - Warn (via console.error) on invalid `port`, `sampleRate`, `bufferFlushInterval` config values and use default config values
-
      - Misc cleanups: `for-of` over array routes, simpler EAGAIN access, dedup `Buffer.byteLength` in `sendMessage`
 
 ## 14.3.1 (2026-4-6)
