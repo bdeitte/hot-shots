@@ -108,7 +108,7 @@ All StatsD methods other than `event`, `close`, and `check` have the same API:
 * `value`:      Stat value `required except in increment/decrement where it defaults to 1/-1 respectively`
 * `sampleRate`: Sends only a sample of data to StatsD `default: 1`
 * `tags`:       The tags to add to metrics. Can be either an object `{ tag: "value"}` or an array of tags. `default: []`
-* `callback`:   See [Callback semantics](#callback-semantics) below — the contract differs between unbuffered (`maxBufferSize === 0`) and buffered (`maxBufferSize > 0`) mode.
+* `callback`:   See [Callback semantics](#callback-semantics) for details, as the contract differs between unbuffered (`maxBufferSize === 0`) and buffered (`maxBufferSize > 0`) mode.
 
 Alternatively, you can pass an options object in place of `sampleRate` and `tags`:
 * `options`:    An object with optional properties:
