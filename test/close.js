@@ -1,4 +1,5 @@
 const assert = require('assert');
+const sinon = require('sinon');
 const helpers = require('./helpers/helpers.js');
 
 const testTypes = helpers.testTypes;
@@ -218,6 +219,9 @@ describe('#close', () => {
           });
         });
 
+        // Snapshot state at close() call time. aFired === false here proves the
+        // drain actually waited; otherwise the test could pass coincidentally if a
+        // never-waiting drain happened to run after the callback for unrelated reasons.
         statsd.close(() => {
           assert.strictEqual(aFired, true, 'a callback must have fired');
           assert.strictEqual(bFired, true,
@@ -229,6 +233,8 @@ describe('#close', () => {
           statsd = null;
           done();
         });
+        assert.strictEqual(aFired, false,
+          'a callback must NOT have fired synchronously — proves close had to wait for drain');
       });
     });
 
@@ -274,6 +280,8 @@ describe('#close', () => {
           statsd = null;
           done();
         });
+        assert.strictEqual(aFired, false,
+          'a callback must NOT have fired synchronously — proves close had to wait for drain');
       });
     });
 
@@ -325,6 +333,61 @@ describe('#close', () => {
             'b queued asynchronously during drain must have completed before close callback');
           assert.ok(sendCount >= 2, `expected at least 2 socket sends, got ${sendCount}`);
           statsd.socket.send = originalSend;
+          server.close();
+          server = null;
+          statsd = null;
+          done();
+        });
+        assert.strictEqual(aFired, false,
+          'a callback must NOT have fired synchronously — proves close had to wait for drain');
+      });
+    });
+  });
+
+  describe('force-close budget', () => {
+    // Pins the documented "11 ticks of closingFlushInterval" upper bound. The Promise.race
+    // drain in lib/statsd.js intentionally preserves this budget from the prior polling
+    // implementation so callers that mutate messagesInFlight directly (or whose sends
+    // genuinely fail to drain) close in a bounded time. Without this test, refactors
+    // to the drain loop could silently change the budget — and stuck callers would
+    // either close too aggressively (losing valid in-flight sends) or hang.
+
+    it('force-closes within closingFlushInterval * 11 ms when messagesInFlight stays positive', done => {
+      const closingFlushInterval = 20;
+      const expectedMaxMs = closingFlushInterval * 11;
+      const consoleLogStub = sinon.stub(console, 'log');
+
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(Object.assign(opts, {
+          closingFlushInterval,
+        }), 'client');
+
+        // Stuck-sends scenario: a caller (or buggy transport) leaves messagesInFlight
+        // positive without ever resolving via sendMessage's handleCallback.
+        statsd.messagesInFlight = 5;
+
+        const start = Date.now();
+        statsd.close(() => {
+          const elapsed = Date.now() - start;
+          consoleLogStub.restore();
+
+          assert.strictEqual(statsd.messagesInFlight, 0,
+            'force close must reset messagesInFlight to 0');
+          // Upper bound: budget plus generous OS timer / GC slack. Pre-fix polling used
+          // closingFlushInterval * 11; this asserts we have not shortened the budget.
+          assert.ok(elapsed <= expectedMaxMs + 100,
+            `force close must complete near the documented budget (${expectedMaxMs}ms), took ${elapsed}ms`);
+          // Lower bound: must not have force-closed early. The drain has to wait at
+          // least one full closingFlushInterval before giving up.
+          assert.ok(elapsed >= closingFlushInterval,
+            `force close must wait at least one closingFlushInterval (${closingFlushInterval}ms), took ${elapsed}ms`);
+
+          const stuckLog = consoleLogStub.getCalls().find(c => {
+            return typeof c.args[0] === 'string' &&
+              c.args[0].includes('could not clear out messages in flight');
+          });
+          assert.ok(stuckLog, 'force close must emit the "could not clear out messages" log line');
+
           server.close();
           server = null;
           statsd = null;

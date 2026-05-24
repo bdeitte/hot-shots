@@ -227,19 +227,21 @@ describe('#globalTags', () => {
         });
       });
 
-      it('handles a no-colon message in telegraf mode (preserves trailing colon for byte-identical output)', () => {
+      it('handles a no-colon message in telegraf mode (preserves trailing colon)', () => {
         // Tests Client.prototype.send directly for the no-colon edge case. Internal
         // metric construction always includes a colon (`name:value|type`), but `send`
         // is on the documented prototype and external callers may pass a message
-        // without one. Pre-fix `split(':')` produced `${msg},${tags}:` (trailing
-        // colon); the post-fix `indexOf` path must produce the same output.
+        // without one. The current `split(':')`-based implementation produces
+        // `${msg},${tags}:` (trailing colon) for a no-colon input — this is a
+        // regression guard so any future rewrite (e.g., switching to indexOf) keeps
+        // byte-identical output.
         // Assign to outer-scope `statsd` so afterEach's closeAll handles teardown.
         server = null;
         statsd = new StatsD({ telegraf: true, mock: true });
         statsd.send('nocolon', ['env:prod']);
         assert.strictEqual(statsd.mockBuffer.length, 1);
         assert.strictEqual(statsd.mockBuffer[0], 'nocolon,env=prod:',
-          `expected 'nocolon,env=prod:' (with trailing colon to match pre-fix split-based behavior), got: ${statsd.mockBuffer[0]}`);
+          `expected 'nocolon,env=prod:' (trailing colon from the split-based send path), got: ${statsd.mockBuffer[0]}`);
       });
 
       it('should preserve colons in tag values using telegraf format', done => {

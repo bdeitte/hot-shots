@@ -55,6 +55,9 @@ describe('#optionValidation', () => {
       assert.doesNotThrow(() => new StatsD({ sampleRate: -0.1, mock: true }));
       assert.doesNotThrow(() => new StatsD({ sampleRate: 1.1, mock: true }));
       assert.doesNotThrow(() => new StatsD({ sampleRate: 'half', mock: true }));
+      // NaN exercises the Number.isNaN branch explicitly — same code path as 'half'
+      // but spec-as-code rather than implied.
+      assert.doesNotThrow(() => new StatsD({ sampleRate: NaN, mock: true }));
       assert.ok(warnedAbout('\'sampleRate\''),
         'expected at least one console.error mentioning sampleRate');
     });
@@ -78,6 +81,9 @@ describe('#optionValidation', () => {
       assert.doesNotThrow(() => new StatsD({ bufferFlushInterval: 0, mock: true }));
       assert.doesNotThrow(() => new StatsD({ bufferFlushInterval: -100, mock: true }));
       assert.doesNotThrow(() => new StatsD({ bufferFlushInterval: 'soon', mock: true }));
+      // NaN exercises the !Number.isFinite branch explicitly — distinct from 'soon'
+      // (which fails the typeof check) and from Infinity (handled by the separate test).
+      assert.doesNotThrow(() => new StatsD({ bufferFlushInterval: NaN, mock: true }));
       assert.ok(warnedAbout('\'bufferFlushInterval\''),
         'expected at least one console.error mentioning bufferFlushInterval');
     });

@@ -78,16 +78,18 @@ describe('#enqueueCallback', () => {
       // to route it to errorHandler. Crucially, the per-metric callback must NOT be re-invoked
       // with the async send error.
       setImmediate(() => {
-        assert.strictEqual(socketSendCalls, 1, 'overflow flush should have called socket.send once');
-        assert.strictEqual(received.length, 1, 'errorHandler should receive the formatted send error');
-        assert.ok(received[0].message.includes('synthetic socket failure'),
-          `errorHandler message should include socket failure, got: ${received[0].message}`);
-        assert.strictEqual(callArgs.length, 1,
-          'per-metric callback must not be re-invoked async with the send error');
-        assert.deepStrictEqual(callArgs[0], [], 'per-metric callback args must remain []');
-
-        // Restore so closeAll's teardown flush works normally.
-        statsd.socket.send = originalSocketSend;
+        try {
+          assert.strictEqual(socketSendCalls, 1, 'overflow flush should have called socket.send once');
+          assert.strictEqual(received.length, 1, 'errorHandler should receive the formatted send error');
+          assert.ok(received[0].message.includes('synthetic socket failure'),
+            `errorHandler message should include socket failure, got: ${received[0].message}`);
+          assert.strictEqual(callArgs.length, 1,
+            'per-metric callback must not be re-invoked async with the send error');
+          assert.deepStrictEqual(callArgs[0], [], 'per-metric callback args must remain []');
+        } finally {
+          // Restore so closeAll's teardown flush works normally even if an assertion above failed.
+          statsd.socket.send = originalSocketSend;
+        }
         done();
       });
     });
