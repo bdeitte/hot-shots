@@ -8,7 +8,7 @@ CHANGELOG
      * Default error listener on every transport socket so that in the cases we didn't have one, an error doesn't crash the host
      * Wrap interval flushes (buffer + telemetry) and the close-time telemetry flush in try/catch to prevent host crashing
      * Fix child-close error routing so there's no double-delivery for inherited handlers
-     * Fix buffered-message callback being misrouted to the prior buffer's flush- new callback now fires synchronously after enqueue
+     * Fix buffered-message callback being sometimes (but not always) misrouted to the prior buffer's flush- new callback now fires synchronously after enqueue for consistency
      * Ensure the errorHandler is used when there's an issue with the flush performed inside `close()`
      * Updated error section in README to explain better how things work, especially the differences between buffered and unbuffered modes
 * [@bdeitte](https://github.com/bdeitte) A number of security improvements:
