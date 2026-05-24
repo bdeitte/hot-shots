@@ -386,7 +386,7 @@ If the optional callback is not given, an error is thrown in some cases and a co
 
 For broad error coverage, specify an `errorHandler` in your root client. It catches errors in socket setup, sending of messages, and closing of the socket.
 
-In unbuffered mode (`maxBufferSize === 0`), if you specify both an `errorHandler` and a per-metric callback, the callback takes precedence. In buffered mode (`maxBufferSize > 0`), per-metric callbacks do not receive send errors — those errors go to `errorHandler` (or are logged) for periodic and overflow-driven flushes. The close-time flush is the exception described above. See [Callback semantics](#callback-semantics) for details.
+In unbuffered mode (`maxBufferSize === 0`), if you specify both an `errorHandler` and a per-metric callback, the callback takes precedence. In buffered mode (`maxBufferSize > 0`), per-metric callbacks do not receive send errors — those errors go to `errorHandler` (or are logged). See [Callback semantics](#callback-semantics) for details.
 
 ### Callback semantics
 
