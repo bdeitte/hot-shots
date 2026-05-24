@@ -3,21 +3,23 @@ CHANGELOG
 
 ## Unreleased
 
-- [@bdeitte](https://github.com/bdeitte) Add `diff` override to `^8.0.3` to resolve [GHSA-73rr-hh4g-fpgx](https://github.com/advisories/GHSA-73rr-hh4g-fpgx) transitively pulled in via `mocha` and `sinon` (dev-only)
-- [@bdeitte](https://github.com/bdeitte) A number of updates to improve error handling:
+- [@bdeitte](https://github.com/bdeitte) A number of updates to improve callback and error handling:
      - Route errors through errorHandler with a console.error fallback so a buggy handler can't crash the host
      - Default error listener on every transport socket so that in the cases we didn't have one, an error doesn't crash the host
      - Wrap interval flushes (buffer + telemetry) and the close-time telemetry flush in try/catch to prevent host crashing
      - Fix child-close error routing so there's no double-delivery for inherited handlers
      - Fix buffered-message callback being misrouted to the prior buffer's flush- new callback now fires synchronously after enqueue
+     - Ensure the errorHandler is used when there's an issue with the flush performed inside `close()`
      - Updated error section in README to explain better how things work, especially the differences between buffered and unbuffered modes
-- [@bdeitte](https://github.com/bdeitte) A number of updates to generally improve the code:
+- [@bdeitte](https://github.com/bdeitte) A number of security improvements:
+     - Sanitize `\r` in metric names, tag keys, and tag values alongside newlines, since some receivers split lines on `\r` and could otherwise be tricked into accepting injected metrics
+     - Add `files` allowlist to package.json so npm publishes only `index.js`, `index.mjs`, `lib/`, and the TypeScript definitions
+     - dev-only library updates. Override `uuid` to 14.x to fix [GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq) and add `diff` override to `^8.0.3` to resolve [GHSA-73rr-hh4g-fpgx](https://github.com/advisories/GHSA-73rr-hh4g-fpgx) transitively pulled in via `mocha` and `sinon`.
+- [@bdeitte](https://github.com/bdeitte) A few smaller cleanups and fixups:
      - Replace polling in close() with a Promise-based drain that handles async-queued follow-up sends
      - Warn (via console.error) on invalid `port`, `sampleRate`, `bufferFlushInterval` config values and use default config values
+
      - Misc cleanups: `for-of` over array routes, simpler EAGAIN access, dedup `Buffer.byteLength` in `sendMessage`
-- [@bdeitte](https://github.com/bdeitte) Override `uuid` to 14.x to fix [GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq)
-- [@bdeitte](https://github.com/bdeitte) Sanitize carriage returns (`\r`) in metric names, tag keys, and tag values alongside newlines, since some receivers split lines on `\r` and could otherwise be tricked into accepting injected metrics
-- [@bdeitte](https://github.com/bdeitte) Add `files` allowlist to package.json so npm publishes only `index.js`, `index.mjs`, `lib/`, and the TypeScript definitions — guards against accidental publication of dev or sensitive files added to the repo
 
 ## 14.3.1 (2026-4-6)
 
