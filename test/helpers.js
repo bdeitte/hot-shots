@@ -224,6 +224,16 @@ describe('#helpersExtended', () => {
       assert.strictEqual(result, 'tag_value');
     });
 
+    it('should sanitize carriage returns for StatsD (default)', () => {
+      const result = helpers.sanitizeTags('tag\rvalue');
+      assert.strictEqual(result, 'tag_value');
+    });
+
+    it('should sanitize carriage returns for Telegraf', () => {
+      const result = helpers.sanitizeTags('tag\rvalue', true);
+      assert.strictEqual(result, 'tag_value');
+    });
+
     it('should sanitize hash character for StatsD (default)', () => {
       const result = helpers.sanitizeTags('tag#value');
       assert.strictEqual(result, 'tag_value');
@@ -254,6 +264,11 @@ describe('#helpersExtended', () => {
     it('should sanitize newlines in tag values', () => {
       const result = helpers.sanitizeTagValue('value\nwith\nnewlines');
       assert.strictEqual(result, 'value_with_newlines');
+    });
+
+    it('should sanitize carriage returns in tag values', () => {
+      const result = helpers.sanitizeTagValue('value\rwith\rcarriagereturns');
+      assert.strictEqual(result, 'value_with_carriagereturns');
     });
 
     it('should sanitize commas in tag values', () => {
@@ -295,6 +310,11 @@ describe('#helpersExtended', () => {
 
     it('should sanitize newlines in metric names', () => {
       const result = helpers.sanitizeMetricName('check\nvalue');
+      assert.strictEqual(result, 'check_value');
+    });
+
+    it('should sanitize carriage returns in metric names', () => {
+      const result = helpers.sanitizeMetricName('check\rvalue');
       assert.strictEqual(result, 'check_value');
     });
 
@@ -399,6 +419,15 @@ describe('#helpersExtended', () => {
         // ':invalid' is sanitized to '_invalid' because leading colons are invalid in tags
         assert.deepStrictEqual(result, ['normal:tag', 'valid:tag', '_invalid']);
       });
+
+      it('returns a different array instance when child is empty (no aliasing)', () => {
+        const parent = ['env:prod', 'region:us-east'];
+        const result = helpers.overrideTags(parent, []);
+
+        assert.deepStrictEqual(result, parent);
+        assert.notStrictEqual(result, parent,
+          'empty-child fast path must not return the parent reference');
+      });
     });
 
     describe('Object child tags', () => {
@@ -464,6 +493,15 @@ describe('#helpersExtended', () => {
         const result = helpers.overrideTags(parent, child, true);
 
         assert.deepStrictEqual(result, ['env:prod', 'key_with_commas:value_with_commas']);
+      });
+
+      it('returns a different array instance when child is an empty object (no aliasing)', () => {
+        const parent = ['env:prod', 'region:us-east'];
+        const result = helpers.overrideTags(parent, {});
+
+        assert.deepStrictEqual(result, parent);
+        assert.notStrictEqual(result, parent,
+          'empty-object child fast path must not return the parent reference');
       });
     });
 

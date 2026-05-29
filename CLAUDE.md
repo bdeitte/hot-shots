@@ -181,6 +181,17 @@ See `test/udpDnsCacheTransport.js` and `test/udpSocketOptions.js` for examples.
 - Constructor parameter expansion is deprecated - use options object
 - Mock mode available for testing (prevents actual metric sending)
 - Add debug logging that can be enabled with "NODE_DEBUG=hot-shots"
+- Real errors must be visible without `NODE_DEBUG=hot-shots`. Do not log only via `debug()` in a catch block that handles a real failure. Match the existing convention used by `sendMessage`, `close`, and `protocolErrorHandler` in `lib/statsd.js`: prefer `errorHandler` if set, otherwise fall back to `console.error`. `debug()` is fine for additional verbose context, but never the only signal for a real error. Pattern:
+  ```js
+  } catch (err) {
+    if (this.errorHandler) {
+      try { this.errorHandler(err); }
+      catch (handlerErr) { console.error(`hot-shots: errorHandler threw inside <context>: ${handlerErr && handlerErr.message}`); }
+    } else {
+      console.error(`hot-shots: <context> threw: ${err && err.message}`);
+    }
+  }
+  ```
 - Updates should be noted in CHANGES.md using the format: `* [@username](https://github.com/username) Description`. For breaking changes, prefix with `Breaking:` (e.g., `* [@username](https://github.com/username) BREAKING: Description`). Do not use bold section headers. Always link `@username` mentions to their GitHub profiles and `#NNN` issue/PR references to `https://github.com/bdeitte/hot-shots/issues/NNN`.
 - API changes should be noted in README.md
 

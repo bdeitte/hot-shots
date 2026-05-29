@@ -1,5 +1,6 @@
 const assert = require('assert');
 const dns = require('dns');
+const os = require('os');
 
 const StatsD = require('../lib/statsd');
 const helpers = require('./helpers/helpers.js');
@@ -132,7 +133,12 @@ describe('#init', () => {
     assert.strictEqual(statsd.port, 8125);
   });
 
-  it('should warn and cap maxBufferSize for UDS protocol when exceeding 8192 bytes', () => {
+  it('should warn and cap maxBufferSize for UDS protocol when exceeding 8192 bytes', function () {
+    // UDS is not supported on Windows (unix-dgram is unavailable there).
+    if (os.platform() === 'win32') {
+      this.skip();
+      return;
+    }
     let warningCalled = false;
     const originalWarn = console.warn;
     console.warn = (message) => {

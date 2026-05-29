@@ -5,6 +5,13 @@
   "author": "Steve Ivy",
   "main": "./index.js",
   "types": "./types.d.ts",
+  "files": [
+    "index.js",
+    "index.mjs",
+    "lib/",
+    "types.d.ts",
+    "types.d.mts"
+  ],
   "exports": {
     ".": {
       "import": {
@@ -63,6 +70,8 @@
   },
   "license": "MIT",
   "overrides": {
-    "serialize-javascript": "7.x"
+    "diff": "^8.0.3",
+    "serialize-javascript": "7.x",
+    "uuid": "14.x"
   }
 }
