@@ -1058,8 +1058,16 @@ Expected: PASS — including "places extension fields after tags" (`test:1|c|#a:
 
 - [ ] **Step 5: Run the full suite to check for regressions in timestamp/other callers**
 
-Run: `npx mocha test/timestamp.js test/statsFunctions.js test/send.js --timeout 5000`
-Expected: PASS (the new `cardinality` param is positional before `callback`; all `sendStat` callers go through `sendAll`, which now passes it).
+First update the one existing test that stubs `sendStat` with the old 7-arg shape. In `test/errorHandling.js`, the "should use errorHandler for sendStat error" test overrides `statsd.sendStat`; add the new `cardinality` param before `callback`:
+
+```javascript
+          statsd.sendStat = (item, value, type, sampleRate, tags, timestamp, cardinality, callback) => {
+            callback(err);
+          };
+```
+
+Run: `npx mocha test/timestamp.js test/statsFunctions.js test/send.js test/errorHandling.js --timeout 5000`
+Expected: actual `it(...)` assertions PASS (the new `cardinality` param is positional before `callback`; all internal `sendStat` callers go through `sendAll`, which now passes it). Ignore any pre-existing UDS `"after each" hook` cleanup flakes.
 
 - [ ] **Step 6: Lint**
 
