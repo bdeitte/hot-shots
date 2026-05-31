@@ -1,5 +1,9 @@
 const assert = require('assert');
 const StatsD = require('../lib/statsd');
+const helpers = require('./helpers/helpers.js');
+const closeAll = helpers.closeAll;
+const createServer = helpers.createServer;
+const createHotShotsClient = helpers.createHotShotsClient;
 
 const DD_ENV_VARS = [
   'DD_AGENT_HOST', 'DD_DOGSTATSD_PORT', 'DD_ENTITY_ID', 'DD_ENV',
@@ -175,5 +179,49 @@ describe('#datadogMode event/check wire output', () => {
     client.check('svc', 0, { cardinality: 'high' });
     assert.ok(lastMessage(client).indexOf('|card:high') !== -1);
     client.close(() => { /* close callback */ });
+  });
+});
+
+describe('#datadogMode child inheritance', () => {
+  beforeEach(clearDDEnv);
+  afterEach(restoreDDEnv);
+
+  it('child inherits datadog mode and container id', () => {
+    const parent = new StatsD({ mock: true, datadog: true, containerID: 'cid123' });
+    const child = parent.childClient({});
+    assert.strictEqual(child.datadog, true);
+    assert.strictEqual(child.containerID, 'cid123');
+    child.increment('c');
+    assert.strictEqual(child.mockBuffer[child.mockBuffer.length - 1], 'c:1|c|c:cid123');
+    parent.close(() => { /* close callback */ });
+  });
+
+  it('child can override cardinality default', () => {
+    const parent = new StatsD({ mock: true, datadog: true, cardinality: 'low' });
+    const child = parent.childClient({ cardinality: 'high' });
+    assert.strictEqual(child.cardinality, 'high');
+    parent.close(() => { /* close callback */ });
+  });
+});
+
+describe('#datadogMode real-transport ordering (udp)', () => {
+  let server;
+  let statsd;
+  beforeEach(clearDDEnv);
+  afterEach(done => {
+    closeAll(server, statsd, false, () => { restoreDDEnv(); done(); });
+  });
+
+  it('emits |#tags then |c: over udp', done => {
+    server = createServer('udp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, {
+        datadog: true, containerID: 'cid123', includeDatadogTelemetry: false,
+      }), 'client');
+      statsd.increment('test', 1, ['a:b']);
+    });
+    server.on('metrics', metrics => {
+      assert.strictEqual(metrics, 'test:1|c|#a:b|c:cid123');
+      done();
+    });
   });
 });
