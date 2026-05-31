@@ -225,3 +225,48 @@ describe('#datadogMode real-transport ordering (udp)', () => {
     });
   });
 });
+
+describe('#datadogMode telemetry default', () => {
+  beforeEach(clearDDEnv);
+  afterEach(restoreDDEnv);
+
+  // These use real (non-mock) clients because mock mode always disables telemetry;
+  // each client is closed in its assertion's callback.
+
+  it('explicit datadog:true defaults telemetry on', done => {
+    const client = new StatsD({ datadog: true });
+    assert.strictEqual(client.includeDatadogTelemetry, true);
+    client.close(() => done());
+  });
+
+  it('a DD_* env signal defaults telemetry on', done => {
+    process.env.DD_ENV = 'prod';
+    const client = new StatsD({});
+    assert.strictEqual(client.datadog, true);
+    assert.strictEqual(client.includeDatadogTelemetry, true);
+    client.close(() => done());
+  });
+
+  it('bare uds (no DD env, no explicit datadog) keeps telemetry off', done => {
+    if (process.platform === 'win32') {
+      return done();
+    }
+    const client = new StatsD({ protocol: 'uds', path: '/tmp/hot-shots-telemetry-default.sock' });
+    assert.strictEqual(client.datadog, true);
+    assert.strictEqual(client.includeDatadogTelemetry, false);
+    client.close(() => done());
+  });
+
+  it('includeDatadogTelemetry:false opts out even with datadog:true', done => {
+    const client = new StatsD({ datadog: true, includeDatadogTelemetry: false });
+    assert.strictEqual(client.includeDatadogTelemetry, false);
+    client.close(() => done());
+  });
+
+  it('no Datadog signal (plain udp) keeps telemetry off', done => {
+    const client = new StatsD({});
+    assert.strictEqual(client.datadog, false);
+    assert.strictEqual(client.includeDatadogTelemetry, false);
+    client.close(() => done());
+  });
+});
