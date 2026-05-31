@@ -511,17 +511,17 @@ describe('#helpers datadog-mode units', () => {
   describe('detectDatadogMode', () => {
     it('is false for telegraf regardless of signals', () => {
       process.env.DD_AGENT_HOST = '1.2.3.4';
-      assert.strictEqual(helpers.detectDatadogMode(true, 'udp', undefined), false);
+      assert.strictEqual(helpers.detectDatadogMode(true, 'udp'), false);
     });
     it('is true when a DD_ signal env var is present', () => {
       process.env.DD_ENV = 'prod';
-      assert.strictEqual(helpers.detectDatadogMode(false, 'udp', undefined), true);
+      assert.strictEqual(helpers.detectDatadogMode(false, 'udp'), true);
     });
     it('is true for uds protocol', () => {
-      assert.strictEqual(helpers.detectDatadogMode(false, 'uds', undefined), true);
+      assert.strictEqual(helpers.detectDatadogMode(false, 'uds'), true);
     });
     it('is false with no signals on udp', () => {
-      assert.strictEqual(helpers.detectDatadogMode(false, 'udp', undefined), false);
+      assert.strictEqual(helpers.detectDatadogMode(false, 'udp'), false);
     });
   });
 });
