@@ -141,6 +141,7 @@ The event method has the following API:
   * `priority`         Can be ‘normal’ or ‘low’ `default: normal`
   * `source_type_name` Assign a source type to the event.
   * `alert_type`       Can be ‘error’, ‘warning’, ‘info’ or ‘success’ `default: info`
+  * `cardinality`      Tag cardinality (`none`/`low`/`orchestrator`/`high`). (DogStatsD datadog mode only)
 * `tags`:       The tags to add to metrics. Can be either an object `{ tag: "value"}` or an array of tags. `default: []`
 * `callback`:   The callback to execute once the metric has been sent.
 
@@ -153,6 +154,7 @@ The check method has the following API:
   * `date_happened`    Assign a timestamp to the check `default is now`
   * `hostname`         Assign a hostname to the check.
   * `message`          Assign a message to the check.
+  * `cardinality`      Tag cardinality (`none`/`low`/`orchestrator`/`high`). (DogStatsD datadog mode only)
 * `tags`:       The tags to add to metrics. Can be either an object `{ tag: "value"}` or an array of tags. `default: []`
 * `callback`:   The callback to execute once the metric has been sent.
 

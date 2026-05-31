@@ -91,6 +91,13 @@ describe('#datadogMode resolution', () => {
     client.close(() => { /* close callback */ });
   });
 
+  it('falls back to DATADOG_CARDINALITY when DD_CARDINALITY is absent', () => {
+    process.env.DATADOG_CARDINALITY = 'high';
+    const client = new StatsD({ mock: true, datadog: true });
+    assert.strictEqual(client.cardinality, 'high');
+    client.close(() => { /* close callback */ });
+  });
+
   it('does not set fields when datadog mode is off', () => {
     const client = new StatsD({ mock: true, containerID: 'abc123' });
     assert.strictEqual(client.datadog, false);
