@@ -655,39 +655,46 @@ describe('#datadogMode resolution', () => {
   it('defaults datadog off with no signals (udp)', () => {
     const client = new StatsD({ mock: true });
     assert.strictEqual(client.datadog, false);
-    client.close(() => {});
+    client.close(() => { /* close callback */ });
   });
 
   it('auto-enables when a DD_ env signal is present', () => {
     process.env.DD_ENV = 'prod';
     const client = new StatsD({ mock: true });
     assert.strictEqual(client.datadog, true);
-    client.close(() => {});
+    client.close(() => { /* close callback */ });
   });
 
   it('honors explicit datadog:true', () => {
     const client = new StatsD({ mock: true, datadog: true });
     assert.strictEqual(client.datadog, true);
-    client.close(() => {});
+    client.close(() => { /* close callback */ });
   });
 
   it('honors explicit datadog:false even with signals', () => {
     process.env.DD_ENV = 'prod';
     const client = new StatsD({ mock: true, datadog: false });
     assert.strictEqual(client.datadog, false);
-    client.close(() => {});
+    client.close(() => { /* close callback */ });
   });
 
   it('telegraf wins over explicit datadog:true', () => {
     const client = new StatsD({ mock: true, telegraf: true, datadog: true });
     assert.strictEqual(client.datadog, false);
-    client.close(() => {});
+    client.close(() => { /* close callback */ });
+  });
+
+  it('auto-detect stays off when telegraf:true even with DD signals', () => {
+    process.env.DD_ENV = 'prod';
+    const client = new StatsD({ mock: true, telegraf: true });
+    assert.strictEqual(client.datadog, false);
+    client.close(() => { /* close callback */ });
   });
 
   it('sets containerID from explicit option in datadog mode', () => {
     const client = new StatsD({ mock: true, datadog: true, containerID: 'abc123' });
     assert.strictEqual(client.containerID, 'abc123');
-    client.close(() => {});
+    client.close(() => { /* close callback */ });
   });
 
   it('reads external data and cardinality in datadog mode', () => {
@@ -696,14 +703,14 @@ describe('#datadogMode resolution', () => {
     const client = new StatsD({ mock: true });
     assert.strictEqual(client.externalData, 'it-false,cn-foo');
     assert.strictEqual(client.cardinality, 'low');
-    client.close(() => {});
+    client.close(() => { /* close callback */ });
   });
 
   it('does not set fields when datadog mode is off', () => {
     const client = new StatsD({ mock: true, containerID: 'abc123' });
     assert.strictEqual(client.datadog, false);
     assert.strictEqual(client.containerID, undefined);
-    client.close(() => {});
+    client.close(() => { /* close callback */ });
   });
 });
 ```
@@ -791,7 +798,7 @@ with:
 - [ ] **Step 5: Run to verify pass**
 
 Run: `npx mocha test/datadogMode.js --timeout 5000`
-Expected: PASS (8 passing).
+Expected: PASS (9 passing).
 
 - [ ] **Step 6: Lint**
 
@@ -835,35 +842,35 @@ describe('#datadogMode metric wire output', () => {
     client.externalData = 'it-false';
     client.increment('test');
     assert.strictEqual(lastMessage(client), 'test:1|c|c:cid123|e:it-false');
-    client.close(() => {});
+    client.close(() => { /* close callback */ });
   });
 
   it('appends client-default |card:', () => {
     const client = new StatsD({ mock: true, datadog: true, cardinality: 'low' });
     client.gauge('g', 5);
     assert.strictEqual(lastMessage(client), 'g:5|g|card:low');
-    client.close(() => {});
+    client.close(() => { /* close callback */ });
   });
 
   it('per-call cardinality overrides the client default', () => {
     const client = new StatsD({ mock: true, datadog: true, cardinality: 'low' });
     client.gauge('g', 5, { cardinality: 'high' });
     assert.strictEqual(lastMessage(client), 'g:5|g|card:high');
-    client.close(() => {});
+    client.close(() => { /* close callback */ });
   });
 
   it('adds no extension fields when datadog mode is off', () => {
     const client = new StatsD({ mock: true, containerID: 'cid123' });
     client.increment('test');
     assert.strictEqual(lastMessage(client), 'test:1|c');
-    client.close(() => {});
+    client.close(() => { /* close callback */ });
   });
 
   it('places extension fields after tags', () => {
     const client = new StatsD({ mock: true, datadog: true, containerID: 'cid123' });
     client.increment('test', 1, ['a:b']);
     assert.strictEqual(lastMessage(client), 'test:1|c|#a:b|c:cid123');
-    client.close(() => {});
+    client.close(() => { /* close callback */ });
   });
 });
 ```
@@ -1070,7 +1077,7 @@ describe('#datadogMode event/check wire output', () => {
     const msg = lastMessage(client);
     assert.ok(msg.indexOf('|c:cid123') !== -1, msg);
     assert.ok(msg.indexOf('|card:low') !== -1, msg);
-    client.close(() => {});
+    client.close(() => { /* close callback */ });
   });
 
   it('appends |c: to service checks before the message field', () => {
@@ -1080,14 +1087,14 @@ describe('#datadogMode event/check wire output', () => {
     assert.ok(msg.indexOf('|c:cid123') !== -1, msg);
     // container id must come before the trailing m: field
     assert.ok(msg.indexOf('|c:cid123') < msg.indexOf('|m:all good'), msg);
-    client.close(() => {});
+    client.close(() => { /* close callback */ });
   });
 
   it('check supports per-call cardinality', () => {
     const client = new StatsD({ mock: true, datadog: true });
     client.check('svc', 0, { cardinality: 'high' });
     assert.ok(lastMessage(client).indexOf('|card:high') !== -1);
-    client.close(() => {});
+    client.close(() => { /* close callback */ });
   });
 });
 ```
@@ -1203,14 +1210,14 @@ describe('#datadogMode child inheritance', () => {
     assert.strictEqual(child.containerID, 'cid123');
     child.increment('c');
     assert.strictEqual(child.mockBuffer[child.mockBuffer.length - 1], 'c:1|c|c:cid123');
-    parent.close(() => {});
+    parent.close(() => { /* close callback */ });
   });
 
   it('child can override cardinality default', () => {
     const parent = new StatsD({ mock: true, datadog: true, cardinality: 'low' });
     const child = parent.childClient({ cardinality: 'high' });
     assert.strictEqual(child.cardinality, 'high');
-    parent.close(() => {});
+    parent.close(() => { /* close callback */ });
   });
 });
 

@@ -47,6 +47,13 @@ describe('#datadogMode resolution', () => {
     client.close(() => { /* close callback */ });
   });
 
+  it('auto-detect stays off when telegraf:true even with DD signals', () => {
+    process.env.DD_ENV = 'prod';
+    const client = new StatsD({ mock: true, telegraf: true });
+    assert.strictEqual(client.datadog, false);
+    client.close(() => { /* close callback */ });
+  });
+
   it('sets containerID from explicit option in datadog mode', () => {
     const client = new StatsD({ mock: true, datadog: true, containerID: 'abc123' });
     assert.strictEqual(client.containerID, 'abc123');
