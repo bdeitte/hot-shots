@@ -73,7 +73,9 @@ exports.ORIGIN_DETECTION = {
   CGROUP_MOUNT_PATH: '/sys/fs/cgroup',
   CGROUPV1_BASE_CONTROLLER: 'memory',
   // Matches Docker (64 hex), ECS (32 hex + task id), and UUID/Garden container ids.
-  CONTAINER_ID_RE: /([0-9a-f]{64})|([0-9a-f]{32}-\d+)|([0-9a-f]{8}(?:-[0-9a-f]{4}){4})/,
+  // The UUID branch is a full 8-4-4-4-12 UUID; using {4} for the final group would
+  // truncate real UUIDs to 28 chars and emit an invalid |c: value.
+  CONTAINER_ID_RE: /([0-9a-f]{64})|([0-9a-f]{32}-\d+)|([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})/,
 };
 ```
 
@@ -111,7 +113,7 @@ const assert = require('assert');
 const originDetection = require('../lib/originDetection');
 
 // Helper: build an injectable deps object backed by in-memory fake files/inodes.
-function fakeDeps({ platform = 'linux', files = {}, inodes = {} } = {}) {
+const fakeDeps = ({ platform = 'linux', files = {}, inodes = {} } = {}) => {
   return {
     platform,
     readFileSync: (p) => {
@@ -131,7 +133,7 @@ function fakeDeps({ platform = 'linux', files = {}, inodes = {} } = {}) {
       return { ino: inodes[p] };
     },
   };
-}
+};
 
 const HOST_INODE = 0xEFFFFFFB;
 
@@ -177,6 +179,17 @@ describe('#originDetection', () => {
       },
     });
     assert.strictEqual(originDetection.getContainerID(deps), ecs);
+  });
+
+  it('parses a full UUID/Garden container id without truncation', () => {
+    const uuid = '0123abcd-4567-89ab-cdef-0123456789ab';
+    const deps = fakeDeps({
+      inodes: { '/proc/self/ns/cgroup': HOST_INODE },
+      files: {
+        '/proc/self/cgroup': `0::/system.slice/garden-${uuid}.scope\n`,
+      },
+    });
+    assert.strictEqual(originDetection.getContainerID(deps), uuid);
   });
 
   it('falls back to mountinfo when cgroup has no id', () => {
@@ -407,15 +420,15 @@ git commit -m "Add originDetection module for container-ID resolution"
 
 **Files:**
 - Modify: `lib/helpers.js`
-- Test: `test/helpers/helpersUnit.js` (create)
+- Test: `test/datadogHelpers.js` (create — must be top-level `test/*.js`; `npm test` runs `mocha test/*.js` non-recursively, so files under `test/helpers/` are NOT picked up)
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `test/helpers/helpersUnit.js`:
+Create `test/datadogHelpers.js`:
 
 ```javascript
 const assert = require('assert');
-const helpers = require('../../lib/helpers');
+const helpers = require('../lib/helpers');
 
 describe('#helpers datadog-mode units', () => {
   afterEach(() => {
@@ -480,7 +493,7 @@ describe('#helpers datadog-mode units', () => {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `npx mocha test/helpers/helpersUnit.js --timeout 5000`
+Run: `npx mocha test/datadogHelpers.js --timeout 5000`
 Expected: FAIL — `helpers.validateCardinality is not a function`.
 
 - [ ] **Step 3: Implement the helpers**
@@ -558,18 +571,18 @@ Then add to the `module.exports` object:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `npx mocha test/helpers/helpersUnit.js --timeout 5000`
+Run: `npx mocha test/datadogHelpers.js --timeout 5000`
 Expected: PASS.
 
 - [ ] **Step 5: Lint**
 
-Run: `npx eslint lib/helpers.js test/helpers/helpersUnit.js`
+Run: `npx eslint lib/helpers.js test/datadogHelpers.js`
 Expected: no errors.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add lib/helpers.js test/helpers/helpersUnit.js
+git add lib/helpers.js test/datadogHelpers.js
 git commit -m "Add datadog-mode helpers: cardinality, external data, mode detection"
 ```
 
@@ -595,9 +608,9 @@ const DD_ENV_VARS = [
   'DATADOG_CARDINALITY', 'DD_ORIGIN_DETECTION_ENABLED',
 ];
 
-function clearDDEnv() {
+const clearDDEnv = () => {
   DD_ENV_VARS.forEach(name => delete process.env[name]);
-}
+};
 
 describe('#datadogMode resolution', () => {
   beforeEach(clearDDEnv);
@@ -773,9 +786,9 @@ describe('#datadogMode metric wire output', () => {
   beforeEach(clearDDEnv);
   afterEach(clearDDEnv);
 
-  function lastMessage(client) {
+  const lastMessage = (client) => {
     return client.mockBuffer[client.mockBuffer.length - 1];
-  }
+  };
 
   it('appends |c: and |e: to metrics in datadog mode', () => {
     const client = new StatsD({
@@ -1011,9 +1024,9 @@ describe('#datadogMode event/check wire output', () => {
   beforeEach(clearDDEnv);
   afterEach(clearDDEnv);
 
-  function lastMessage(client) {
+  const lastMessage = (client) => {
     return client.mockBuffer[client.mockBuffer.length - 1];
-  }
+  };
 
   it('appends |c: and |card: to events', () => {
     const client = new StatsD({ mock: true, datadog: true, containerID: 'cid123' });
@@ -1384,7 +1397,7 @@ In `CHANGES.md`, add above the `## 15.0.0 (2026-5-28)` heading:
 - [ ] **Step 2: Run the full test suite + lint (the project gate)**
 
 Run: `npm test`
-Expected: lint passes and all tests pass, including `test/originDetection.js`, `test/helpers/helpersUnit.js`, and `test/datadogMode.js`.
+Expected: lint passes and all tests pass, including `test/originDetection.js`, `test/datadogHelpers.js`, and `test/datadogMode.js`.
 
 - [ ] **Step 3: Commit**
 
@@ -1398,7 +1411,7 @@ git commit -m "Add 16.0.0 CHANGES entry for datadog mode"
 ## Final verification checklist
 
 - [ ] `npm test` is green (lint + all tests).
-- [ ] `npx mocha test/datadogMode.js test/originDetection.js test/helpers/helpersUnit.js --timeout 5000` passes.
+- [ ] `npx mocha test/datadogMode.js test/originDetection.js test/datadogHelpers.js --timeout 5000` passes.
 - [ ] Non-datadog output unchanged: `npx mocha test/globalTags.js test/event.js test/check.js test/timestamp.js --timeout 5000` passes.
 - [ ] No new ESLint disables beyond the documented `no-sync` / `no-control-regex` ones.
 - [ ] README, types.d.ts, and CHANGES.md all updated (per CLAUDE.md "Follow for all code changes").
