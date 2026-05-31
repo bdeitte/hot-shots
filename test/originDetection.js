@@ -81,6 +81,18 @@ describe('#originDetection', () => {
     assert.strictEqual(originDetection.getContainerID(deps), uuid);
   });
 
+  it('returns the container id, not a pod UUID earlier in the cgroup path', () => {
+    const podUuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const containerId = 'f'.repeat(64);
+    const deps = fakeDeps({
+      inodes: { '/proc/self/ns/cgroup': HOST_INODE },
+      files: {
+        '/proc/self/cgroup': `11:memory:/kubepods/besteffort/pod${podUuid}/${containerId}\n`,
+      },
+    });
+    assert.strictEqual(originDetection.getContainerID(deps), containerId);
+  });
+
   it('falls back to mountinfo when cgroup has no id', () => {
     const id = 'd'.repeat(64);
     const deps = fakeDeps({
