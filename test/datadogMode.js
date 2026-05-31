@@ -142,3 +142,38 @@ describe('#datadogMode metric wire output', () => {
     client.close(() => { /* close callback */ });
   });
 });
+
+describe('#datadogMode event/check wire output', () => {
+  beforeEach(clearDDEnv);
+  afterEach(restoreDDEnv);
+
+  const lastMessage = (client) => {
+    return client.mockBuffer[client.mockBuffer.length - 1];
+  };
+
+  it('appends |c: and |card: to events', () => {
+    const client = new StatsD({ mock: true, datadog: true, containerID: 'cid123' });
+    client.event('title', 'text', { cardinality: 'low' });
+    const msg = lastMessage(client);
+    assert.ok(msg.indexOf('|c:cid123') !== -1, msg);
+    assert.ok(msg.indexOf('|card:low') !== -1, msg);
+    client.close(() => { /* close callback */ });
+  });
+
+  it('appends |c: to service checks before the message field', () => {
+    const client = new StatsD({ mock: true, datadog: true, containerID: 'cid123' });
+    client.check('svc', 0, { message: 'all good' });
+    const msg = lastMessage(client);
+    assert.ok(msg.indexOf('|c:cid123') !== -1, msg);
+    // container id must come before the trailing m: field
+    assert.ok(msg.indexOf('|c:cid123') < msg.indexOf('|m:all good'), msg);
+    client.close(() => { /* close callback */ });
+  });
+
+  it('check supports per-call cardinality', () => {
+    const client = new StatsD({ mock: true, datadog: true });
+    client.check('svc', 0, { cardinality: 'high' });
+    assert.ok(lastMessage(client).indexOf('|card:high') !== -1);
+    client.close(() => { /* close callback */ });
+  });
+});
