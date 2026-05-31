@@ -644,13 +644,31 @@ const DD_ENV_VARS = [
   'DATADOG_CARDINALITY', 'DD_ORIGIN_DETECTION_ENABLED',
 ];
 
+let savedEnv = {};
+
+// Save originals then clear, so detection tests are deterministic regardless of
+// the host environment. restoreDDEnv puts the originals back in afterEach.
 const clearDDEnv = () => {
-  DD_ENV_VARS.forEach(name => delete process.env[name]);
+  savedEnv = {};
+  DD_ENV_VARS.forEach(name => {
+    savedEnv[name] = process.env[name];
+    delete process.env[name];
+  });
+};
+
+const restoreDDEnv = () => {
+  DD_ENV_VARS.forEach(name => {
+    if (savedEnv[name] === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = savedEnv[name];
+    }
+  });
 };
 
 describe('#datadogMode resolution', () => {
   beforeEach(clearDDEnv);
-  afterEach(clearDDEnv);
+  afterEach(restoreDDEnv);
 
   it('defaults datadog off with no signals (udp)', () => {
     const client = new StatsD({ mock: true });
@@ -827,7 +845,7 @@ Add a new `describe` block to `test/datadogMode.js`:
 ```javascript
 describe('#datadogMode metric wire output', () => {
   beforeEach(clearDDEnv);
-  afterEach(clearDDEnv);
+  afterEach(restoreDDEnv);
 
   const lastMessage = (client) => {
     return client.mockBuffer[client.mockBuffer.length - 1];
@@ -1065,7 +1083,7 @@ Add to `test/datadogMode.js`:
 ```javascript
 describe('#datadogMode event/check wire output', () => {
   beforeEach(clearDDEnv);
-  afterEach(clearDDEnv);
+  afterEach(restoreDDEnv);
 
   const lastMessage = (client) => {
     return client.mockBuffer[client.mockBuffer.length - 1];
@@ -1201,7 +1219,7 @@ const createHotShotsClient = helpers.createHotShotsClient;
 
 describe('#datadogMode child inheritance', () => {
   beforeEach(clearDDEnv);
-  afterEach(clearDDEnv);
+  afterEach(restoreDDEnv);
 
   it('child inherits datadog mode and container id', () => {
     const parent = new StatsD({ mock: true, datadog: true, containerID: 'cid123' });
