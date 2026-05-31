@@ -1,11 +1,28 @@
 const assert = require('assert');
+const constants = require('../lib/constants');
 const helpers = require('../lib/helpers');
 
+const ENV_VARS = constants.DATADOG_SIGNAL_ENV_VARS.concat(['DD_ORIGIN_DETECTION_ENABLED']);
+
 describe('#helpers datadog-mode units', () => {
+  let savedEnv;
+
+  beforeEach(() => {
+    savedEnv = {};
+    ENV_VARS.forEach(name => {
+      savedEnv[name] = process.env[name];
+      delete process.env[name];
+    });
+  });
+
   afterEach(() => {
-    delete process.env.DD_AGENT_HOST;
-    delete process.env.DD_ENV;
-    delete process.env.DD_ORIGIN_DETECTION_ENABLED;
+    ENV_VARS.forEach(name => {
+      if (savedEnv[name] === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = savedEnv[name];
+      }
+    });
   });
 
   describe('validateCardinality', () => {
