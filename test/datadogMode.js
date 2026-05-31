@@ -104,12 +104,11 @@ describe('#datadogMode metric wire output', () => {
   };
 
   it('appends |c: and |e: to metrics in datadog mode', () => {
+    // Set DD_EXTERNAL_ENV before construction so externalData is read naturally.
+    process.env.DD_EXTERNAL_ENV = 'it-false';
     const client = new StatsD({
       mock: true, datadog: true, containerID: 'cid123',
     });
-    process.env.DD_EXTERNAL_ENV = 'it-false';
-    // externalData was read at construction; set explicitly for determinism:
-    client.externalData = 'it-false';
     client.increment('test');
     assert.strictEqual(lastMessage(client), 'test:1|c|c:cid123|e:it-false');
     client.close(() => { /* close callback */ });
