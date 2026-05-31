@@ -802,16 +802,23 @@ Replace the existing telemetry-enable line (currently lines 152–155):
 with:
 
 ```javascript
-  // Under datadog mode telemetry defaults on (matching the official clients);
-  // otherwise it stays opt-in. Always disabled for telegraf/mock/child clients.
+  // Telemetry defaults on when datadog mode is active AND there's a strong Datadog
+  // signal — an explicit `datadog: true` or a DD_* env var. It does NOT default on
+  // for datadog mode auto-detected solely from the `uds` protocol, so existing uds
+  // users don't silently start emitting telemetry. Explicit value always wins.
+  // Always disabled for telegraf/mock/child clients.
+  const hasDatadogEnvSignal = constants.DATADOG_SIGNAL_ENV_VARS.some(name => process.env[name]);
+  const telemetryDefault = this.datadog === true && (options.datadog === true || hasDatadogEnvSignal);
   const telemetryRequested = options.includeDatadogTelemetry === undefined ?
-    this.datadog === true :
+    telemetryDefault :
     options.includeDatadogTelemetry === true;
   this.includeDatadogTelemetry = telemetryRequested &&
     !options.telegraf &&
     !options.mock &&
     !options.isChild;
 ```
+
+Note: this telemetry-default refinement (only with a strong Datadog signal, not bare `uds`) was discovered during full-suite verification — auto-enabling telemetry for every `uds` client silently emitted telemetry packets that broke existing exact-wire-output tests (and cascaded into a native `unix-dgram` crash when an assertion threw inside its socket callback). The DD-env globalTags tests that assert exact output now pass `includeDatadogTelemetry: false`.
 
 - [ ] **Step 5: Run to verify pass**
 
