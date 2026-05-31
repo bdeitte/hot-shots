@@ -76,3 +76,52 @@ describe('#datadogMode resolution', () => {
     client.close(() => { /* close callback */ });
   });
 });
+
+describe('#datadogMode metric wire output', () => {
+  beforeEach(clearDDEnv);
+  afterEach(clearDDEnv);
+
+  const lastMessage = (client) => {
+    return client.mockBuffer[client.mockBuffer.length - 1];
+  };
+
+  it('appends |c: and |e: to metrics in datadog mode', () => {
+    const client = new StatsD({
+      mock: true, datadog: true, containerID: 'cid123',
+    });
+    process.env.DD_EXTERNAL_ENV = 'it-false';
+    // externalData was read at construction; set explicitly for determinism:
+    client.externalData = 'it-false';
+    client.increment('test');
+    assert.strictEqual(lastMessage(client), 'test:1|c|c:cid123|e:it-false');
+    client.close(() => { /* close callback */ });
+  });
+
+  it('appends client-default |card:', () => {
+    const client = new StatsD({ mock: true, datadog: true, cardinality: 'low' });
+    client.gauge('g', 5);
+    assert.strictEqual(lastMessage(client), 'g:5|g|card:low');
+    client.close(() => { /* close callback */ });
+  });
+
+  it('per-call cardinality overrides the client default', () => {
+    const client = new StatsD({ mock: true, datadog: true, cardinality: 'low' });
+    client.gauge('g', 5, { cardinality: 'high' });
+    assert.strictEqual(lastMessage(client), 'g:5|g|card:high');
+    client.close(() => { /* close callback */ });
+  });
+
+  it('adds no extension fields when datadog mode is off', () => {
+    const client = new StatsD({ mock: true, containerID: 'cid123' });
+    client.increment('test');
+    assert.strictEqual(lastMessage(client), 'test:1|c');
+    client.close(() => { /* close callback */ });
+  });
+
+  it('places extension fields after tags', () => {
+    const client = new StatsD({ mock: true, datadog: true, containerID: 'cid123' });
+    client.increment('test', 1, ['a:b']);
+    assert.strictEqual(lastMessage(client), 'test:1|c|#a:b|c:cid123');
+    client.close(() => { /* close callback */ });
+  });
+});
