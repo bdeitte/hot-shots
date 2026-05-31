@@ -101,6 +101,10 @@ Parameters (specified as one object passed into hot-shots):
 * `udpSocketOptions`: Used only when the protocol is `udp`. Specify the options passed into dgram.createSocket(). The socket type (`udp4` or `udp6`) is auto-detected based on the host: IPv6 addresses (e.g., `::1`) use `udp6`, IPv4 addresses use `udp4`, and hostnames default to `udp4`. You can override auto-detection by explicitly setting `type` (e.g., `{ type: 'udp6' }`).
 * `includeDatadogTelemetry`: Enable client-side telemetry to track metrics about the client itself. This helps diagnose high-throughput metric delivery issues. Telemetry metrics are prefixed with `datadog.dogstatsd.client.` and are not billed as custom metrics. `default: false`. See [Client-Side Telemetry](#client-side-telemetry) for details.
 * `telemetryFlushInterval`: When telemetry is enabled, how often (in ms) to send telemetry metrics. `default: 10000`
+* `datadog`: Enable Datadog mode, turning on origin detection (`|c:`), External Data (`|e:`), cardinality (`|card:`), and client telemetry by default. Pass `true`/`false` to force it (like `telegraf`). When unset, it auto-detects: enabled when not using `telegraf` and either a Datadog signal env var is set (`DD_AGENT_HOST`, `DD_DOGSTATSD_PORT`, `DD_ENTITY_ID`, `DD_ENV`, `DD_SERVICE`, `DD_VERSION`, `DD_EXTERNAL_ENV`, `DD_CARDINALITY`) or the protocol is `uds`. `default: auto-detect`
+* `originDetection`: When in Datadog mode, auto-detect the container ID from cgroups and send it as `|c:` for [origin detection](https://docs.datadoghq.com/developers/dogstatsd/?tab=kubernetes#origin-detection-over-udp). Respects `DD_ORIGIN_DETECTION_ENABLED`. Linux only. `default: true in datadog mode`
+* `containerID`: Manually set the container ID (skips cgroup parsing). Only used in Datadog mode. `default: undefined`
+* `cardinality`: Client-wide default tag cardinality sent as `|card:` — one of `none`, `low`, `orchestrator`, `high`. Falls back to the `DD_CARDINALITY` / `DATADOG_CARDINALITY` env var. Only used in Datadog mode. `default: undefined`
 
 ### StatsD methods
 All StatsD methods other than `event`, `close`, and `check` have the same API:
@@ -115,6 +119,7 @@ Alternatively, you can pass an options object in place of `sampleRate` and `tags
   * `sampleRate`: Sends only a sample of data to StatsD `default: 1`
   * `tags`:       The tags to add to metrics `default: []`
   * `timestamp`:  A timestamp to associate with the metric. Can be a `Date` object or Unix timestamp in seconds. (DogStatsD only, ignored for Telegraf)
+  * `cardinality`:  Tag cardinality for this metric (`none`/`low`/`orchestrator`/`high`). Overrides the client-wide `cardinality`. (DogStatsD datadog mode only)
 * `callback`:   See [Callback semantics](#callback-semantics) below.
 
 If an array is specified as the `name` parameter each item in that array will be sent along with the specified value.
@@ -336,6 +341,35 @@ Some of the functionality mentioned above is specific to certain backends and wi
 * timestamp option - DogStatsD
 * includeDatadogTelemetry parameter - DogStatsD
 * telemetryFlushInterval parameter - DogStatsD
+* datadog parameter - DogStatsD
+* originDetection parameter - DogStatsD
+* containerID parameter - DogStatsD
+* cardinality parameter / option - DogStatsD
+* origin detection (|c:) and external data (|e:) - DogStatsD
+
+## Datadog mode
+
+When talking to a Datadog Agent, enable Datadog mode to get the same behavior as the official DogStatsD clients:
+
+```javascript
+const client = new StatsD({ datadog: true });
+// or rely on auto-detection (DD_AGENT_HOST etc. set, or protocol: 'uds')
+```
+
+Datadog mode adds three DogStatsD protocol-extension fields and flips client telemetry on by default:
+
+* **Origin detection** (`|c:`) — the container ID is auto-detected from cgroups (Linux only) for [origin detection](https://docs.datadoghq.com/developers/dogstatsd/?tab=kubernetes#origin-detection-over-udp). Disable with `originDetection: false` or `DD_ORIGIN_DETECTION_ENABLED=false`; override with `containerID`.
+* **External Data** (`|e:`) — read from the `DD_EXTERNAL_ENV` environment variable (injected by the Datadog Admission Controller).
+* **Cardinality** (`|card:`) — set a client-wide default via `cardinality` or `DD_CARDINALITY`, or per metric/event/check via the options object.
+* **Telemetry** — `includeDatadogTelemetry` defaults to `true` in datadog mode (set it to `false` to opt out).
+
+Datadog mode never activates for `telegraf` clients, and adds no extension fields when off, so non-Datadog (StatsD/Telegraf) usage is unaffected.
+
+Per-call cardinality example:
+
+```javascript
+client.gauge('mem.used', 1234, { tags: ['x:y'], cardinality: 'low' });
+```
 
 ## OpenTelemetry Collector Compatibility
 
