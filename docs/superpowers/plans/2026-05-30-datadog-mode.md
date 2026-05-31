@@ -192,6 +192,18 @@ describe('#originDetection', () => {
     assert.strictEqual(originDetection.getContainerID(deps), uuid);
   });
 
+  it('returns the container id, not a pod UUID earlier in the cgroup path', () => {
+    const podUuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const containerId = 'f'.repeat(64);
+    const deps = fakeDeps({
+      inodes: { '/proc/self/ns/cgroup': HOST_INODE },
+      files: {
+        '/proc/self/cgroup': `11:memory:/kubepods/besteffort/pod${podUuid}/${containerId}\n`,
+      },
+    });
+    assert.strictEqual(originDetection.getContainerID(deps), containerId);
+  });
+
   it('falls back to mountinfo when cgroup has no id', () => {
     const id = 'd'.repeat(64);
     const deps = fakeDeps({
@@ -278,19 +290,24 @@ function isHostCgroupNamespace(statSync) {
 }
 
 /**
- * Scans text for a container id using the shared regex, returning the first match.
+ * Scans text for a container id using the shared regex, returning the RIGHTMOST
+ * match on the first line that contains one. Rightmost matters because a cgroup
+ * path can contain a pod/task UUID before the actual container id
+ * (e.g. /kubepods/.../pod<uuid>/<container-id>); the container id is always last.
+ * Builds a fresh global regex from the shared non-global source so the constant
+ * is not mutated. (The repo bans `continue`, so the loop uses an inverted guard.)
  * @param {String} text Text to scan (cgroup or mountinfo contents)
  * @returns {String|undefined} The matched container id
  */
 function matchContainerID(text) {
+  const re = new RegExp(OD.CONTAINER_ID_RE.source, 'g');
   const lines = text.split('\n');
   for (const line of lines) {
-    if (line.indexOf('sandboxes') !== -1) {
-      continue;
-    }
-    const match = OD.CONTAINER_ID_RE.exec(line);
-    if (match) {
-      return match[0];
+    if (line.indexOf('sandboxes') === -1) {
+      const matches = line.match(re);
+      if (matches && matches.length > 0) {
+        return matches[matches.length - 1];
+      }
     }
   }
   return undefined;
@@ -400,7 +417,7 @@ module.exports = {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npx mocha test/originDetection.js --timeout 5000`
-Expected: PASS (8 passing).
+Expected: PASS (10 passing).
 
 - [ ] **Step 5: Lint**
 
