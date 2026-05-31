@@ -35,6 +35,22 @@ describe('#helpers datadog-mode units', () => {
       assert.strictEqual(helpers.validateCardinality(undefined), undefined);
       assert.strictEqual(helpers.validateCardinality(''), undefined);
     });
+    it('warns via console.error on an invalid value', () => {
+      const originalError = console.error;
+      let callCount = 0;
+      let firstArg;
+      console.error = (msg) => {
+        callCount += 1;
+        firstArg = msg;
+      };
+      try {
+        helpers.validateCardinality('bogus');
+      } finally {
+        console.error = originalError;
+      }
+      assert.strictEqual(callCount, 1);
+      assert.ok(String(firstArg).indexOf('bogus') !== -1, firstArg);
+    });
   });
 
   describe('sanitizeExternalData', () => {
@@ -45,6 +61,9 @@ describe('#helpers datadog-mode units', () => {
     it('returns undefined for empty input', () => {
       assert.strictEqual(helpers.sanitizeExternalData(undefined), undefined);
       assert.strictEqual(helpers.sanitizeExternalData(''), undefined);
+    });
+    it('returns undefined when input is only strippable characters', () => {
+      assert.strictEqual(helpers.sanitizeExternalData('|||'), undefined);
     });
   });
 

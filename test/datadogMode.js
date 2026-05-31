@@ -104,6 +104,21 @@ describe('#datadogMode resolution', () => {
     assert.strictEqual(client.containerID, undefined);
     client.close(() => { /* close callback */ });
   });
+
+  it('disables origin detection via originDetection:false', () => {
+    const client = new StatsD({ mock: true, datadog: true, originDetection: false });
+    assert.strictEqual(client.datadog, true);
+    assert.strictEqual(client.originDetection, false);
+    client.close(() => { /* close callback */ });
+  });
+
+  it('disables origin detection via DD_ORIGIN_DETECTION_ENABLED falsey value', () => {
+    process.env.DD_ORIGIN_DETECTION_ENABLED = 'false';
+    const client = new StatsD({ mock: true, datadog: true });
+    assert.strictEqual(client.datadog, true);
+    assert.strictEqual(client.originDetection, false);
+    client.close(() => { /* close callback */ });
+  });
 });
 
 describe('#datadogMode metric wire output', () => {

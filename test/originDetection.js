@@ -105,6 +105,21 @@ describe('#originDetection', () => {
     assert.strictEqual(originDetection.getContainerID(deps), id);
   });
 
+  it('skips containerd "sandboxes" mountinfo lines in favor of the real container id', () => {
+    const sandboxId = 'e'.repeat(64);
+    const realId = 'f'.repeat(64);
+    const deps = fakeDeps({
+      inodes: { '/proc/self/ns/cgroup': HOST_INODE },
+      files: {
+        '/proc/self/cgroup': '0::/\n',
+        '/proc/self/mountinfo':
+          `100 99 0:40 / /run/containerd/io.containerd.sandbox/sandboxes/${sandboxId}/shm rw\n` +
+          `200 99 0:41 /docker/containers/${realId}/resolv.conf /etc/resolv.conf rw\n`,
+      },
+    });
+    assert.strictEqual(originDetection.getContainerID(deps), realId);
+  });
+
   it('uses cgroup v2 inode fallback (in-<inode>) when not in host namespace', () => {
     const deps = fakeDeps({
       inodes: {
