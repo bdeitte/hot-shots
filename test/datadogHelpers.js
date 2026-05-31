@@ -1,0 +1,62 @@
+const assert = require('assert');
+const helpers = require('../lib/helpers');
+
+describe('#helpers datadog-mode units', () => {
+  afterEach(() => {
+    delete process.env.DD_AGENT_HOST;
+    delete process.env.DD_ENV;
+    delete process.env.DD_ORIGIN_DETECTION_ENABLED;
+  });
+
+  describe('validateCardinality', () => {
+    it('accepts valid values', () => {
+      assert.strictEqual(helpers.validateCardinality('low'), 'low');
+      assert.strictEqual(helpers.validateCardinality('HIGH'), 'high');
+    });
+    it('returns undefined for invalid or empty values', () => {
+      assert.strictEqual(helpers.validateCardinality('bogus'), undefined);
+      assert.strictEqual(helpers.validateCardinality(undefined), undefined);
+      assert.strictEqual(helpers.validateCardinality(''), undefined);
+    });
+  });
+
+  describe('sanitizeExternalData', () => {
+    it('strips pipes and control chars', () => {
+      assert.strictEqual(helpers.sanitizeExternalData('it-false,cn-foo|bar'), 'it-false,cn-foobar');
+      assert.strictEqual(helpers.sanitizeExternalData('  trim\nme  '), 'trimme');
+    });
+    it('returns undefined for empty input', () => {
+      assert.strictEqual(helpers.sanitizeExternalData(undefined), undefined);
+      assert.strictEqual(helpers.sanitizeExternalData(''), undefined);
+    });
+  });
+
+  describe('isFalseyEnvValue', () => {
+    it('detects falsey values case-insensitively', () => {
+      assert.strictEqual(helpers.isFalseyEnvValue('false'), true);
+      assert.strictEqual(helpers.isFalseyEnvValue('OFF'), true);
+      assert.strictEqual(helpers.isFalseyEnvValue('0'), true);
+    });
+    it('treats other values as not-falsey', () => {
+      assert.strictEqual(helpers.isFalseyEnvValue('true'), false);
+      assert.strictEqual(helpers.isFalseyEnvValue(undefined), false);
+    });
+  });
+
+  describe('detectDatadogMode', () => {
+    it('is false for telegraf regardless of signals', () => {
+      process.env.DD_AGENT_HOST = '1.2.3.4';
+      assert.strictEqual(helpers.detectDatadogMode(true, 'udp', undefined), false);
+    });
+    it('is true when a DD_ signal env var is present', () => {
+      process.env.DD_ENV = 'prod';
+      assert.strictEqual(helpers.detectDatadogMode(false, 'udp', undefined), true);
+    });
+    it('is true for uds protocol', () => {
+      assert.strictEqual(helpers.detectDatadogMode(false, 'uds', undefined), true);
+    });
+    it('is false with no signals on udp', () => {
+      assert.strictEqual(helpers.detectDatadogMode(false, 'udp', undefined), false);
+    });
+  });
+});
