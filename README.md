@@ -4,16 +4,12 @@ A Node.js client for Datadog's [DogStatsD](http://docs.datadoghq.com/guides/dogs
 
 This project was originally a fork off of [node-statsd](https://github.com/sivy/node-statsd).  This project
 includes all changes in the latest node-statsd and many additional changes, including:
-* uds (Unix domain socket) protocol support
-* raw stream protocol support
+* uds (Unix domain socket) and tcp protocol support
 * TypeScript types
 * Telegraf support
+* Datadog mode
 * events
 * child clients
-* tcp protocol support
-* mock mode
-* asyncTimer
-* asyncDistTimer
 * debug logging
 * much more, including many bug fixes
 
