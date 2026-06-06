@@ -335,15 +335,15 @@ Some of the functionality mentioned above is specific to certain backends and wi
 * tags parameter - DogStatsD, Telegraf, or OpenTelemetry
 * histogram method - DogStatsD, Telegraf, or OpenTelemetry
 * telegraf parameter - Telegraf
+* set / unique method - DogStatsD or Telegraf
+* datadog parameter - DogStatsD
 * uds option in protocol parameter - DogStatsD
 * distribution method - DogStatsD
-* set / unique method - DogStatsD or Telegraf (not OpenTelemetry)
 * event method - DogStatsD
 * check method - DogStatsD
 * timestamp option - DogStatsD
 * includeDatadogTelemetry parameter - DogStatsD
 * telemetryFlushInterval parameter - DogStatsD
-* datadog parameter - DogStatsD
 * originDetection parameter - DogStatsD
 * containerID parameter - DogStatsD
 * cardinality parameter / option - DogStatsD
@@ -351,7 +351,7 @@ Some of the functionality mentioned above is specific to certain backends and wi
 
 ## Datadog mode
 
-When talking to a Datadog Agent, enable Datadog mode to get the same behavior as the official DogStatsD clients:
+When talking to a Datadog Agent, enable Datadog mode to get similar behavior as the official DogStatsD clients:
 
 ```javascript
 const client = new StatsD({ datadog: true });
