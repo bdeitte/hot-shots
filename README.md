@@ -355,10 +355,10 @@ When talking to a Datadog Agent, enable Datadog mode to get the same behavior as
 
 ```javascript
 const client = new StatsD({ datadog: true });
-// or rely on auto-detection (DD_AGENT_HOST etc. set, or protocol: 'uds')
+// or rely on auto-detection (DD_AGENT_HOST etc. set)
 ```
 
-Datadog mode adds three DogStatsD protocol-extension fields and (with a strong Datadog signal) turns client telemetry on:
+Datadog mode adds three DogStatsD protocol-extension fields and turns client telemetry on:
 
 * **Origin detection** (`|c:`) — the container ID is auto-detected from cgroups (Linux only) for [origin detection](https://docs.datadoghq.com/developers/dogstatsd/?tab=kubernetes#origin-detection-over-udp). Disable with `originDetection: false` or `DD_ORIGIN_DETECTION_ENABLED=false`; override with `containerID`.
 * **External Data** (`|e:`) — read from the `DD_EXTERNAL_ENV` environment variable (injected by the Datadog Admission Controller).
