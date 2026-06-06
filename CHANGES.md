@@ -1,13 +1,13 @@
 CHANGELOG
 =========
 
-## 16.0.0 (2026-5-31)
+## Unreleased
 
-* [@bdeitte](https://github.com/bdeitte) BREAKING: Add Datadog mode for parity with the official DogStatsD clients. A new `datadog` option (explicit `true`/`false`, or auto-detected from `DD_AGENT_HOST`/`DD_ENV`/other `DD_*` signals or the `uds` protocol) enables:
+* [@bdeitte](https://github.com/bdeitte) BREAKING: Add Datadog mode for better parity with the official DogStatsD clients. A new `datadog` option (explicit `true`/`false`, or auto-detected from `DD_AGENT_HOST`/`DD_ENV`/other `DD_*` signals) enables:
      * Origin detection — the container ID is detected from cgroups (Linux only) and sent as `|c:`. Configurable via `originDetection`, `containerID`, and `DD_ORIGIN_DETECTION_ENABLED`.
      * External Data — read from `DD_EXTERNAL_ENV` and sent as `|e:`.
      * Cardinality — a client-wide default (`cardinality` option or `DD_CARDINALITY`/`DATADOG_CARDINALITY`) plus a per metric/event/check `cardinality` option, sent as `|card:`.
-     * Client telemetry (`includeDatadogTelemetry`) now defaults to on when Datadog mode is active AND there is a strong Datadog signal — an explicit `datadog: true` or a `DD_*` env var. It does NOT default on for Datadog mode auto-detected solely from the `uds` protocol, so existing uds users don't silently start emitting telemetry.
+     * Client telemetry (`includeDatadogTelemetry`) can be enabled like before. But it also now defaults to on when Datadog mode is active or there is a strong Datadog signal — an explicit `datadog: true` or a `DD_*` env var.
    This is a breaking change because clients running in a Datadog environment (e.g. with `DD_AGENT_HOST` set) will auto-detect Datadog mode and begin emitting the new `|c:`/`|e:` wire fields, and (when a `DD_*` env var is set) client telemetry. Opt out with `datadog: false`, `originDetection: false`, and/or `includeDatadogTelemetry: false`. Non-Datadog (StatsD/Telegraf) usage is unaffected.
 
 ## 15.0.0 (2026-5-28)
