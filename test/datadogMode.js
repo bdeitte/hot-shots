@@ -147,14 +147,16 @@ describe('#datadogMode metric wire output', () => {
   });
 
   it('appends client-default |card:', () => {
-    const client = new StatsD({ mock: true, datadog: true, cardinality: 'low' });
+    // Disable origin detection so a host container id (e.g. CI cgroups) does not
+    // append a |c: field and pollute the wire output this test asserts on.
+    const client = new StatsD({ mock: true, datadog: true, originDetection: false, cardinality: 'low' });
     client.gauge('g', 5);
     assert.strictEqual(lastMessage(client), 'g:5|g|card:low');
     client.close(() => { /* close callback */ });
   });
 
   it('per-call cardinality overrides the client default', () => {
-    const client = new StatsD({ mock: true, datadog: true, cardinality: 'low' });
+    const client = new StatsD({ mock: true, datadog: true, originDetection: false, cardinality: 'low' });
     client.gauge('g', 5, { cardinality: 'high' });
     assert.strictEqual(lastMessage(client), 'g:5|g|card:high');
     client.close(() => { /* close callback */ });

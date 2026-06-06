@@ -55,9 +55,11 @@ describe('#globalTags', () => {
         server = createServer(serverType, opts => {
           statsd = createHotShotsClient(Object.assign(opts, {
             global_tags: ['gtag'],
-            // DD_* env vars now auto-enable datadog telemetry; disable it so this
-            // tag-injection test isn't polluted by telemetry packets on close.
+            // DD_* env vars now auto-enable datadog telemetry and origin detection;
+            // disable both so this tag-injection test isn't polluted by telemetry
+            // packets on close or a host container id (e.g. CI cgroups) |c: field.
             includeDatadogTelemetry: false,
+            originDetection: false,
           }), clientType);
           statsd.increment('test');
         });
@@ -82,6 +84,7 @@ describe('#globalTags', () => {
             global_tags: ['gtag-dd-optout'],
             includeDataDogTags: false,
             includeDatadogTelemetry: false,
+            originDetection: false,
           }), clientType);
           statsd.increment('test-gtag-dd-optout');
         });
