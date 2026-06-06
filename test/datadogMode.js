@@ -76,6 +76,12 @@ describe('#datadogMode resolution', () => {
     client.close(() => { /* close callback */ });
   });
 
+  it('does not auto-enable from the uds protocol alone', () => {
+    const client = new StatsD({ mock: true, protocol: 'uds' });
+    assert.strictEqual(client.datadog, false);
+    client.close(() => { /* close callback */ });
+  });
+
   it('sets containerID from explicit option in datadog mode', () => {
     const client = new StatsD({ mock: true, datadog: true, containerID: 'abc123' });
     assert.strictEqual(client.containerID, 'abc123');
@@ -269,12 +275,12 @@ describe('#datadogMode telemetry default', () => {
     client.close(() => done());
   });
 
-  it('bare uds (no DD env, no explicit datadog) keeps telemetry off', done => {
+  it('bare uds (no DD env, no explicit datadog) keeps datadog mode and telemetry off', done => {
     if (process.platform === 'win32') {
       return done();
     }
     const client = new StatsD({ protocol: 'uds', path: '/tmp/hot-shots-telemetry-default.sock' });
-    assert.strictEqual(client.datadog, true);
+    assert.strictEqual(client.datadog, false);
     assert.strictEqual(client.includeDatadogTelemetry, false);
     client.close(() => done());
   });
