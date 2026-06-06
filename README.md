@@ -23,6 +23,26 @@ hot-shots supports Node 18.x and higher. When using types.d.ts, hot-shots requir
 
 ![Build Status](https://github.com/bdeitte/hot-shots/actions/workflows/node-test.js.yml/badge.svg)
 
+## Table of contents
+
+- [Example](#example)
+- [Usage](#usage)
+  - [StatsD methods](#statsd-methods)
+- [Errors](#errors)
+  - [Callback semantics](#callback-semantics)
+  - [Congestion error](#congestion-error)
+  - [Sending metrics during process shutdown](#sending-metrics-during-process-shutdown)
+- [Datadog, Telegraf, and OpenTelemetry functionality](#datadog-telegraf-and-opentelemetry-functionality)
+  - [Datadog mode](#datadog-mode)
+  - [Datadog's Unix domain socket support](#datadogs-unix-domain-socket-support)
+  - [Datadog Telemetry](#datadog-telemetry)
+  - [OpenTelemetry Collector Compatibility](#opentelemetry-collector-compatibility)
+- [Sanitization](#sanitization)
+- [Debugging](#debugging)
+- [Submitting changes](#submitting-changes)
+- [Package versioning and security](#package-versioning-and-security)
+- [License](#license)
+
 ## Example
 
 ```javascript
