@@ -1,7 +1,7 @@
 CHANGELOG
 =========
 
-## Unreleased
+## 16.0.0 (2026-6-8)
 
 * [@bdeitte](https://github.com/bdeitte) BREAKING: Add Datadog mode for better parity with the official DogStatsD clients. A new `datadog` option (explicit `true`/`false`, or auto-detected from `DD_AGENT_HOST`/`DD_ENV`/other `DD_*` signals) enables:
      * Origin detection — the container ID is detected from cgroups (Linux only) and sent as `|c:`. Configurable via `originDetection`, `containerID`, and `DD_ORIGIN_DETECTION_ENABLED`.
