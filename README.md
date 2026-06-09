@@ -3,17 +3,13 @@
 A Node.js client for Datadog's [DogStatsD](http://docs.datadoghq.com/guides/dogstatsd/) server, InfluxDB's [Telegraf](https://github.com/influxdb/telegraf) StatsD server, the OpenTelemetry Collector [StatsD receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/statsdreceiver), and Etsy's [StatsD](https://github.com/etsy/statsd) server.
 
 This project was originally a fork off of [node-statsd](https://github.com/sivy/node-statsd).  This project
-includes all changes in the latest node-statsd and many additional changes, including:
-* uds (Unix domain socket) protocol support
-* raw stream protocol support
+includes many additional changes, including:
+* uds (Unix domain socket) and tcp protocol support
 * TypeScript types
 * Telegraf support
+* Datadog mode
 * events
 * child clients
-* tcp protocol support
-* mock mode
-* asyncTimer
-* asyncDistTimer
 * debug logging
 * much more, including many bug fixes
 
@@ -22,6 +18,26 @@ You can read about all changes in [the changelog](CHANGES.md).
 hot-shots supports Node 18.x and higher. When using types.d.ts, hot-shots require TypeScript 4.0 or higher.
 
 ![Build Status](https://github.com/bdeitte/hot-shots/actions/workflows/node-test.js.yml/badge.svg)
+
+## Table of contents
+
+- [Example](#example)
+- [Usage](#usage)
+  - [StatsD methods](#statsd-methods)
+- [Errors](#errors)
+  - [Callback semantics](#callback-semantics)
+  - [Congestion error](#congestion-error)
+  - [Sending metrics during process shutdown](#sending-metrics-during-process-shutdown)
+- [Datadog, Telegraf, and OpenTelemetry functionality](#datadog-telegraf-and-opentelemetry-functionality)
+  - [Datadog mode](#datadog-mode)
+  - [Datadog's Unix domain socket support](#datadogs-unix-domain-socket-support)
+  - [Datadog Telemetry](#datadog-telemetry)
+  - [OpenTelemetry Collector Compatibility](#opentelemetry-collector-compatibility)
+- [Sanitization](#sanitization)
+- [Debugging](#debugging)
+- [Submitting changes](#submitting-changes)
+- [Package versioning and security](#package-versioning-and-security)
+- [License](#license)
 
 ## Example
 
@@ -99,8 +115,12 @@ Parameters (specified as one object passed into hot-shots):
   * `maxRetryDelayMs`: Maximum delay in milliseconds between retry attempts (caps exponential backoff). Defaults to `1000`.
   * `backoffFactor`: Exponential backoff multiplier for retry delays. Defaults to `2`.
 * `udpSocketOptions`: Used only when the protocol is `udp`. Specify the options passed into dgram.createSocket(). The socket type (`udp4` or `udp6`) is auto-detected based on the host: IPv6 addresses (e.g., `::1`) use `udp6`, IPv4 addresses use `udp4`, and hostnames default to `udp4`. You can override auto-detection by explicitly setting `type` (e.g., `{ type: 'udp6' }`).
-* `includeDatadogTelemetry`: Enable client-side telemetry to track metrics about the client itself. This helps diagnose high-throughput metric delivery issues. Telemetry metrics are prefixed with `datadog.dogstatsd.client.` and are not billed as custom metrics. `default: false`. See [Client-Side Telemetry](#client-side-telemetry) for details.
+* `includeDatadogTelemetry`: Enable client-side telemetry to track metrics about the client itself. This helps diagnose high-throughput metric delivery issues. Telemetry metrics are prefixed with `datadog.dogstatsd.client.` and are not billed as custom metrics. `default: false`, except it defaults to `true` whenever Datadog mode is active (an explicit `datadog: true` or one of the Datadog signal env vars listed under the `datadog` option). An explicit value always wins. See [Client-Side Telemetry](#client-side-telemetry) for details.
 * `telemetryFlushInterval`: When telemetry is enabled, how often (in ms) to send telemetry metrics. `default: 10000`
+* `datadog`: Enable Datadog mode, turning on origin detection (`|c:`), External Data (`|e:`), cardinality (`|card:`), and client telemetry. Pass `true`/`false` to force it (like `telegraf`). When unset, it auto-detects: enabled when not using `telegraf` and a Datadog signal env var is set (`DD_AGENT_HOST`, `DD_DOGSTATSD_PORT`, `DD_ENTITY_ID`, `DD_ENV`, `DD_SERVICE`, `DD_VERSION`, `DD_EXTERNAL_ENV`, `DD_CARDINALITY`). The `uds` protocol alone does **not** auto-enable Datadog mode — set `datadog: true` explicitly if you want it. `default: auto-detect`
+* `originDetection`: When in Datadog mode, auto-detect the container ID from cgroups and send it as `|c:` for [origin detection](https://docs.datadoghq.com/developers/dogstatsd/?tab=kubernetes#origin-detection-over-udp). Respects `DD_ORIGIN_DETECTION_ENABLED`. Linux only. `default: true in datadog mode`
+* `containerID`: Manually set the container ID (skips cgroup parsing). Only used in Datadog mode. `default: undefined`
+* `cardinality`: Client-wide default tag cardinality sent as `|card:` — one of `none`, `low`, `orchestrator`, `high`. Falls back to the `DD_CARDINALITY` / `DATADOG_CARDINALITY` env var. Only used in Datadog mode. `default: undefined`
 
 ### StatsD methods
 All StatsD methods other than `event`, `close`, and `check` have the same API:
@@ -115,6 +135,7 @@ Alternatively, you can pass an options object in place of `sampleRate` and `tags
   * `sampleRate`: Sends only a sample of data to StatsD `default: 1`
   * `tags`:       The tags to add to metrics `default: []`
   * `timestamp`:  A timestamp to associate with the metric. Can be a `Date` object or Unix timestamp in seconds. (DogStatsD only, ignored for Telegraf)
+  * `cardinality`:  Tag cardinality for this metric (`none`/`low`/`orchestrator`/`high`). Overrides the client-wide `cardinality`. (DogStatsD datadog mode only)
 * `callback`:   See [Callback semantics](#callback-semantics) below.
 
 If an array is specified as the `name` parameter each item in that array will be sent along with the specified value.
@@ -136,6 +157,7 @@ The event method has the following API:
   * `priority`         Can be ‘normal’ or ‘low’ `default: normal`
   * `source_type_name` Assign a source type to the event.
   * `alert_type`       Can be ‘error’, ‘warning’, ‘info’ or ‘success’ `default: info`
+  * `cardinality`      Tag cardinality (`none`/`low`/`orchestrator`/`high`). (DogStatsD datadog mode only)
 * `tags`:       The tags to add to metrics. Can be either an object `{ tag: "value"}` or an array of tags. `default: []`
 * `callback`:   The callback to execute once the metric has been sent.
 
@@ -148,6 +170,7 @@ The check method has the following API:
   * `date_happened`    Assign a timestamp to the check `default is now`
   * `hostname`         Assign a hostname to the check.
   * `message`          Assign a message to the check.
+  * `cardinality`      Tag cardinality (`none`/`low`/`orchestrator`/`high`). (DogStatsD datadog mode only)
 * `tags`:       The tags to add to metrics. Can be either an object `{ tag: "value"}` or an array of tags. `default: []`
 * `callback`:   The callback to execute once the metric has been sent.
 
@@ -320,64 +343,6 @@ The check method has the following API:
   });
 ```
 
-## DogStatsD, Telegraf, and OpenTelemetry functionality
-
-Some of the functionality mentioned above is specific to certain backends and will not work with others.
-
-* globalTags parameter - DogStatsD, Telegraf, or OpenTelemetry
-* tags parameter - DogStatsD, Telegraf, or OpenTelemetry
-* histogram method - DogStatsD, Telegraf, or OpenTelemetry
-* telegraf parameter - Telegraf
-* uds option in protocol parameter - DogStatsD
-* distribution method - DogStatsD
-* set / unique method - DogStatsD or Telegraf (not OpenTelemetry)
-* event method - DogStatsD
-* check method - DogStatsD
-* timestamp option - DogStatsD
-* includeDatadogTelemetry parameter - DogStatsD
-* telemetryFlushInterval parameter - DogStatsD
-
-## OpenTelemetry Collector Compatibility
-
-hot-shots is compatible with the [OpenTelemetry Collector's StatsD receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/statsdreceiver). The following features work out of the box:
-
-| Feature | hot-shots Method | OTel Support |
-|---------|------------------|--------------|
-| Counter | `increment()`, `decrement()` | Yes |
-| Gauge | `gauge()` | Yes |
-| Gauge delta (+/-) | `gaugeDelta()` | Yes |
-| Timer | `timing()` | Yes (converted to gauge/summary/histogram) |
-| Histogram | `histogram()` | Yes (treated as timer) |
-| Sample rate | All methods | Yes |
-| Tags | All methods | Yes |
-
-Example configuration for OpenTelemetry Collector:
-
-```javascript
-var client = new StatsD({
-  host: 'localhost',
-  port: 8125,
-  protocol: 'udp'  // or 'tcp'
-});
-
-// These all work with OpenTelemetry
-client.increment('requests');
-client.gauge('queue_size', 100);
-client.gaugeDelta('connections', 1);
-client.timing('response_time', 250);
-client.histogram('request_size', 1024);
-```
-
-## Sanitization
-
-To prevent malformed packets, hot-shots automatically replaces protocol-breaking characters with underscores (`_`).
-
-* Metric names: `:`, `|`, `\n`, `\r`
-* Tag keys: `:`, `|`, `,`, `\n`, `\r`, plus `@` and `#` for StatsD/DogStatsD
-* Tag values: `|`, `,`, `\n`, `\r`, plus `@` and `#` for StatsD/DogStatsD
-
-Colons are allowed in tag values (e.g., `url:https://example.com:8080`).
-
 ## Errors
 
 You can have an error in both the message and close callbacks. See [Callback semantics](#callback-semantics) below for the exact contract per mode.
@@ -460,16 +425,43 @@ process.on('uncaughtException', (err) => {
 });
 ```
 
-## Debugging
+## Datadog, Telegraf, and OpenTelemetry functionality
 
-If you're having issues with metrics not being sent or want to understand what hot-shots is doing
-in detail, you can enable debug logging using Node.js's built-in `NODE_DEBUG` environment variable:
+Some of the functionality mentioned above is specific to certain backends and will not work with others.
 
-```bash
-NODE_DEBUG=hot-shots node your-app.js
+* datadog parameter - Datadog
+* uds option in protocol parameter - Datadog
+* distribution method - Datadog
+* event method - Datadog
+* check method - Datadog
+* timestamp option - Datadog
+* includeDatadogTelemetry parameter - Datadog
+* telemetryFlushInterval parameter - Datadog
+* originDetection parameter - Datadog
+* containerID parameter - Datadog
+* cardinality parameter / option - Datadog
+* origin detection (|c:) and external data (|e:) - Datadog
+* telegraf parameter - Telegraf
+* set / unique method - Datadog or Telegraf
+
+### Datadog mode
+
+When talking to a Datadog Agent, enable Datadog mode to get similar behavior as the official Datadog clients. Datadog mode adds three Datadog protocol-extension fields and turns client telemetry on:
+
+* **Origin detection** (`|c:`) — the container ID is auto-detected from cgroups (Linux only) for [origin detection](https://docs.datadoghq.com/developers/dogstatsd/?tab=kubernetes#origin-detection-over-udp). Disable with `originDetection: false` or `DD_ORIGIN_DETECTION_ENABLED=false`; override with `containerID`.
+* **External Data** (`|e:`) — read from the `DD_EXTERNAL_ENV` environment variable (injected by the Datadog Admission Controller).
+* **Cardinality** (`|card:`) — set a client-wide default via `cardinality` or `DD_CARDINALITY`, or per metric/event/check via the options object.
+* **Telemetry** — `includeDatadogTelemetry` defaults to `true` whenever datadog mode is active (an explicit `datadog: true` or one of the Datadog signal env vars listed under the `datadog` option above). Because the `uds` protocol alone no longer auto-enables datadog mode, bare `uds` clients stay off by default. Set it to `false` to opt out, or `true` to force it on.
+
+Datadog mode never activates for `telegraf` clients, and adds no extension fields when off, so non-Datadog (StatsD/Telegraf/OpenTelemetry) usage is unaffected.
+
+Per-call cardinality example:
+
+```javascript
+client.gauge('mem.used', 1234, { tags: ['x:y'], cardinality: 'low' });
 ```
 
-## Unix domain socket support
+### Datadog's Unix domain socket support
 
 The 'uds' option as the protocol is to support [Unix Domain Sockets for Datadog](https://docs.datadoghq.com/developers/dogstatsd/unix_socket/).  It has the following limitations:
 - It only works where 'node-gyp' works. If you don't know what this is, this
@@ -483,13 +475,11 @@ optionalDependency, and how it's used in the codebase, this install
 failure will not cause any problems.  It only means that you can't use
 the uds feature.
 
-## Datadog Telemetry
+### Datadog Telemetry
 
 When `includeDatadogTelemetry` is enabled, the client automatically sends telemetry metrics about itself to help diagnose metric delivery issues in high-throughput scenarios. This feature should matche the behavior of official Datadog clients as described in [the docs](https://docs.datadoghq.com/developers/dogstatsd/high_throughput/?tab=go#client-side-telemetry).
 
 Telemetry is automatically disabled when using `mock: true`, `telegraf: true`, or in child clients.
-
-### Telemetry Metrics
 
 The following metrics are sent every `telemetryFlushInterval` milliseconds (default: 10 seconds):
 
@@ -506,14 +496,12 @@ The following metrics are sent every `telemetryFlushInterval` milliseconds (defa
 
 The `metric_dropped_on_receive` from the official Datadog clients is intentionally omitted. That metric tracks drops on an internal receive channel, which doesn't apply to hot-shots' architecture. Also `bytes_dropped_queue` is omitted as this also didn't fit into how hot-shots works.
 
-### Telemetry Tags
-
 All telemetry metrics include these tags:
 * `client:nodejs` - Identifies the hot-shots client
 * `client_version:<version>` - The hot-shots version
 * `client_transport:<protocol>` - The transport protocol (udp, tcp, uds, stream)
 
-### Example
+Example:
 
 ```javascript
 var client = new StatsD({
@@ -521,6 +509,56 @@ var client = new StatsD({
   includeDatadogTelemetry: true,
   telemetryFlushInterval: 10000  // Optional, default is 10 seconds
 });
+```
+
+### OpenTelemetry Collector Compatibility
+
+hot-shots is compatible with the [OpenTelemetry Collector's StatsD receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/statsdreceiver). The following features work out of the box:
+
+| Feature | hot-shots Method | OTel Support |
+|---------|------------------|--------------|
+| Counter | `increment()`, `decrement()` | Yes |
+| Gauge | `gauge()` | Yes |
+| Gauge delta (+/-) | `gaugeDelta()` | Yes |
+| Timer | `timing()` | Yes (converted to gauge/summary/histogram) |
+| Histogram | `histogram()` | Yes (treated as timer) |
+| Sample rate | All methods | Yes |
+| Tags | All methods | Yes |
+
+Example configuration for OpenTelemetry Collector:
+
+```javascript
+var client = new StatsD({
+  host: 'localhost',
+  port: 8125,
+  protocol: 'udp'  // or 'tcp'
+});
+
+// These all work with OpenTelemetry
+client.increment('requests');
+client.gauge('queue_size', 100);
+client.gaugeDelta('connections', 1);
+client.timing('response_time', 250);
+client.histogram('request_size', 1024);
+```
+
+## Sanitization
+
+To prevent malformed packets, hot-shots automatically replaces protocol-breaking characters with underscores (`_`).
+
+* Metric names: `:`, `|`, `\n`, `\r`
+* Tag keys: `:`, `|`, `,`, `\n`, `\r`, plus `@` and `#` for StatsD/Datadog
+* Tag values: `|`, `,`, `\n`, `\r`, plus `@` and `#` for StatsD/Datadog
+
+Colons are allowed in tag values (e.g., `url:https://example.com:8080`).
+
+## Debugging
+
+If you're having issues with metrics not being sent or want to understand what hot-shots is doing
+in detail, you can enable debug logging using Node.js's built-in `NODE_DEBUG` environment variable:
+
+```bash
+NODE_DEBUG=hot-shots node your-app.js
 ```
 
 ## Submitting changes

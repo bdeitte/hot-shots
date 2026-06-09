@@ -2,6 +2,8 @@ import dgram = require("dgram");
 import stream = require("stream");
 
 export type Tags = { [key: string]: string } | string[];
+export type Cardinality = 'none' | 'low' | 'orchestrator' | 'high';
+
 export interface ClientOptions {
   bufferFlushInterval?: number;
   bufferHolder?: { buffer: string };
@@ -10,6 +12,10 @@ export interface ClientOptions {
   errorHandler?: (err: Error) => void;
   globalTags?: Tags;
   includeDataDogTags?: boolean;
+  datadog?: boolean;
+  originDetection?: boolean;
+  containerID?: string;
+  cardinality?: Cardinality;
   globalize?: boolean;
   host?: string;
   isChild?: boolean;
@@ -48,12 +54,14 @@ export interface ChildClientOptions {
   prefix?: string;
   suffix?: string;
   errorHandler?: (err: Error) => void;
+  cardinality?: Cardinality;
 }
 
 export interface CheckOptions {
   date_happened?: Date;
   hostname?: string;
   message?: string;
+  cardinality?: Cardinality;
 }
 
 export interface DatadogChecks {
@@ -80,6 +88,7 @@ export interface EventOptions {
   hostname?: string;
   priority?: "low" | "normal";
   source_type_name?: string;
+  cardinality?: Cardinality;
 }
 
 export interface MetricOptions {
@@ -87,6 +96,8 @@ export interface MetricOptions {
   tags?: Tags;
   /** Timestamp for the metric (DogStatsD only). Can be a Date or Unix timestamp in seconds. */
   timestamp?: Date | number;
+  /** Tag cardinality for this metric (DogStatsD datadog mode only). */
+  cardinality?: Cardinality;
 }
 
 /**
