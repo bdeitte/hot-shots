@@ -4,6 +4,11 @@ import stream = require("stream");
 export type Tags = { [key: string]: string } | string[];
 export type Cardinality = 'none' | 'low' | 'orchestrator' | 'high';
 
+export interface AggregationOptions {
+  /** Interval in milliseconds between aggregation flushes. Default: 2000. */
+  flushInterval?: number;
+}
+
 export interface ClientOptions {
   bufferFlushInterval?: number;
   bufferHolder?: { buffer: string };
@@ -47,6 +52,7 @@ export interface ClientOptions {
   };
   includeDatadogTelemetry?: boolean;
   telemetryFlushInterval?: number;
+  aggregation?: boolean | AggregationOptions;
 }
 
 export interface ChildClientOptions {
