@@ -748,4 +748,66 @@ describe('#helpersExtended', () => {
       assert(!result.includes('team:backend'));
     });
   });
+
+  describe('#parseDogstatsdUrl', () => {
+    it('should parse udp url with port', () => {
+      assert.deepStrictEqual(helpers.parseDogstatsdUrl('udp://host:9125'), {
+        protocol: 'udp', host: 'host', port: 9125,
+      });
+    });
+
+    it('should parse udp url without port', () => {
+      assert.deepStrictEqual(helpers.parseDogstatsdUrl('udp://host'), {
+        protocol: 'udp', host: 'host',
+      });
+    });
+
+    it('should parse bracketed IPv6 udp url with port', () => {
+      assert.deepStrictEqual(helpers.parseDogstatsdUrl('udp://[::1]:9125'), {
+        protocol: 'udp', host: '::1', port: 9125,
+      });
+    });
+
+    it('should parse bare IPv6 udp url as host with no port', () => {
+      assert.deepStrictEqual(helpers.parseDogstatsdUrl('udp://::1'), {
+        protocol: 'udp', host: '::1',
+      });
+    });
+
+    it('should parse unixgram url path', () => {
+      assert.deepStrictEqual(helpers.parseDogstatsdUrl('unixgram:///var/run/dsd.socket'), {
+        protocol: 'uds', path: '/var/run/dsd.socket',
+      });
+    });
+
+    it('should parse unix url path', () => {
+      assert.deepStrictEqual(helpers.parseDogstatsdUrl('unix:///var/run/dsd.socket'), {
+        protocol: 'uds', path: '/var/run/dsd.socket',
+      });
+    });
+
+    it('should return null for empty host', () => {
+      assert.strictEqual(helpers.parseDogstatsdUrl('udp://'), null);
+    });
+
+    it('should return null for bad port', () => {
+      assert.strictEqual(helpers.parseDogstatsdUrl('udp://host:99999'), null);
+    });
+
+    it('should return null for malformed port', () => {
+      assert.strictEqual(helpers.parseDogstatsdUrl('udp://host:123abc'), null);
+    });
+
+    it('should return null for unknown scheme', () => {
+      assert.strictEqual(helpers.parseDogstatsdUrl('http://host:9125'), null);
+    });
+
+    it('should return null for unixstream scheme', () => {
+      assert.strictEqual(helpers.parseDogstatsdUrl('unixstream:///var/run/dsd.socket'), null);
+    });
+
+    it('should return null for empty unix path', () => {
+      assert.strictEqual(helpers.parseDogstatsdUrl('unix://'), null);
+    });
+  });
 });

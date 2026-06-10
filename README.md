@@ -106,6 +106,12 @@ Parameters (specified as one object passed into hot-shots):
 * `protocol`: Use `tcp` option for TCP protocol, or `uds` for the Unix Domain Socket protocol or `stream` for the raw stream. Defaults to `udp` otherwise.
 * `path`: Used only when the protocol is `uds`. Defaults to `/var/run/datadog/dsd.socket`.
 * `stream`: Reference to a stream instance. Used only when the protocol is `stream`.
+
+If no transport options (`host`, `port`, `protocol`, `path`, `stream`) are passed, the transport can be configured from environment variables for parity with the official DogStatsD clients:
+* `DD_DOGSTATSD_URL`: A transport URL. `udp://host[:port]` configures UDP (port defaults to 8125), while `unix:///path/to/socket` or `unixgram:///path/to/socket` configures a Unix Domain Socket. The `unixstream://` scheme is not supported.
+* `DD_DOGSTATSD_SOCKET`: A Unix Domain Socket path (used only when `DD_DOGSTATSD_URL` is not set).
+
+Precedence is: explicit transport options > `DD_DOGSTATSD_URL` > `DD_DOGSTATSD_SOCKET` > `DD_AGENT_HOST`/`DD_DOGSTATSD_PORT`.
 * `tcpGracefulErrorHandling`: Used only when the protocol is `tcp`. Boolean indicating whether to handle socket errors gracefully. Defaults to true.
 * `tcpGracefulRestartRateLimit`: Used only when the protocol is `tcp`. Time (ms) between re-creating the socket. Defaults to `1000`.
 * `udsGracefulErrorHandling`: Used only when the protocol is `uds`. Boolean indicating whether to handle socket errors gracefully. Defaults to true.

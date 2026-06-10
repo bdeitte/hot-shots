@@ -4,6 +4,7 @@ CHANGELOG
 ## Unreleased
 
 * [@bdeitte](https://github.com/bdeitte) Support DD_TAGS / DATADOG_TAGS env vars for global tags, for better parity with official DogStatsD clients
+* [@bdeitte](https://github.com/bdeitte) Support DD_DOGSTATSD_URL and DD_DOGSTATSD_SOCKET env vars for transport configuration, for better parity with official DogStatsD clients
 
 ## 16.0.0 (2026-6-8)
 
