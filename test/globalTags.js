@@ -341,3 +341,52 @@ describe('#globalTags', () => {
     });
   });
 });
+
+describe('#DD_TAGS env var', () => {
+  let statsd;
+
+  afterEach(done => {
+    delete process.env.DD_TAGS;
+    delete process.env.DATADOG_TAGS;
+    delete process.env.DD_ENV;
+    closeAll(null, statsd, false, done);
+    statsd = null;
+  });
+
+  it('should add DD_TAGS as global tags', () => {
+    process.env.DD_TAGS = 'rack:1,team:core';
+    statsd = createHotShotsClient({ mock: true }, 'client');
+    assert.deepStrictEqual(statsd.globalTags, ['rack:1', 'team:core']);
+  });
+
+  it('should trim whitespace and skip empty entries in DD_TAGS', () => {
+    process.env.DD_TAGS = ' rack:1 , ,team:core, ';
+    statsd = createHotShotsClient({ mock: true }, 'client');
+    assert.deepStrictEqual(statsd.globalTags, ['rack:1', 'team:core']);
+  });
+
+  it('should override user globalTags with matching keys from DD_TAGS', () => {
+    process.env.DD_TAGS = 'team:env';
+    statsd = createHotShotsClient({ mock: true, globalTags: ['team:user', 'other:tag'] }, 'client');
+    assert.deepStrictEqual(statsd.globalTags, ['other:tag', 'team:env']);
+  });
+
+  it('should fall back to DATADOG_TAGS when DD_TAGS is not set', () => {
+    process.env.DATADOG_TAGS = 'legacy:tag';
+    statsd = createHotShotsClient({ mock: true }, 'client');
+    assert.deepStrictEqual(statsd.globalTags, ['legacy:tag']);
+  });
+
+  it('should let DD_ENV win over an env tag in DD_TAGS', () => {
+    process.env.DD_TAGS = 'env:fromtags';
+    process.env.DD_ENV = 'fromenv';
+    statsd = createHotShotsClient({ mock: true }, 'client');
+    assert.deepStrictEqual(statsd.globalTags, ['env:fromenv']);
+  });
+
+  it('should ignore DD_TAGS when includeDataDogTags is false', () => {
+    process.env.DD_TAGS = 'rack:1';
+    statsd = createHotShotsClient({ mock: true, includeDataDogTags: false }, 'client');
+    assert.deepStrictEqual(statsd.globalTags, []);
+  });
+});

@@ -1,6 +1,10 @@
 CHANGELOG
 =========
 
+## Unreleased
+
+* [@bdeitte](https://github.com/bdeitte) Support DD_TAGS / DATADOG_TAGS env vars for global tags, for better parity with official DogStatsD clients
+
 ## 16.0.0 (2026-6-8)
 
 * [@bdeitte](https://github.com/bdeitte) BREAKING: Add Datadog mode for better parity with the official DogStatsD clients. A new `datadog` option (explicit `true`/`false`, or auto-detected from `DD_AGENT_HOST`/`DD_ENV`/other `DD_*` signals) enables:

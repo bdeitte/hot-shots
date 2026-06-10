@@ -95,6 +95,8 @@ Parameters (specified as one object passed into hot-shots):
   * `env` from `DD_ENV` ([docs](https://docs.datadoghq.com/getting_started/tagging/unified_service_tagging/?tab=kubernetes#full-configuration))
   * `service` from `DD_SERVICE` ([docs](https://docs.datadoghq.com/getting_started/tagging/unified_service_tagging/?tab=kubernetes#full-configuration))
   * `version` from `DD_VERSION` ([docs](https://docs.datadoghq.com/getting_started/tagging/unified_service_tagging/?tab=kubernetes#full-configuration))
+
+  In addition, comma-delimited tags from the `DD_TAGS` environment variable (or its legacy alias `DATADOG_TAGS`) are added to `globalTags`. For example `DD_TAGS=rack:1,team:core` adds `rack:1` and `team:core`. These are applied before the `DD_ENV`/`DD_SERVICE`/`DD_VERSION` mapping above, so those env vars win on a key conflict.
 * `maxBufferSize`: If larger than 0,  metrics will be buffered and only sent when the string length is greater than the size. `default: 0` for udp and tcp.  `default: 8192` for uds.
 * `bufferFlushInterval`: If buffering is in use, this is the time in ms to always flush any buffered metrics. `default: 1000`
 * `telegraf`:    Use Telegraf's StatsD line protocol, which is slightly different than the rest `default: false`
