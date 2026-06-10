@@ -393,6 +393,17 @@ it is probably because you are sending large volumes of metrics to a single agen
 This error only arises when using the UDS protocol and means that packages are being dropped.
 Take a look at the [Datadog docs](https://docs.datadoghq.com/developers/dogstatsd/high_throughput/?#over-uds-unix-domain-socket) for some tips on tuning your connection.
 
+### Flushing buffered metrics
+
+`flush([callback])` sends any buffered metrics to the transport immediately, without waiting for the `bufferFlushInterval`. With [client-side aggregation](#client-side-aggregation) enabled, pending aggregated metrics are flushed into the buffer first. This is useful in serverless and other short-lived environments where you want to ensure metrics are sent before the process freezes or exits.
+
+```javascript
+client.increment('my.metric');
+client.flush(() => {
+  // buffered payload has been handed to the transport
+});
+```
+
 ### Sending metrics during process shutdown
 
 Metrics sent from `process.on('exit')` handlers will **not** be delivered. This is a fundamental Node.js limitation, not a bug in hot-shots. When the `exit` event fires, the event loop has stopped processing async operations, so socket send callbacks will never execute.

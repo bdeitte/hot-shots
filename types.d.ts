@@ -208,6 +208,8 @@ export class StatsD {
 
   close(callback?: (error?: Error) => void): void;
 
+  flush(callback?: StatsCb): void;
+
   event(title: string, text?: string, options?: EventOptions, tags?: Tags, callback?: StatsCb): void;
   event(title: string, text?: string, options?: EventOptions, callback?: StatsCb): void;
   check(name: string, status: DatadogChecksValues, options?: CheckOptions, tags?: Tags, callback?: StatsCb): void;
