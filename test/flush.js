@@ -55,4 +55,45 @@ describe('#flush', () => {
       done();
     });
   });
+
+  it('should wait for an in-flight unbuffered send before invoking the callback', done => {
+    server = createServer('udp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, { maxBufferSize: 0 }), 'client');
+      // Defer the send completion callback so the send is genuinely in flight when
+      // flush() is called. The flush callback must not fire until it completes.
+      let sendDrained = false;
+      statsd.socket.send = (buf, cb) => {
+        setTimeout(() => {
+          sendDrained = true;
+          cb();
+        }, 30);
+      };
+      statsd.increment('drain.metric');
+      statsd.flush(() => {
+        assert.ok(sendDrained, 'flush callback fired before the unbuffered send drained');
+        done();
+      });
+    });
+  });
+
+  it('should wait for an aggregated send routed through a child before invoking the callback', done => {
+    server = createServer('udp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, { maxBufferSize: 0, aggregation: true }), 'client');
+      const child = statsd.childClient({ globalTags: ['child:tag'] });
+      // Child shares the parent's socket; stub it to defer the routed send so we can
+      // assert flush() waits for the child's in-flight send to drain.
+      let sendDrained = false;
+      statsd.socket.send = (buf, cb) => {
+        setTimeout(() => {
+          sendDrained = true;
+          cb();
+        }, 30);
+      };
+      child.increment('drain.child');
+      statsd.flush(() => {
+        assert.ok(sendDrained, 'flush callback fired before the child-routed send drained');
+        done();
+      });
+    });
+  });
 });
