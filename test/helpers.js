@@ -756,9 +756,9 @@ describe('#helpersExtended', () => {
       });
     });
 
-    it('should parse udp url without port', () => {
+    it('should default the port to 8125 for a udp url without a port', () => {
       assert.deepStrictEqual(helpers.parseDogstatsdUrl('udp://host'), {
-        protocol: 'udp', host: 'host',
+        protocol: 'udp', host: 'host', port: 8125,
       });
     });
 
@@ -768,9 +768,9 @@ describe('#helpersExtended', () => {
       });
     });
 
-    it('should parse bare IPv6 udp url as host with no port', () => {
+    it('should parse bare IPv6 udp url as host with default port', () => {
       assert.deepStrictEqual(helpers.parseDogstatsdUrl('udp://::1'), {
-        protocol: 'udp', host: '::1',
+        protocol: 'udp', host: '::1', port: 8125,
       });
     });
 

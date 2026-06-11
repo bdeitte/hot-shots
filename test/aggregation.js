@@ -131,6 +131,22 @@ describe('#aggregation', () => {
     });
   });
 
+  it('should flush child-recorded aggregated metrics when the parent is closed', done => {
+    server = createServer('udp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, {
+        aggregation: { flushInterval: 60000 },
+      }), 'client');
+      const child = statsd.childClient({});
+      child.increment('agg.parentclose', 7);
+      statsd.close();
+      statsd = null;
+    });
+    server.on('metrics', metrics => {
+      assert.strictEqual(metrics, 'agg.parentclose:7|c');
+      done();
+    });
+  });
+
   it('should flush on the aggregation interval', done => {
     statsd = createHotShotsClient({
       mock: true,

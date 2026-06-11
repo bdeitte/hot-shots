@@ -51,6 +51,14 @@ describe('#init', () => {
     assert.strictEqual(statsd.port, 8125);
   });
 
+  it('should let a portless DD_DOGSTATSD_URL win over DD_DOGSTATSD_PORT', () => {
+    process.env.DD_DOGSTATSD_URL = 'udp://urlhost';
+    process.env.DD_DOGSTATSD_PORT = '9999';
+    statsd = createHotShotsClient({ mock: true }, clientType);
+    assert.strictEqual(statsd.host, 'urlhost');
+    assert.strictEqual(statsd.port, 8125);
+  });
+
   it('should use uds config from DD_DOGSTATSD_URL unix scheme', () => {
     process.env.DD_DOGSTATSD_URL = 'unix:///var/run/test/dsd.socket';
     statsd = createHotShotsClient({ mock: true }, clientType);
