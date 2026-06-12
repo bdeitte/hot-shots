@@ -810,4 +810,61 @@ describe('#helpersExtended', () => {
       assert.strictEqual(helpers.parseDogstatsdUrl('unix://'), null);
     });
   });
+
+  describe('#getDogstatsdEnvTransport', () => {
+    let originalConsoleError;
+    const savedEnv = {};
+    const ENV_VARS = ['DD_DOGSTATSD_URL', 'DD_DOGSTATSD_SOCKET'];
+
+    beforeEach(() => {
+      originalConsoleError = console.error;
+      console.error = () => { /* suppress expected parse warnings */ };
+      ENV_VARS.forEach(name => {
+        savedEnv[name] = process.env[name];
+        delete process.env[name];
+      });
+    });
+
+    afterEach(() => {
+      console.error = originalConsoleError;
+      ENV_VARS.forEach(name => {
+        if (savedEnv[name] === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = savedEnv[name];
+        }
+      });
+    });
+
+    it('should return null when neither env var is set', () => {
+      assert.strictEqual(helpers.getDogstatsdEnvTransport(), null);
+    });
+
+    it('should parse a valid DD_DOGSTATSD_URL', () => {
+      process.env.DD_DOGSTATSD_URL = 'udp://host:9125';
+      assert.deepStrictEqual(helpers.getDogstatsdEnvTransport(), {
+        protocol: 'udp', host: 'host', port: 9125,
+      });
+    });
+
+    it('should use DD_DOGSTATSD_SOCKET when no url is set', () => {
+      process.env.DD_DOGSTATSD_SOCKET = '/var/run/datadog/dsd.socket';
+      assert.deepStrictEqual(helpers.getDogstatsdEnvTransport(), {
+        protocol: 'uds', path: '/var/run/datadog/dsd.socket',
+      });
+    });
+
+    it('should fall back to DD_DOGSTATSD_SOCKET when DD_DOGSTATSD_URL is invalid', () => {
+      process.env.DD_DOGSTATSD_URL = 'unixstream:///var/run/datadog/dsd.socket';
+      process.env.DD_DOGSTATSD_SOCKET = '/var/run/datadog/dsd.socket';
+      assert.deepStrictEqual(helpers.getDogstatsdEnvTransport(), {
+        protocol: 'uds', path: '/var/run/datadog/dsd.socket',
+      });
+    });
+
+    it('should return null when DD_DOGSTATSD_URL is invalid and no socket is set', () => {
+      process.env.DD_DOGSTATSD_URL = 'unixstream:///var/run/datadog/dsd.socket';
+      assert.strictEqual(helpers.getDogstatsdEnvTransport(), null);
+    });
+  });
 });

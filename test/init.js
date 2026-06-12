@@ -97,6 +97,21 @@ describe('#init', () => {
     assert.strictEqual(statsd.path, undefined);
   });
 
+  it('should fall back to DD_DOGSTATSD_SOCKET when DD_DOGSTATSD_URL is invalid', () => {
+    process.env.DD_DOGSTATSD_URL = 'unixstream:///var/run/test/dsd.socket';
+    process.env.DD_DOGSTATSD_SOCKET = '/var/run/test/dsd.socket';
+    statsd = createHotShotsClient({ mock: true }, clientType);
+    assert.strictEqual(statsd.protocol, 'uds');
+    assert.strictEqual(statsd.path, '/var/run/test/dsd.socket');
+  });
+
+  it('should not apply DD_DOGSTATSD_URL env transport to a telegraf client', () => {
+    process.env.DD_DOGSTATSD_URL = 'unix:///var/run/test/dsd.socket';
+    statsd = createHotShotsClient({ mock: true, telegraf: true }, clientType);
+    assert.strictEqual(statsd.protocol, 'udp');
+    assert.strictEqual(statsd.path, undefined);
+  });
+
   it('should set the proper values when specified', () => {
     // cachedDns isn't tested here, hence the null
     statsd = createHotShotsClient(

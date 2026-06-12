@@ -173,4 +173,94 @@ describe('#aggregation', () => {
       done();
     });
   });
+
+  it('should still aggregate when the client default sampleRate is < 1', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true, sampleRate: 0.5 }, 'client');
+    statsd.increment('agg.defaultrate');
+    statsd.increment('agg.defaultrate');
+    // A client-level default sampleRate must not disable aggregation entirely;
+    // only an explicit per-call sample rate bypasses it.
+    assert.deepStrictEqual(statsd.mockBuffer, []);
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.defaultrate:2|c']);
+  });
+
+  it('should not aggregate NaN counts into the context sum', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.increment('agg.nan', NaN);
+    statsd.increment('agg.nan', 3);
+    statsd.flush();
+    // The NaN value passes through unaggregated rather than poisoning the sum.
+    assert.deepStrictEqual(statsd.mockBuffer.sort(), ['agg.nan:3|c', 'agg.nan:NaN|c'].sort());
+  });
+
+  it('should treat object tags differing only in key order as one context', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('agg.objorder', 1, { a: '1', b: '2' });
+    statsd.gauge('agg.objorder', 5, { b: '2', a: '1' });
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.objorder:5|g|#a:1,b:2']);
+  });
+
+  it('should not merge parent and child contexts that differ in default cardinality', () => {
+    statsd = createHotShotsClient({ mock: true, datadog: true, aggregation: true }, 'client');
+    const child = statsd.childClient({ cardinality: 'high' });
+    statsd.increment('agg.card');
+    child.increment('agg.card');
+    statsd.flush();
+    const sent = statsd.mockBuffer.concat(child.mockBuffer).sort();
+    assert.deepStrictEqual(sent, [
+      'agg.card:1|c',
+      'agg.card:1|c|card:high',
+    ].sort());
+  });
+
+  it('should reject an invalid aggregation flushInterval and use the default', () => {
+    const originalConsoleError = console.error;
+    console.error = () => { /* suppress expected validation warning */ };
+    try {
+      statsd = createHotShotsClient({ mock: true, aggregation: { flushInterval: -5 } }, 'client');
+    } finally {
+      console.error = originalConsoleError;
+    }
+    assert.strictEqual(statsd.aggregator.flushInterval, 2000);
+  });
+
+  it('should track interval-flushed clients for drain coordination', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    const child = statsd.childClient({ globalTags: ['c:1'] });
+    child.increment('agg.routed');
+    // Simulate an interval-driven flush, which passes no involvedClients set.
+    statsd.aggregator.flush();
+    assert.ok(statsd.aggregator.routedClients.has(child));
+  });
+
+  it('should not silently aggregate metrics recorded after close', done => {
+    statsd = createHotShotsClient({ mock: true, aggregation: { flushInterval: 60000 } }, 'client');
+    const child = statsd.childClient({});
+    statsd.close(() => {
+      assert.strictEqual(statsd.aggregator.closed, true);
+      child.increment('agg.postclose', 1);
+      // The post-close record goes straight through the send path rather than
+      // landing in a window that will never flush.
+      assert.strictEqual(statsd.aggregator.contexts.size, 0);
+      assert.deepStrictEqual(child.mockBuffer, ['agg.postclose:1|c']);
+      statsd = null;
+      done();
+    });
+  });
+
+  it('should disable aggregation for telegraf clients', () => {
+    const originalConsoleError = console.error;
+    console.error = () => { /* suppress expected telegraf-disable warning */ };
+    try {
+      statsd = createHotShotsClient({ mock: true, telegraf: true, aggregation: true }, 'client');
+    } finally {
+      console.error = originalConsoleError;
+    }
+    assert.strictEqual(statsd.aggregator, null);
+    statsd.increment('agg.telegraf');
+    // No aggregation: sent immediately instead of held for a flush.
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.telegraf:1|c']);
+  });
 });

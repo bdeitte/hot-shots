@@ -107,9 +107,9 @@ Parameters (specified as one object passed into hot-shots):
 * `path`: Used only when the protocol is `uds`. Defaults to `/var/run/datadog/dsd.socket`.
 * `stream`: Reference to a stream instance. Used only when the protocol is `stream`.
 
-If no transport options (`host`, `port`, `protocol`, `path`, `stream`) are passed, the transport can be configured from environment variables for parity with the official DogStatsD clients:
+If no transport options (`host`, `port`, `protocol`, `path`, `stream`) are passed, the transport can be configured from environment variables for parity with the official DogStatsD clients (these are Datadog-agent variables and are ignored for `telegraf` clients):
 * `DD_DOGSTATSD_URL`: A transport URL. `udp://host[:port]` configures UDP (port defaults to 8125), while `unix:///path/to/socket` or `unixgram:///path/to/socket` configures a Unix Domain Socket. The `unixstream://` scheme is not supported.
-* `DD_DOGSTATSD_SOCKET`: A Unix Domain Socket path (used only when `DD_DOGSTATSD_URL` is not set).
+* `DD_DOGSTATSD_SOCKET`: A Unix Domain Socket path (used when `DD_DOGSTATSD_URL` is not set, or is set but invalid/unsupported).
 
 Precedence is: explicit transport options > `DD_DOGSTATSD_URL` > `DD_DOGSTATSD_SOCKET` > `DD_AGENT_HOST`/`DD_DOGSTATSD_PORT`.
 * `tcpGracefulErrorHandling`: Used only when the protocol is `tcp`. Boolean indicating whether to handle socket errors gracefully. Defaults to true.
@@ -408,7 +408,7 @@ When enabled, metrics are combined per context (metric type, name, per-call tags
 * Gauges keep the most recent value.
 * Sets emit each unique value once.
 
-The following always bypass aggregation and are sent immediately: histograms, distributions, timings, sets aside, events and service checks, plus any count/gauge/set that uses a sample rate, a timestamp, or a delta gauge (`+`/`-` value). Child clients share the parent's aggregator instance, and clients with different global tags aggregate into separate contexts.
+The following always bypass aggregation and are sent immediately: histograms, distributions, timings, sets aside, events and service checks, plus any count/gauge/set that uses a *per-call* sample rate, a timestamp, a delta gauge (`+`/`-` value), or a `NaN` value. A client-level default `sampleRate` does **not** disable aggregation. Child clients share the parent's aggregator instance; clients that differ in their global tags or default cardinality aggregate into separate contexts. Aggregation is a DogStatsD feature and is disabled for `telegraf` clients.
 
 The per-metric callback fires synchronously when a metric is aggregated, as a "queued" signal (the same way buffered mode behaves).
 

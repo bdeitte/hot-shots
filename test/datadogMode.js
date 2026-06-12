@@ -9,7 +9,7 @@ const createHotShotsClient = helpers.createHotShotsClient;
 // Derive the signal vars from constants so the cleanup list stays in sync as new
 // Datadog signal env vars are added, plus a couple of related vars not in that list.
 const DD_ENV_VARS = constants.DATADOG_SIGNAL_ENV_VARS.concat([
-  'DATADOG_CARDINALITY', 'DD_ORIGIN_DETECTION_ENABLED',
+  'DATADOG_CARDINALITY', 'DD_ORIGIN_DETECTION_ENABLED', 'DATADOG_TAGS',
 ]);
 
 let savedEnv = {};

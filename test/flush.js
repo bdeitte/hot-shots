@@ -96,4 +96,42 @@ describe('#flush', () => {
       });
     });
   });
+
+  it('should invoke the flush callback even when the aggregator flush throws', done => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    const originalConsoleError = console.error;
+    console.error = () => { /* suppress expected aggregator-throw warning */ };
+    statsd.aggregator.flush = () => { throw new Error('boom'); };
+    statsd.flush(err => {
+      console.error = originalConsoleError;
+      // A synchronous aggregator throw must not escape flush() or orphan the callback.
+      assert.ok(!err);
+      done();
+    });
+  });
+
+  it('should not orphan a concurrent flush callback when close force-closes', done => {
+    server = createServer('udp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, {
+        maxBufferSize: 0,
+        closingFlushInterval: 5,
+      }), 'client');
+      const originalConsoleError = console.error;
+      console.error = () => { /* suppress the expected "messages in flight" warning */ };
+      // Never invoke the send callback: the send stays in flight, so close() must
+      // hit its force-close path.
+      statsd.socket.send = () => { /* leave the send permanently in flight */ };
+      statsd.increment('stuck.metric');
+      let flushCalledBack = false;
+      statsd.flush(() => {
+        flushCalledBack = true;
+      });
+      statsd.close(() => {
+        console.error = originalConsoleError;
+        assert.ok(flushCalledBack, 'concurrent flush callback was orphaned by force-close');
+        statsd = null;
+        done();
+      });
+    });
+  });
 });

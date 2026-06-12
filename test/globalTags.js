@@ -389,4 +389,13 @@ describe('#DD_TAGS env var', () => {
     statsd = createHotShotsClient({ mock: true, includeDataDogTags: false }, 'client');
     assert.deepStrictEqual(statsd.globalTags, []);
   });
+
+  it('should let a child globalTags override win over DD_TAGS', () => {
+    process.env.DD_TAGS = 'team:core';
+    statsd = createHotShotsClient({ mock: true }, 'client');
+    const child = statsd.childClient({ globalTags: ['team:checkout'] });
+    // The child explicitly overrides team; DD_TAGS must not clobber it back to
+    // team:core. The child inherits DD_TAGS only for keys it does not override.
+    assert.deepStrictEqual(child.globalTags, ['team:checkout']);
+  });
 });
