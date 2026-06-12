@@ -398,4 +398,13 @@ describe('#DD_TAGS env var', () => {
     // team:core. The child inherits DD_TAGS only for keys it does not override.
     assert.deepStrictEqual(child.globalTags, ['team:checkout']);
   });
+
+  it('should let DD_ENV win over a child globalTags override', () => {
+    process.env.DD_ENV = 'prod';
+    statsd = createHotShotsClient({ mock: true }, 'client');
+    const child = statsd.childClient({ globalTags: ['env:childoverride'] });
+    // Unlike arbitrary DD_TAGS keys, the DD_ENV/DD_SERVICE/DD_VERSION mapping keeps
+    // its documented precedence and wins over a child's explicit override.
+    assert.deepStrictEqual(child.globalTags, ['env:prod']);
+  });
 });

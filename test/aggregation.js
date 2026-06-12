@@ -202,6 +202,16 @@ describe('#aggregation', () => {
     assert.deepStrictEqual(statsd.mockBuffer, ['agg.objorder:5|g|#a:1,b:2']);
   });
 
+  it('should not merge object tags whose value is undefined vs null', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('agg.undefnull', 1, { a: undefined });
+    statsd.gauge('agg.undefnull', 2, { a: null });
+    statsd.flush();
+    // These emit different tags (a:undefined vs a:null), so they must stay in
+    // separate contexts rather than collapsing into one gauge value.
+    assert.strictEqual(statsd.mockBuffer.length, 2);
+  });
+
   it('should not merge parent and child contexts that differ in default cardinality', () => {
     statsd = createHotShotsClient({ mock: true, datadog: true, aggregation: true }, 'client');
     const child = statsd.childClient({ cardinality: 'high' });
@@ -226,13 +236,30 @@ describe('#aggregation', () => {
     assert.strictEqual(statsd.aggregator.flushInterval, 2000);
   });
 
-  it('should track interval-flushed clients for drain coordination', () => {
-    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
-    const child = statsd.childClient({ globalTags: ['c:1'] });
-    child.increment('agg.routed');
-    // Simulate an interval-driven flush, which passes no involvedClients set.
-    statsd.aggregator.flush();
-    assert.ok(statsd.aggregator.routedClients.has(child));
+  it('should track only clients with in-flight routed sends, pruning once drained', done => {
+    server = createServer('udp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, {
+        maxBufferSize: 0,
+        aggregation: { flushInterval: 60000 },
+      }), 'client');
+      const child = statsd.childClient({ globalTags: ['c:1'] });
+      // Defer the routed send so it is genuinely in flight after the flush.
+      let resolveSend;
+      statsd.socket.send = (buf, cb) => {
+        resolveSend = cb;
+      };
+      child.increment('agg.routed');
+      // Simulate an interval-driven flush (no arguments). The child's send is in
+      // flight, so it is tracked.
+      statsd.aggregator.flush();
+      assert.ok(statsd.aggregator.activeClients.has(child));
+      // Completing the send drains the child, which must prune it from the set.
+      resolveSend();
+      setImmediate(() => {
+        assert.ok(!statsd.aggregator.activeClients.has(child));
+        done();
+      });
+    });
   });
 
   it('should not silently aggregate metrics recorded after close', done => {

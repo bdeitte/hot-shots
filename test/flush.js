@@ -97,6 +97,32 @@ describe('#flush', () => {
     });
   });
 
+  it('should wait for an interval-routed child send when flush(callback) is called', done => {
+    server = createServer('udp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, {
+        maxBufferSize: 0,
+        aggregation: { flushInterval: 60000 },
+      }), 'client');
+      const child = statsd.childClient({ globalTags: ['child:tag'] });
+      // Defer the routed send so it is still in flight after the interval flush.
+      let sendDrained = false;
+      statsd.socket.send = (buf, cb) => {
+        setTimeout(() => {
+          sendDrained = true;
+          cb();
+        }, 30);
+      };
+      child.increment('drain.intervalchild');
+      // Simulate the aggregation interval firing: it routes the child's send and
+      // empties the contexts, so the later flush(cb) sees nothing of its own to do.
+      statsd.aggregator.flush();
+      statsd.flush(() => {
+        assert.ok(sendDrained, 'flush callback fired before the interval-routed child send drained');
+        done();
+      });
+    });
+  });
+
   it('should invoke the flush callback even when the aggregator flush throws', done => {
     statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
     const originalConsoleError = console.error;
