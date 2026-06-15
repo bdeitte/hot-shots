@@ -212,6 +212,22 @@ describe('#aggregation', () => {
     assert.strictEqual(statsd.mockBuffer.length, 2);
   });
 
+  it('should not merge object tags whose values are different non-finite numbers', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('agg.nonfinite', 1, { a: NaN });
+    statsd.gauge('agg.nonfinite', 2, { a: Infinity });
+    statsd.gauge('agg.nonfinite', 3, { a: -Infinity });
+    statsd.flush();
+    // NaN, Infinity and -Infinity emit as different tags (a:NaN, a:Infinity,
+    // a:-Infinity), so they must stay in separate contexts rather than collapsing
+    // into one gauge value. JSON.stringify alone would convert all three to null.
+    assert.deepStrictEqual(statsd.mockBuffer.sort(), [
+      'agg.nonfinite:1|g|#a:NaN',
+      'agg.nonfinite:2|g|#a:Infinity',
+      'agg.nonfinite:3|g|#a:-Infinity',
+    ].sort());
+  });
+
   it('should not merge parent and child contexts that differ in default cardinality', () => {
     statsd = createHotShotsClient({ mock: true, datadog: true, aggregation: true }, 'client');
     const child = statsd.childClient({ cardinality: 'high' });
