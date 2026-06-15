@@ -393,36 +393,6 @@ it is probably because you are sending large volumes of metrics to a single agen
 This error only arises when using the UDS protocol and means that packages are being dropped.
 Take a look at the [Datadog docs](https://docs.datadoghq.com/developers/dogstatsd/high_throughput/?#over-uds-unix-domain-socket) for some tips on tuning your connection.
 
-### Client-side aggregation
-
-For parity with the official DogStatsD clients, hot-shots can optionally aggregate counts, gauges and sets on the client before sending, reducing packet volume for hot metrics. It is opt-in via the `aggregation` option:
-
-```javascript
-const client = new StatsD({ aggregation: true });
-// or configure the flush interval (default 2000ms):
-const client = new StatsD({ aggregation: { flushInterval: 1000 } });
-```
-
-When enabled, metrics are combined per context (metric type, name, per-call tags, cardinality and the recording client's global tags) and flushed on the aggregation interval, on [`flush()`](#flushing-buffered-metrics), and on `close()`:
-* Counts are summed.
-* Gauges keep the most recent value.
-* Sets emit each unique value once.
-
-The following always bypass aggregation and are sent immediately: histograms, distributions, timings, sets aside, events and service checks, plus any count/gauge/set that uses a *per-call* sample rate, a timestamp, a delta gauge (`+`/`-` value), or a `NaN` value. A client-level default `sampleRate` does **not** disable aggregation. Child clients share the parent's aggregator instance; clients that differ in their global tags or default cardinality aggregate into separate contexts. Aggregation is a DogStatsD feature and is disabled for `telegraf` clients.
-
-The per-metric callback fires synchronously when a metric is aggregated, as a "queued" signal (the same way buffered mode behaves).
-
-### Flushing buffered metrics
-
-`flush([callback])` sends any buffered metrics to the transport immediately, without waiting for the `bufferFlushInterval`. With [client-side aggregation](#client-side-aggregation) enabled, pending aggregated metrics are flushed into the buffer first. This is useful in serverless and other short-lived environments where you want to ensure metrics are sent before the process freezes or exits.
-
-```javascript
-client.increment('my.metric');
-client.flush(() => {
-  // buffered payload has been handed to the transport
-});
-```
-
 ### Sending metrics during process shutdown
 
 Metrics sent from `process.on('exit')` handlers will **not** be delivered. This is a fundamental Node.js limitation, not a bug in hot-shots. When the `exit` event fires, the event loop has stopped processing async operations, so socket send callbacks will never execute.
@@ -578,6 +548,36 @@ client.gauge('queue_size', 100);
 client.gaugeDelta('connections', 1);
 client.timing('response_time', 250);
 client.histogram('request_size', 1024);
+```
+
+## Client-side aggregation
+
+hot-shots can optionally aggregate counts, gauges and sets on the client before sending, reducing packet volume for hot metrics. It is opt-in via the `aggregation` option:
+
+```javascript
+const client = new StatsD({ aggregation: true });
+// or configure the flush interval (default 2000ms):
+const client = new StatsD({ aggregation: { flushInterval: 1000 } });
+```
+
+When enabled, metrics are combined per context (metric type, name, per-call tags, cardinality and the recording client's global tags) and flushed on the aggregation interval, on [`flush()`](#flushing-buffered-metrics), and on `close()`:
+* Counts are summed.
+* Gauges keep the most recent value.
+* Sets emit each unique value once.
+
+The following always bypass aggregation and are sent immediately: histograms, distributions, timings, sets aside, events and service checks, plus any count/gauge/set that uses a *per-call* sample rate, a timestamp, a delta gauge (`+`/`-` value), or a `NaN` value. A client-level default `sampleRate` does **not** disable aggregation. Child clients share the parent's aggregator instance; clients that differ in their global tags or default cardinality aggregate into separate contexts. Aggregation is a DogStatsD feature and is disabled for `telegraf` clients.
+
+The per-metric callback fires synchronously when a metric is aggregated, as a "queued" signal (the same way buffered mode behaves).
+
+### Flushing buffered metrics
+
+`flush([callback])` sends any buffered metrics to the transport immediately, without waiting for the `bufferFlushInterval`. With [client-side aggregation](#client-side-aggregation) enabled, pending aggregated metrics are flushed into the buffer first. This is useful in serverless and other short-lived environments where you want to ensure metrics are sent before the process freezes or exits.
+
+```javascript
+client.increment('my.metric');
+client.flush(() => {
+  // buffered payload has been handed to the transport
+});
 ```
 
 ## Sanitization
