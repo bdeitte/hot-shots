@@ -33,6 +33,8 @@ hot-shots supports Node 18.x and higher. When using types.d.ts, hot-shots requir
   - [Datadog's Unix domain socket support](#datadogs-unix-domain-socket-support)
   - [Datadog Telemetry](#datadog-telemetry)
   - [OpenTelemetry Collector Compatibility](#opentelemetry-collector-compatibility)
+- [Client-side aggregation](#client-side-aggregation)
+  - [Flushing buffered metrics](#flushing-buffered-metrics)
 - [Sanitization](#sanitization)
 - [Debugging](#debugging)
 - [Submitting changes](#submitting-changes)
