@@ -395,6 +395,21 @@ describe('#aggregation', () => {
     assert.deepStrictEqual(statsd.mockBuffer, ['agg.capexisting:9|c|#k:b', 'agg.capexisting:3|c|#k:a']);
   });
 
+  it('should flush a pending aggregated gauge before a bypassing delta gauge', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('q.depth', 10);        // aggregated, held
+    statsd.gaugeDelta('q.depth', 2);    // bypasses; must not land before the 10
+    // The absolute gauge must be emitted before the delta so the server ends at 12.
+    assert.deepStrictEqual(statsd.mockBuffer, ['q.depth:10|g', 'q.depth:+2|g']);
+  });
+
+  it('should flush a pending aggregated gauge before a bypassing NaN gauge on the same context', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('q.depth', 10, ['k:a']);
+    statsd.gauge('q.depth', NaN, ['k:a']);
+    assert.deepStrictEqual(statsd.mockBuffer, ['q.depth:10|g|#k:a', 'q.depth:NaN|g|#k:a']);
+  });
+
   it('should disable aggregation for telegraf clients', () => {
     const originalConsoleError = console.error;
     console.error = () => { /* suppress expected telegraf-disable warning */ };
