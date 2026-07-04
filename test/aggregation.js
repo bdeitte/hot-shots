@@ -202,6 +202,16 @@ describe('#aggregation', () => {
     assert.deepStrictEqual(statsd.mockBuffer, ['agg.objorder:5|g|#a:1,b:2']);
   });
 
+  it('should treat array tags differing only in order as one context', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('agg.arrorder', 1, ['a:1', 'b:2']);
+    statsd.gauge('agg.arrorder', 5, ['b:2', 'a:1']);
+    statsd.gauge('agg.arrorder', 2, ['a:1', 'b:2']);
+    statsd.flush();
+    // One Datadog series: the final recorded value (2) must win, not a stale 5.
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.arrorder:2|g|#a:1,b:2']);
+  });
+
   it('should treat object tags with equal String() forms as one context', () => {
     statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
     statsd.gauge('agg.strform', 1, { a: 1 });
