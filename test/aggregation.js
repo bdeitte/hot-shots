@@ -202,6 +202,15 @@ describe('#aggregation', () => {
     assert.deepStrictEqual(statsd.mockBuffer, ['agg.objorder:5|g|#a:1,b:2']);
   });
 
+  it('should treat object tags with equal String() forms as one context', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('agg.strform', 1, { a: 1 });
+    statsd.gauge('agg.strform', 5, { a: '1' });
+    statsd.flush();
+    // 1 and '1' both emit as a:1, so they must aggregate into one gauge (last wins).
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.strform:5|g|#a:1']);
+  });
+
   it('should not merge object tags whose value is undefined vs null', () => {
     statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
     statsd.gauge('agg.undefnull', 1, { a: undefined });
