@@ -122,9 +122,12 @@ describe('#aggregation', () => {
     statsd.increment('agg.cache');
     const cached = statsd._aggContextSuffix;
     assert.ok(typeof cached === 'string' && cached.indexOf('g:1') !== -1);
+    // Overwrite the memo with a sentinel: if the helper recomputed the suffix on
+    // every record it would clobber this. The `=== undefined` guard means a second
+    // record must leave the already-set value untouched, so the sentinel survives.
+    statsd._aggContextSuffix = 'SENTINEL';
     statsd.increment('agg.cache');
-    // Same string instance reused (not rebuilt) on the second record.
-    assert.strictEqual(statsd._aggContextSuffix, cached);
+    assert.strictEqual(statsd._aggContextSuffix, 'SENTINEL');
   });
 
   it('should flush aggregated metrics recorded through a child when the child is closed', done => {
@@ -417,5 +420,10 @@ describe('#aggregation', () => {
     // first value, so it must be tracked for close()/flush() to wait on it.
     assert.ok(statsd.aggregator.activeClients.has(child),
       'partially-sent context did not track its in-flight child client');
+    // Reset the simulated in-flight state so afterEach's close() does not wait for
+    // a never-resolving drain and emit a force-close warning.
+    child.messagesInFlight = 0;
+    child.drainPromise = null;
+    statsd.aggregator.activeClients.delete(child);
   });
 });
