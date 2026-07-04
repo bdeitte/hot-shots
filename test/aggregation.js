@@ -340,4 +340,35 @@ describe('#aggregation', () => {
     assert.ok(statsd.mockBuffer.some(m => m.indexOf('agg.ok:2|g') === 0),
       'a throwing context aborted the flush and dropped the remaining context');
   });
+
+  it('should track a child client whose set send starts before a later value throws', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: { flushInterval: 60000 } }, 'client');
+    const child = statsd.childClient({ globalTags: ['c:1'] });
+    // Record a set with two values so sendContext iterates twice.
+    child.set('agg.partialset', 'a');
+    child.set('agg.partialset', 'b');
+    const originalConsoleError = console.error;
+    console.error = () => { /* suppress expected send-throw error */ };
+    // Simulate the first value going in flight (drainPromise + messagesInFlight)
+    // and the second value's send throwing synchronously.
+    let calls = 0;
+    child.send = () => {
+      calls += 1;
+      if (calls === 1) {
+        child.messagesInFlight = 1;
+        child.drainPromise = new Promise(() => { /* stays pending */ });
+        return;
+      }
+      throw new Error('boom on second set value');
+    };
+    try {
+      statsd.aggregator.flush();
+    } finally {
+      console.error = originalConsoleError;
+    }
+    // Even though the second value threw, the child had a send in flight from the
+    // first value, so it must be tracked for close()/flush() to wait on it.
+    assert.ok(statsd.aggregator.activeClients.has(child),
+      'partially-sent context did not track its in-flight child client');
+  });
 });
