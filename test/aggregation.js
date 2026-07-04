@@ -306,4 +306,29 @@ describe('#aggregation', () => {
     // No aggregation: sent immediately instead of held for a flush.
     assert.deepStrictEqual(statsd.mockBuffer, ['agg.telegraf:1|c']);
   });
+
+  it('should not drop remaining contexts when one context send throws', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    const originalConsoleError = console.error;
+    console.error = () => { /* suppress expected per-context send error */ };
+    statsd.gauge('agg.throws', 1, ['k:a']);
+    statsd.gauge('agg.ok', 2, ['k:b']);
+    // Make the first context's send throw; the second must still be sent.
+    const realSend = statsd.send.bind(statsd);
+    let threwOnce = false;
+    statsd.send = (message, tags, cardinality, cb) => {
+      if (!threwOnce && message.indexOf('agg.throws') === 0) {
+        threwOnce = true;
+        throw new Error('boom');
+      }
+      return realSend(message, tags, cardinality, cb);
+    };
+    try {
+      statsd.flush();
+    } finally {
+      console.error = originalConsoleError;
+    }
+    assert.ok(statsd.mockBuffer.some(m => m.indexOf('agg.ok:2|g') === 0),
+      'a throwing context aborted the flush and dropped the remaining context');
+  });
 });
