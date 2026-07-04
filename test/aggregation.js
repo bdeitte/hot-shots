@@ -116,6 +116,17 @@ describe('#aggregation', () => {
     ].sort());
   });
 
+  it('should memoize the per-client context suffix', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true, globalTags: ['g:1'] }, 'client');
+    assert.strictEqual(statsd._aggContextSuffix, undefined);
+    statsd.increment('agg.cache');
+    const cached = statsd._aggContextSuffix;
+    assert.ok(typeof cached === 'string' && cached.indexOf('g:1') !== -1);
+    statsd.increment('agg.cache');
+    // Same string instance reused (not rebuilt) on the second record.
+    assert.strictEqual(statsd._aggContextSuffix, cached);
+  });
+
   it('should flush aggregated metrics recorded through a child when the child is closed', done => {
     server = createServer('udp', opts => {
       statsd = createHotShotsClient(Object.assign(opts, {
