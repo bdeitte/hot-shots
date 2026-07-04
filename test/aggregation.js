@@ -1,5 +1,6 @@
 const assert = require('assert');
 const helpers = require('./helpers/helpers.js');
+const sinon = require('sinon');
 
 const closeAll = helpers.closeAll;
 const createServer = helpers.createServer;
@@ -8,8 +9,13 @@ const createHotShotsClient = helpers.createHotShotsClient;
 describe('#aggregation', () => {
   let server;
   let statsd;
+  let clock;
 
   afterEach(done => {
+    if (clock) {
+      clock.restore();
+      clock = null;
+    }
     closeAll(server, statsd, false, done);
     server = null;
     statsd = null;
@@ -161,16 +167,15 @@ describe('#aggregation', () => {
     });
   });
 
-  it('should flush on the aggregation interval', done => {
+  it('should flush on the aggregation interval', () => {
+    clock = sinon.useFakeTimers();
     statsd = createHotShotsClient({
       mock: true,
       aggregation: { flushInterval: 25 },
     }, 'client');
     statsd.increment('agg.interval');
-    setTimeout(() => {
-      assert.deepStrictEqual(statsd.mockBuffer, ['agg.interval:1|c']);
-      done();
-    }, 100);
+    clock.tick(25);
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.interval:1|c']);
   });
 
   it('should flush aggregated metrics on close', done => {

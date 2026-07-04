@@ -1,5 +1,6 @@
 const assert = require('assert');
 const helpers = require('./helpers/helpers.js');
+const sinon = require('sinon');
 
 const closeAll = helpers.closeAll;
 const createServer = helpers.createServer;
@@ -9,8 +10,13 @@ const testTypes = helpers.testTypes;
 describe('#flush', () => {
   let server;
   let statsd;
+  let clock;
 
   afterEach(done => {
+    if (clock) {
+      clock.restore();
+      clock = null;
+    }
     closeAll(server, statsd, false, done);
     server = null;
     statsd = null;
@@ -58,6 +64,7 @@ describe('#flush', () => {
 
   it('should wait for an in-flight unbuffered send before invoking the callback', done => {
     server = createServer('udp', opts => {
+      clock = sinon.useFakeTimers();
       statsd = createHotShotsClient(Object.assign(opts, { maxBufferSize: 0 }), 'client');
       // Defer the send completion callback so the send is genuinely in flight when
       // flush() is called. The flush callback must not fire until it completes.
@@ -73,11 +80,13 @@ describe('#flush', () => {
         assert.ok(sendDrained, 'flush callback fired before the unbuffered send drained');
         done();
       });
+      clock.tickAsync(30);
     });
   });
 
   it('should wait for an aggregated send routed through a child before invoking the callback', done => {
     server = createServer('udp', opts => {
+      clock = sinon.useFakeTimers();
       statsd = createHotShotsClient(Object.assign(opts, { maxBufferSize: 0, aggregation: true }), 'client');
       const child = statsd.childClient({ globalTags: ['child:tag'] });
       // Child shares the parent's socket; stub it to defer the routed send so we can
@@ -94,11 +103,13 @@ describe('#flush', () => {
         assert.ok(sendDrained, 'flush callback fired before the child-routed send drained');
         done();
       });
+      clock.tickAsync(30);
     });
   });
 
   it('should wait for an interval-routed child send when flush(callback) is called', done => {
     server = createServer('udp', opts => {
+      clock = sinon.useFakeTimers();
       statsd = createHotShotsClient(Object.assign(opts, {
         maxBufferSize: 0,
         aggregation: { flushInterval: 60000 },
@@ -120,6 +131,7 @@ describe('#flush', () => {
         assert.ok(sendDrained, 'flush callback fired before the interval-routed child send drained');
         done();
       });
+      clock.tickAsync(30);
     });
   });
 
