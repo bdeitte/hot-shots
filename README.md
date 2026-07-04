@@ -558,8 +558,8 @@ hot-shots can optionally aggregate counts, gauges and sets on the client before 
 
 ```javascript
 const client = new StatsD({ aggregation: true });
-// or configure the flush interval (default 2000ms):
-const client = new StatsD({ aggregation: { flushInterval: 1000 } });
+// or configure the flush interval (default 2000ms) and/or context cap (default 5000):
+const client = new StatsD({ aggregation: { flushInterval: 1000, maxContexts: 5000 } });
 ```
 
 When enabled, metrics are combined per context (metric type, name, per-call tags, cardinality and the recording client's global tags) and flushed on the aggregation interval, on [`flush()`](#flushing-buffered-metrics), and on `close()`:
@@ -570,6 +570,8 @@ When enabled, metrics are combined per context (metric type, name, per-call tags
 The following always bypass aggregation and are sent immediately: histograms, distributions, timings, events and service checks, plus any count/gauge/set that uses a *per-call* sample rate, a timestamp, a delta gauge (`+`/`-` value), or a `NaN` value. A client-level default `sampleRate` does **not** disable aggregation. Child clients share the parent's aggregator instance; clients that differ in their global tags or default cardinality aggregate into separate contexts. Aggregation is a DogStatsD feature and is disabled for `telegraf` clients.
 
 The per-metric callback fires synchronously when a metric is aggregated, as a "queued" signal (the same way buffered mode behaves).
+
+To bound memory, at most `maxContexts` (default 5000) distinct contexts are held per flush window; once the cap is reached, additional new contexts are sent directly without aggregation and a one-time warning is emitted.
 
 ### Flushing buffered metrics
 

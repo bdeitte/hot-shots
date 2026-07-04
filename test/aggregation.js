@@ -352,6 +352,49 @@ describe('#aggregation', () => {
     });
   });
 
+  it('should fall through to direct send once the context cap is reached', () => {
+    const originalConsoleError = console.error;
+    let overflowLogged = 0;
+    console.error = () => { overflowLogged += 1; };
+    try {
+      statsd = createHotShotsClient({ mock: true, aggregation: { maxContexts: 2 } }, 'client');
+      statsd.gauge('agg.cap', 1, ['k:a']); // context 1 (aggregated)
+      statsd.gauge('agg.cap', 2, ['k:b']); // context 2 (aggregated)
+      statsd.gauge('agg.cap', 3, ['k:c']); // new -> over cap -> direct send now
+      statsd.gauge('agg.cap', 4, ['k:c']); // still over cap -> direct send now
+    } finally {
+      console.error = originalConsoleError;
+    }
+    // The two over-cap gauges were sent immediately (not held for flush).
+    assert.deepStrictEqual(statsd.mockBuffer, [
+      'agg.cap:3|g|#k:c',
+      'agg.cap:4|g|#k:c',
+    ]);
+    assert.strictEqual(overflowLogged, 1, 'overflow should signal exactly once');
+    // The two under-cap contexts still flush normally.
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer.slice(2).sort(), [
+      'agg.cap:1|g|#k:a',
+      'agg.cap:2|g|#k:b',
+    ].sort());
+  });
+
+  it('should still update an existing context when at the cap', () => {
+    const originalConsoleError = console.error;
+    console.error = () => { /* suppress overflow signal */ };
+    try {
+      statsd = createHotShotsClient({ mock: true, aggregation: { maxContexts: 1 } }, 'client');
+      statsd.increment('agg.capexisting', 1, ['k:a']);
+      statsd.increment('agg.capexisting', 2, ['k:a']); // same context: still aggregates
+      statsd.increment('agg.capexisting', 9, ['k:b']); // new over cap: direct send
+    } finally {
+      console.error = originalConsoleError;
+    }
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.capexisting:9|c|#k:b']);
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.capexisting:9|c|#k:b', 'agg.capexisting:3|c|#k:a']);
+  });
+
   it('should disable aggregation for telegraf clients', () => {
     const originalConsoleError = console.error;
     console.error = () => { /* suppress expected telegraf-disable warning */ };

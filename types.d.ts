@@ -7,6 +7,8 @@ export type Cardinality = 'none' | 'low' | 'orchestrator' | 'high';
 export interface AggregationOptions {
   /** Interval in milliseconds between aggregation flushes. Default: 2000. */
   flushInterval?: number;
+  /** Maximum number of distinct aggregation contexts held per flush window; new contexts beyond this are sent directly. Default: 5000. */
+  maxContexts?: number;
 }
 
 export interface ClientOptions {
