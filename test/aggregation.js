@@ -260,6 +260,32 @@ describe('#aggregation', () => {
     ].sort());
   });
 
+  it('should merge per-call cardinality that equals the client default', () => {
+    statsd = createHotShotsClient({ mock: true, datadog: true, cardinality: 'high', aggregation: true }, 'client');
+    statsd.gauge('agg.effcard', 1, { cardinality: 'high' });
+    statsd.gauge('agg.effcard', 5);
+    statsd.flush();
+    // Per-call 'high' and the default 'high' emit identically, so one context (last wins).
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.effcard:5|g|card:high']);
+  });
+
+  it('should merge per-call cardinality that differs only in case', () => {
+    statsd = createHotShotsClient({ mock: true, datadog: true, aggregation: true }, 'client');
+    statsd.gauge('agg.cardcase', 1, { cardinality: 'HIGH' });
+    statsd.gauge('agg.cardcase', 5, { cardinality: 'high' });
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.cardcase:5|g|card:high']);
+  });
+
+  it('should ignore per-call cardinality for context keying in non-datadog mode', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('agg.nocard', 1, { cardinality: 'high' });
+    statsd.gauge('agg.nocard', 5, { cardinality: 'low' });
+    statsd.flush();
+    // Cardinality is never emitted outside datadog mode, so these are one context.
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.nocard:5|g']);
+  });
+
   it('should reject an invalid aggregation flushInterval and use the default', () => {
     const originalConsoleError = console.error;
     console.error = () => { /* suppress expected validation warning */ };
