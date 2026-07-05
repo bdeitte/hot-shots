@@ -3,17 +3,11 @@ CHANGELOG
 
 ## Unreleased
 
-* [@bdeitte](https://github.com/bdeitte) Fix: a gauge that bypasses aggregation (delta, NaN, timestamped, or per-call sampled) and is actually sent now flushes any pending same-context aggregated gauge first, so the server no longer settles on a stale aggregated value; a sampled-out gauge is dropped without forcing the pending aggregate onto the wire
-* [@bdeitte](https://github.com/bdeitte) Fix: useDefaultRoute now takes precedence over DD_DOGSTATSD_URL/DD_DOGSTATSD_SOCKET env transport instead of being silently overridden
+* [@bdeitte](https://github.com/bdeitte) Add opt-in client-side aggregation of counts, gauges and sets via the `aggregation` option, for better parity with official DogStatsD clients but also for use in any other non-Telegraf client. This includes an aggregation `maxContexts` option (default 5000) bounding the number of live aggregation contexts; new contexts beyond the cap are sent directly with a one-time warning.
+* [@bdeitte](https://github.com/bdeitte) Add a public `flush()` method to send buffered metrics (and any pending aggregated metrics) immediately, useful for serverless and other short-lived environments
 * [@bdeitte](https://github.com/bdeitte) Support DD_TAGS / DATADOG_TAGS env vars for global tags, for better parity with official DogStatsD clients
 * [@bdeitte](https://github.com/bdeitte) Support DD_DOGSTATSD_URL and DD_DOGSTATSD_SOCKET env vars for transport configuration, for better parity with official DogStatsD clients
-* [@bdeitte](https://github.com/bdeitte) Add a public `flush()` method to send buffered metrics immediately, useful for serverless and other short-lived environments
-* [@bdeitte](https://github.com/bdeitte) Add opt-in client-side aggregation of counts, gauges and sets via the `aggregation` option, for better parity with official DogStatsD clients
-* [@bdeitte](https://github.com/bdeitte) Add aggregation `maxContexts` option (default 5000) bounding the number of live aggregation contexts; new contexts beyond the cap are sent directly with a one-time warning
-* [@bdeitte](https://github.com/bdeitte) Harden the new DogStatsD-parity features: a client-level default `sampleRate` < 1 no longer disables aggregation; aggregation no longer merges parent/child contexts that differ in default cardinality, drops `NaN` values into a context sum, or merges object tags by key order, by `undefined`-vs-`null` values, or by different non-finite numeric values (`NaN`/`Infinity`/`-Infinity`); `aggregation.flushInterval` is now validated; aggregation is disabled for `telegraf` clients; post-`close()` records are no longer silently aggregated; `flush()` guards a throwing aggregator flush and a force-close no longer orphans a concurrent `flush(callback)`; `DD_DOGSTATSD_URL`/`DD_DOGSTATSD_SOCKET` no longer apply to `telegraf` clients, an invalid `DD_DOGSTATSD_URL` falls back to `DD_DOGSTATSD_SOCKET`, and `DD_TAGS` no longer clobbers a child client's explicit `globalTags`
-* [@bdeitte](https://github.com/bdeitte) Fix: a throwing send during an aggregation flush no longer drops the remaining aggregated contexts; each context's send is isolated and errors routed through errorHandler/console.error
-* [@bdeitte](https://github.com/bdeitte) Fix: aggregation set contexts now track their in-flight client even when a later set value's send throws, so flush()/close() cannot drop a partially-sent child-routed set
-* [@bdeitte](https://github.com/bdeitte) Fix: aggregation now keys on the effective emitted cardinality, so per-call cardinality equal to (or differing only in case from) the client default no longer splits into duplicate contexts, and per-call cardinality is ignored for keying in non-datadog mode
+* [@bdeitte](https://github.com/bdeitte) Fix dev-dependency security advisories (@babel/core, js-yaml) via `npm audit fix`
 
 ## 16.0.0 (2026-6-8)
 
