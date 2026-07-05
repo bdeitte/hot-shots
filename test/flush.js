@@ -76,17 +76,23 @@ describe('#flush', () => {
         }, 30);
       };
       statsd.increment('drain.metric');
-      const flushed = new Promise(res => statsd.flush(res));
-      // Drive the fake-timer advancement and the flush completion through a single
-      // controlled promise chain so no async timer work escapes Mocha's control; any
-      // rejection (including an assertion failure) is routed to done.
-      clock.tickAsync(30).
-        then(() => flushed).
-        then(() => {
-          assert.ok(sendDrained, 'flush callback fired before the unbuffered send drained');
-          done();
-        }).
-        catch(done);
+      // Assert at flush-callback time: the callback must not fire until the deferred
+      // send has drained. Checking after tickAsync(30) would always see sendDrained
+      // true and never catch an early-firing callback.
+      const flushed = new Promise((resolve, reject) => {
+        statsd.flush(() => {
+          try {
+            assert.ok(sendDrained, 'flush callback fired before the unbuffered send drained');
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        });
+      });
+      // Drive the fake-timer advancement alongside the flush completion so no async
+      // timer work escapes Mocha's control; any rejection (including an assertion
+      // failure) is routed to done.
+      Promise.all([clock.tickAsync(30), flushed]).then(() => done(), done);
     });
   });
 
@@ -105,14 +111,19 @@ describe('#flush', () => {
         }, 30);
       };
       child.increment('drain.child');
-      const flushed = new Promise(res => statsd.flush(res));
-      clock.tickAsync(30).
-        then(() => flushed).
-        then(() => {
-          assert.ok(sendDrained, 'flush callback fired before the child-routed send drained');
-          done();
-        }).
-        catch(done);
+      // Assert at flush-callback time so an early-firing callback is caught; after
+      // tickAsync(30) sendDrained is unconditionally true.
+      const flushed = new Promise((resolve, reject) => {
+        statsd.flush(() => {
+          try {
+            assert.ok(sendDrained, 'flush callback fired before the child-routed send drained');
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        });
+      });
+      Promise.all([clock.tickAsync(30), flushed]).then(() => done(), done);
     });
   });
 
@@ -136,14 +147,19 @@ describe('#flush', () => {
       // Simulate the aggregation interval firing: it routes the child's send and
       // empties the contexts, so the later flush(cb) sees nothing of its own to do.
       statsd.aggregator.flush();
-      const flushed = new Promise(res => statsd.flush(res));
-      clock.tickAsync(30).
-        then(() => flushed).
-        then(() => {
-          assert.ok(sendDrained, 'flush callback fired before the interval-routed child send drained');
-          done();
-        }).
-        catch(done);
+      // Assert at flush-callback time so an early-firing callback is caught; after
+      // tickAsync(30) sendDrained is unconditionally true.
+      const flushed = new Promise((resolve, reject) => {
+        statsd.flush(() => {
+          try {
+            assert.ok(sendDrained, 'flush callback fired before the interval-routed child send drained');
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        });
+      });
+      Promise.all([clock.tickAsync(30), flushed]).then(() => done(), done);
     });
   });
 
