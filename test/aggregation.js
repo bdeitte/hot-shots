@@ -267,7 +267,9 @@ describe('#aggregation', () => {
   });
 
   it('should not merge parent and child contexts that differ in default cardinality', () => {
-    statsd = createHotShotsClient({ mock: true, datadog: true, aggregation: true }, 'client');
+    // originDetection off so the |c:<containerID> field does not appear on Linux
+    // (where cgroups yield a container ID) and break these exact-output assertions.
+    statsd = createHotShotsClient({ mock: true, datadog: true, originDetection: false, aggregation: true }, 'client');
     const child = statsd.childClient({ cardinality: 'high' });
     statsd.increment('agg.card');
     child.increment('agg.card');
@@ -280,7 +282,7 @@ describe('#aggregation', () => {
   });
 
   it('should merge per-call cardinality that equals the client default', () => {
-    statsd = createHotShotsClient({ mock: true, datadog: true, cardinality: 'high', aggregation: true }, 'client');
+    statsd = createHotShotsClient({ mock: true, datadog: true, originDetection: false, cardinality: 'high', aggregation: true }, 'client');
     statsd.gauge('agg.effcard', 1, { cardinality: 'high' });
     statsd.gauge('agg.effcard', 5);
     statsd.flush();
@@ -289,7 +291,7 @@ describe('#aggregation', () => {
   });
 
   it('should merge per-call cardinality that differs only in case', () => {
-    statsd = createHotShotsClient({ mock: true, datadog: true, aggregation: true }, 'client');
+    statsd = createHotShotsClient({ mock: true, datadog: true, originDetection: false, aggregation: true }, 'client');
     statsd.gauge('agg.cardcase', 1, { cardinality: 'HIGH' });
     statsd.gauge('agg.cardcase', 5, { cardinality: 'high' });
     statsd.flush();
