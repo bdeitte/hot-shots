@@ -854,6 +854,18 @@ describe('#helpersExtended', () => {
       });
     });
 
+    it('should trim surrounding whitespace from DD_DOGSTATSD_SOCKET', () => {
+      process.env.DD_DOGSTATSD_SOCKET = '  /var/run/datadog/dsd.socket  ';
+      assert.deepStrictEqual(helpers.getDogstatsdEnvTransport(), {
+        protocol: 'uds', path: '/var/run/datadog/dsd.socket',
+      });
+    });
+
+    it('should return null for a whitespace-only DD_DOGSTATSD_SOCKET', () => {
+      process.env.DD_DOGSTATSD_SOCKET = '   ';
+      assert.strictEqual(helpers.getDogstatsdEnvTransport(), null);
+    });
+
     it('should fall back to DD_DOGSTATSD_SOCKET when DD_DOGSTATSD_URL is invalid', () => {
       process.env.DD_DOGSTATSD_URL = 'unixstream:///var/run/datadog/dsd.socket';
       process.env.DD_DOGSTATSD_SOCKET = '/var/run/datadog/dsd.socket';
