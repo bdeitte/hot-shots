@@ -76,11 +76,17 @@ describe('#flush', () => {
         }, 30);
       };
       statsd.increment('drain.metric');
-      statsd.flush(() => {
-        assert.ok(sendDrained, 'flush callback fired before the unbuffered send drained');
-        done();
-      });
-      clock.tickAsync(30);
+      const flushed = new Promise(res => statsd.flush(res));
+      // Drive the fake-timer advancement and the flush completion through a single
+      // controlled promise chain so no async timer work escapes Mocha's control; any
+      // rejection (including an assertion failure) is routed to done.
+      clock.tickAsync(30).
+        then(() => flushed).
+        then(() => {
+          assert.ok(sendDrained, 'flush callback fired before the unbuffered send drained');
+          done();
+        }).
+        catch(done);
     });
   });
 
@@ -99,11 +105,14 @@ describe('#flush', () => {
         }, 30);
       };
       child.increment('drain.child');
-      statsd.flush(() => {
-        assert.ok(sendDrained, 'flush callback fired before the child-routed send drained');
-        done();
-      });
-      clock.tickAsync(30);
+      const flushed = new Promise(res => statsd.flush(res));
+      clock.tickAsync(30).
+        then(() => flushed).
+        then(() => {
+          assert.ok(sendDrained, 'flush callback fired before the child-routed send drained');
+          done();
+        }).
+        catch(done);
     });
   });
 
@@ -127,11 +136,14 @@ describe('#flush', () => {
       // Simulate the aggregation interval firing: it routes the child's send and
       // empties the contexts, so the later flush(cb) sees nothing of its own to do.
       statsd.aggregator.flush();
-      statsd.flush(() => {
-        assert.ok(sendDrained, 'flush callback fired before the interval-routed child send drained');
-        done();
-      });
-      clock.tickAsync(30);
+      const flushed = new Promise(res => statsd.flush(res));
+      clock.tickAsync(30).
+        then(() => flushed).
+        then(() => {
+          assert.ok(sendDrained, 'flush callback fired before the interval-routed child send drained');
+          done();
+        }).
+        catch(done);
     });
   });
 
