@@ -457,6 +457,18 @@ describe('#aggregation', () => {
     assert.deepStrictEqual(statsd.mockBuffer, ['agg.telegraf,route=a:3|c']);
   });
 
+  it('should merge telegraf tag forms that emit identically into one context', () => {
+    statsd = createHotShotsClient({ mock: true, telegraf: true, aggregation: true }, 'client');
+    // ['route:a'] and ['route=a'] both emit as route=a on the telegraf wire, so
+    // they must share one context; otherwise the two contexts flush in creation
+    // order and the gauge settles on the stale value (20) instead of the last (30).
+    statsd.gauge('agg.g', 10, ['route:a']);
+    statsd.gauge('agg.g', 20, ['route=a']);
+    statsd.gauge('agg.g', 30, ['route:a']);
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.g,route=a:30|g']);
+  });
+
   it('should not drop remaining contexts when one context send throws', () => {
     statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
     const originalConsoleError = console.error;
