@@ -11,6 +11,7 @@ includes many additional changes, including:
 * events
 * child clients
 * debug logging
+* client-side aggregation
 * much more, including many bug fixes
 
 You can read about all changes in [the changelog](CHANGES.md).
