@@ -3,7 +3,7 @@ CHANGELOG
 
 ## Unreleased
 
-* [@bdeitte](https://github.com/bdeitte) Fix: a gauge that bypasses aggregation (delta, NaN, timestamped, or per-call sampled) now flushes any pending same-context aggregated gauge first, so the server no longer settles on a stale aggregated value
+* [@bdeitte](https://github.com/bdeitte) Fix: a gauge that bypasses aggregation (delta, NaN, timestamped, or per-call sampled) and is actually sent now flushes any pending same-context aggregated gauge first, so the server no longer settles on a stale aggregated value; a sampled-out gauge is dropped without forcing the pending aggregate onto the wire
 * [@bdeitte](https://github.com/bdeitte) Fix: useDefaultRoute now takes precedence over DD_DOGSTATSD_URL/DD_DOGSTATSD_SOCKET env transport instead of being silently overridden
 * [@bdeitte](https://github.com/bdeitte) Support DD_TAGS / DATADOG_TAGS env vars for global tags, for better parity with official DogStatsD clients
 * [@bdeitte](https://github.com/bdeitte) Support DD_DOGSTATSD_URL and DD_DOGSTATSD_SOCKET env vars for transport configuration, for better parity with official DogStatsD clients

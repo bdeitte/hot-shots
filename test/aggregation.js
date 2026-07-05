@@ -415,6 +415,37 @@ describe('#aggregation', () => {
     assert.deepStrictEqual(statsd.mockBuffer, ['q.depth:10|g|#k:a', 'q.depth:NaN|g|#k:a']);
   });
 
+  it('should not flush a pending aggregated gauge when a per-call sampled gauge is sampled out', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('q.depth', 10);        // aggregated, held
+    const originalRandom = Math.random;
+    Math.random = () => 0.99;           // force the per-call sampled gauge to be sampled out
+    try {
+      statsd.gauge('q.depth', 7, 0.5);  // per-call sampled gauge, sampled out -> dropped
+    } finally {
+      Math.random = originalRandom;
+    }
+    // The sampled-out gauge is dropped and must NOT force the pending aggregate onto
+    // the wire — nothing is sent until the normal flush.
+    assert.deepStrictEqual(statsd.mockBuffer, []);
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer, ['q.depth:10|g']);
+  });
+
+  it('should flush a pending aggregated gauge before a sampled-in per-call gauge', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('q.depth', 10);        // aggregated, held
+    const originalRandom = Math.random;
+    Math.random = () => 0;              // force the per-call sampled gauge to be sampled in
+    try {
+      statsd.gauge('q.depth', 7, 0.5);  // per-call sampled gauge, sampled in -> sent
+    } finally {
+      Math.random = originalRandom;
+    }
+    // Sampled in: the pending absolute gauge is flushed first, then the sampled gauge.
+    assert.deepStrictEqual(statsd.mockBuffer, ['q.depth:10|g', 'q.depth:7|g|@0.5']);
+  });
+
   it('should disable aggregation for telegraf clients', () => {
     const originalConsoleError = console.error;
     console.error = () => { /* suppress expected telegraf-disable warning */ };
