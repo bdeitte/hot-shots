@@ -471,6 +471,21 @@ describe('#aggregation', () => {
     assert.deepStrictEqual(statsd.mockBuffer, ['agg.g,route=a:30|g']);
   });
 
+  it('should merge telegraf child global tags that emit identically into one context', () => {
+    statsd = createHotShotsClient({ mock: true, telegraf: true, aggregation: true }, 'client');
+    const childColon = statsd.childClient({ globalTags: ['route:a'] });
+    const childEquals = statsd.childClient({ globalTags: ['route=a'] });
+    // Both children's global tag emits as route=a on the telegraf wire, so their
+    // gauges must share one context (last value wins) rather than flushing as two
+    // separate contexts in creation order and settling on the stale value (20).
+    childColon.gauge('agg.cg', 10);
+    childEquals.gauge('agg.cg', 20);
+    childColon.gauge('agg.cg', 30);
+    statsd.flush();
+    const sent = statsd.mockBuffer.concat(childColon.mockBuffer, childEquals.mockBuffer);
+    assert.deepStrictEqual(sent, ['agg.cg,route=a:30|g']);
+  });
+
   it('should not drop remaining contexts when one context send throws', () => {
     statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
     const originalConsoleError = console.error;
