@@ -446,18 +446,15 @@ describe('#aggregation', () => {
     assert.deepStrictEqual(statsd.mockBuffer, ['q.depth:10|g', 'q.depth:7|g|@0.5']);
   });
 
-  it('should disable aggregation for telegraf clients', () => {
-    const originalConsoleError = console.error;
-    console.error = () => { /* suppress expected telegraf-disable warning */ };
-    try {
-      statsd = createHotShotsClient({ mock: true, telegraf: true, aggregation: true }, 'client');
-    } finally {
-      console.error = originalConsoleError;
-    }
-    assert.strictEqual(statsd.aggregator, null);
-    statsd.increment('agg.telegraf');
-    // No aggregation: sent immediately instead of held for a flush.
-    assert.deepStrictEqual(statsd.mockBuffer, ['agg.telegraf:1|c']);
+  it('should aggregate for telegraf clients using the telegraf tag format', () => {
+    statsd = createHotShotsClient({ mock: true, telegraf: true, aggregation: true }, 'client');
+    assert.notStrictEqual(statsd.aggregator, null);
+    statsd.increment('agg.telegraf', 1, ['route:a']);
+    statsd.increment('agg.telegraf', 2, ['route:a']);
+    // Held until flush, then summed and emitted with telegraf's inline tag format.
+    assert.deepStrictEqual(statsd.mockBuffer, []);
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.telegraf,route=a:3|c']);
   });
 
   it('should not drop remaining contexts when one context send throws', () => {

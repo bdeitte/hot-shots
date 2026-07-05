@@ -554,7 +554,7 @@ client.histogram('request_size', 1024);
 
 ## Client-side aggregation
 
-hot-shots can optionally aggregate counts, gauges and sets on the client before sending, reducing packet volume for hot metrics. It is opt-in via the `aggregation` option:
+hot-shots can optionally aggregate counts, gauges and sets on the client before sending, reducing packet volume for hot metrics. It mirrors the client-side aggregation in the official DogStatsD clients, but works for StatsD, DogStatsD and Telegraf clients alike. It is opt-in via the `aggregation` option:
 
 ```javascript
 const client = new StatsD({ aggregation: true });
@@ -567,7 +567,7 @@ When enabled, metrics are combined per context (metric type, name, per-call tags
 * Gauges keep the most recent value.
 * Sets emit each unique value once.
 
-The following always bypass aggregation and are sent immediately: histograms, distributions, timings, events and service checks, plus any count/gauge/set that uses a *per-call* sample rate, a timestamp, a delta gauge (`+`/`-` value), or a `NaN` value. A client-level default `sampleRate` does **not** disable aggregation. Child clients share the parent's aggregator instance; clients that differ in their global tags or default cardinality aggregate into separate contexts. Aggregation is a DogStatsD feature and is disabled for `telegraf` clients.
+The following always bypass aggregation and are sent immediately: histograms, distributions, timings, events and service checks, plus any count/gauge/set that uses a *per-call* sample rate, a timestamp, a delta gauge (`+`/`-` value), or a `NaN` value. A client-level default `sampleRate` does **not** disable aggregation. Child clients share the parent's aggregator instance; clients that differ in their global tags or default cardinality aggregate into separate contexts.
 
 The per-metric callback fires synchronously when a metric is aggregated, as a "queued" signal (the same way buffered mode behaves).
 
