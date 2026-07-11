@@ -3,7 +3,6 @@ CHANGELOG
 
 ## Unreleased
 
-* [@bdeitte](https://github.com/bdeitte) Add `NODE_DEBUG=hot-shots` debug logging at key points in the aggregator (init, record, flushContext), matching the logging in the main client
 * [@bdeitte](https://github.com/bdeitte) Add opt-in client-side aggregation of counts, gauges and sets via the `aggregation` option, for better parity with official DogStatsD clients but also for use with any StatsD, DogStatsD or Telegraf client. This includes an aggregation `maxContexts` option (default 5000) bounding the number of live aggregation contexts; new contexts beyond the cap are sent directly with a one-time warning.
 * [@bdeitte](https://github.com/bdeitte) Add a public `flush()` method to send buffered metrics (and any pending aggregated metrics) immediately, useful for serverless and other short-lived environments
 * [@bdeitte](https://github.com/bdeitte) Support DD_TAGS / DATADOG_TAGS env vars for global tags, for better parity with official DogStatsD clients

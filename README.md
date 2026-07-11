@@ -576,7 +576,7 @@ To bound memory, at most `maxContexts` (default 5000) distinct contexts are held
 
 ### Flushing buffered metrics
 
-`flush([callback])` sends any buffered metrics to the transport immediately, without waiting for the `bufferFlushInterval`. With [client-side aggregation](#client-side-aggregation) enabled, pending aggregated metrics are flushed into the buffer first. This is useful in serverless and other short-lived environments where you want to ensure metrics are sent before the process freezes or exits.
+`flush([callback])` sends any buffered metrics to the transport immediately, without waiting for the `bufferFlushInterval`. With client-side-aggregation enabled, pending aggregated metrics are flushed into the buffer first. This is useful in serverless and other short-lived environments where you want to ensure metrics are sent before the process freezes or exits.
 
 ```javascript
 client.increment('my.metric');
