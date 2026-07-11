@@ -208,4 +208,28 @@ describe('#flush', () => {
       });
     });
   });
+
+  it('should propagate a transport send error to the flush callback', done => {
+    server = createServer('udp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, {
+        maxBufferSize: 8192,
+        bufferFlushInterval: 60000,
+      }), 'client');
+      statsd.increment('err.metric');
+      // Make the buffered payload's transport send fail.
+      statsd.socket.send = (buf, cb) => {
+        cb(new Error('send failed'));
+      };
+      statsd.flush(err => {
+        try {
+          assert.ok(err, 'flush callback did not receive the transport error');
+          // sendMessage wraps transport errors; the original message must survive.
+          assert.ok(err.message.indexOf('send failed') !== -1);
+          done();
+        } catch (assertErr) {
+          done(assertErr);
+        }
+      });
+    });
+  });
 });
