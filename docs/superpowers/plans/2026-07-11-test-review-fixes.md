@@ -308,10 +308,18 @@ In `should track a child client whose set send starts before a later value throw
       throw new Error('boom on second set value');
     };
     statsd.aggregator.flush();
-    assert.ok(consoleError.calledOnce, 'the throwing set value should be logged exactly once');
+    // Capture only — assert after the failure-safe reset below, so a logging
+    // assertion failure cannot skip the cleanup Task 2 established.
+    const loggedOnce = consoleError.calledOnce;
 ```
 
-(The capture/reset/assert tail from Task 2 stays unchanged after this.)
+Then in the Task 2 capture/reset/assert tail, add the logging assertion **after** the reset, next to the existing `trackedChild` assertion:
+
+```js
+    assert.ok(trackedChild,
+      'partially-sent context did not track its in-flight child client');
+    assert.ok(loggedOnce, 'the throwing set value should be logged exactly once');
+```
 
 - [ ] **Step 7: Run the aggregation file**
 
