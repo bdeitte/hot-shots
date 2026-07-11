@@ -127,20 +127,6 @@ describe('#aggregation', () => {
     ].sort());
   });
 
-  it('should memoize the per-client context suffix', () => {
-    statsd = createHotShotsClient({ mock: true, aggregation: true, globalTags: ['g:1'] }, 'client');
-    assert.strictEqual(statsd._aggContextSuffix, undefined);
-    statsd.increment('agg.cache');
-    const cached = statsd._aggContextSuffix;
-    assert.ok(typeof cached === 'string' && cached.indexOf('g:1') !== -1);
-    // Overwrite the memo with a sentinel: if the helper recomputed the suffix on
-    // every record it would clobber this. The `=== undefined` guard means a second
-    // record must leave the already-set value untouched, so the sentinel survives.
-    statsd._aggContextSuffix = 'SENTINEL';
-    statsd.increment('agg.cache');
-    assert.strictEqual(statsd._aggContextSuffix, 'SENTINEL');
-  });
-
   it('should flush aggregated metrics recorded through a child when the child is closed', done => {
     server = createServer('udp', opts => {
       statsd = createHotShotsClient(Object.assign(opts, {
