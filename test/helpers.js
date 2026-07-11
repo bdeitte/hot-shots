@@ -809,6 +809,16 @@ describe('#helpersExtended', () => {
     it('should return null for empty unix path', () => {
       assert.strictEqual(helpers.parseDogstatsdUrl('unix://'), null);
     });
+
+    it('should return null for port 0', () => {
+      assert.strictEqual(helpers.parseDogstatsdUrl('udp://host:0'), null);
+    });
+
+    it('should parse bracketed IPv6 udp url without port using the default port', () => {
+      assert.deepStrictEqual(helpers.parseDogstatsdUrl('udp://[::1]'), {
+        protocol: 'udp', host: '::1', port: 8125,
+      });
+    });
   });
 
   describe('#getDogstatsdEnvTransport', () => {
