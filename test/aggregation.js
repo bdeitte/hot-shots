@@ -525,4 +525,101 @@ describe('#aggregation', () => {
       'partially-sent context did not track its in-flight child client');
     assert.ok(loggedOnce, 'the throwing set value should be logged exactly once');
   });
+
+  it('should aggregate a metric with an explicit per-call sample rate of 1', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.increment('agg.rateone', 1, 1);
+    statsd.increment('agg.rateone', 2, 1);
+    // A per-call rate of exactly 1 means "unsampled" and must still aggregate;
+    // only an explicit rate < 1 bypasses aggregation.
+    assert.deepStrictEqual(statsd.mockBuffer, []);
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.rateone:3|c']);
+  });
+
+  it('should surface a flushContext send error without dropping the bypassing gauge', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('agg.fcerr', 10);        // aggregated, held
+    const consoleError = sinon.stub(console, 'error');
+    const realSend = statsd.send.bind(statsd);
+    let threwOnce = false;
+    statsd.send = (message, tags, cardinality, cb) => {
+      if (!threwOnce && message.indexOf('agg.fcerr:10') === 0) {
+        threwOnce = true;
+        throw new Error('boom');
+      }
+      return realSend(message, tags, cardinality, cb);
+    };
+    // The delta gauge bypasses aggregation and triggers flushContext of the
+    // pending 10, whose send throws; the error must be logged and the delta
+    // must still reach the wire.
+    statsd.gaugeDelta('agg.fcerr', 2);
+    assert.ok(consoleError.calledOnce, 'the flushContext throw should be logged exactly once');
+    assert.ok(consoleError.firstCall.args[0].indexOf('flushContext send threw') !== -1,
+      'warning should identify the flushContext send');
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.fcerr:+2|g']);
+  });
+
+  it('should route the overflow signal through errorHandler when set', () => {
+    const errors = [];
+    statsd = createHotShotsClient({
+      mock: true,
+      aggregation: { maxContexts: 1 },
+      errorHandler: err => { errors.push(err); },
+    }, 'client');
+    statsd.increment('agg.ehcap', 1, ['k:a']);
+    statsd.increment('agg.ehcap', 1, ['k:b']); // new context over cap
+    assert.strictEqual(errors.length, 1);
+    assert.ok(errors[0].message.indexOf('aggregation context limit (1) reached') !== -1,
+      'errorHandler should receive the overflow message');
+  });
+
+  it('should route a flush send error through errorHandler when set', () => {
+    const errors = [];
+    statsd = createHotShotsClient({
+      mock: true,
+      aggregation: true,
+      errorHandler: err => { errors.push(err); },
+    }, 'client');
+    statsd.gauge('agg.eh', 1);
+    statsd.send = () => { throw new Error('boom'); };
+    statsd.flush();
+    assert.strictEqual(errors.length, 1);
+    assert.strictEqual(errors[0].message, 'boom');
+  });
+
+  it('should keep tracking a client across consecutive in-flight sends until fully drained', done => {
+    statsd = createHotShotsClient({ mock: true, aggregation: { flushInterval: 60000 } }, 'client');
+    // Simulate a send in flight whose drain resolves while a second send is
+    // already in flight: trackActive's recheck must follow the new drain promise
+    // rather than pruning early, and prune only once the client fully drains.
+    let resolveFirst;
+    let resolveSecond;
+    statsd.messagesInFlight = 1;
+    statsd.drainPromise = new Promise(resolve => { resolveFirst = resolve; });
+    statsd.aggregator.trackActive(statsd);
+    const trackedInitially = statsd.aggregator.activeClients.has(statsd);
+    // First drain resolves, but a second send is already in flight.
+    statsd.drainPromise = new Promise(resolve => { resolveSecond = resolve; });
+    resolveFirst();
+    setImmediate(() => {
+      const stillTracked = statsd.aggregator.activeClients.has(statsd);
+      // Fully drain, resetting the simulated state before the assertions so a
+      // failure cannot leave afterEach's close() waiting on a pending drain.
+      statsd.messagesInFlight = 0;
+      statsd.drainPromise = null;
+      resolveSecond();
+      setImmediate(() => {
+        const prunedAfterDrain = !statsd.aggregator.activeClients.has(statsd);
+        try {
+          assert.ok(trackedInitially, 'client with an in-flight send was not tracked');
+          assert.ok(stillTracked, 'client was pruned while a later send was still in flight');
+          assert.ok(prunedAfterDrain, 'client was not pruned after fully draining');
+          done();
+        } catch (err) {
+          done(err);
+        }
+      });
+    });
+  });
 });
