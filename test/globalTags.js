@@ -407,4 +407,11 @@ describe('#DD_TAGS env var', () => {
     // its documented precedence and wins over a child's explicit override.
     assert.deepStrictEqual(child.globalTags, ['env:prod']);
   });
+
+  it('should prefer DD_TAGS over DATADOG_TAGS when both are set', () => {
+    process.env.DD_TAGS = 'source:ddtags';
+    process.env.DATADOG_TAGS = 'source:legacy';
+    statsd = createHotShotsClient({ mock: true }, 'client');
+    assert.deepStrictEqual(statsd.globalTags, ['source:ddtags']);
+  });
 });
