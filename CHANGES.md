@@ -1,7 +1,7 @@
 CHANGELOG
 =========
 
-## Unreleased
+## 17.0.0 (2026-7-11)
 
 * [@bdeitte](https://github.com/bdeitte) Add opt-in client-side aggregation of counts, gauges and sets via the `aggregation` option, for better parity with official DogStatsD clients but also for use with any StatsD, DogStatsD or Telegraf client. This includes an aggregation `maxContexts` option (default 5000) bounding the number of live aggregation contexts; new contexts beyond the cap are sent directly with a one-time warning.
 * [@bdeitte](https://github.com/bdeitte) Add a public `flush()` method to send buffered metrics (and any pending aggregated metrics) immediately, useful for serverless and other short-lived environments
