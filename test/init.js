@@ -90,6 +90,16 @@ describe('#init', () => {
     assert.strictEqual(statsd.port, 8125);
   });
 
+  it('should prefer an explicit port option over DD_DOGSTATSD_URL', () => {
+    process.env.DD_DOGSTATSD_URL = 'udp://urlhost:4321';
+    statsd = createHotShotsClient({ mock: true, port: 1234 }, clientType);
+    // Any explicit transport option disables the env transport entirely: the
+    // URL's host must not leak in alongside the explicit port.
+    assert.strictEqual(statsd.port, 1234);
+    assert.strictEqual(statsd.host, undefined);
+    assert.strictEqual(statsd.protocol, 'udp');
+  });
+
   it('should ignore DD_DOGSTATSD_URL with unsupported scheme', () => {
     process.env.DD_DOGSTATSD_URL = 'unixstream:///var/run/test/dsd.socket';
     statsd = createHotShotsClient({ mock: true }, clientType);
