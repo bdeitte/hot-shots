@@ -132,7 +132,7 @@ Precedence is: explicit transport options > `DD_DOGSTATSD_URL` > `DD_DOGSTATSD_S
 * `originDetection`: When in Datadog mode, auto-detect the container ID from cgroups and send it as `|c:` for [origin detection](https://docs.datadoghq.com/developers/dogstatsd/?tab=kubernetes#origin-detection-over-udp). Respects `DD_ORIGIN_DETECTION_ENABLED`. Linux only. `default: true in datadog mode`
 * `containerID`: Manually set the container ID (skips cgroup parsing). Only used in Datadog mode. `default: undefined`
 * `cardinality`: Client-wide default tag cardinality sent as `|card:` — one of `none`, `low`, `orchestrator`, `high`. Falls back to the `DD_CARDINALITY` / `DATADOG_CARDINALITY` env var. Only used in Datadog mode. `default: undefined`
-* `aggregation`: Opt in to client-side aggregation of counts, gauges and sets before sending, reducing packet volume for hot metrics. Pass `true` to enable with defaults, or an object `{ flushInterval, maxContexts }` to configure the flush interval (ms, `default: 2000`) and the max distinct contexts held per flush window (`default: 5000`). `default: false`. See [Client-side aggregation](#client-side-aggregation) for details.
+* `aggregation`: Enable client-side aggregation of counts, gauges and sets before sending, reducing packet volume for hot metrics. Pass `true` to enable with defaults, or an object `{ flushInterval, maxContexts }` to configure the flush interval (ms, `default: 2000`) and the max distinct contexts held per flush window (`default: 5000`). `default: false`. See [Client-side aggregation](#client-side-aggregation) for details.
 
 ### StatsD methods
 All StatsD methods other than `event`, `close`, and `check` have the same API:
