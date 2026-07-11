@@ -1,0 +1,625 @@
+const assert = require('assert');
+const helpers = require('./helpers/helpers.js');
+const sinon = require('sinon');
+
+const closeAll = helpers.closeAll;
+const createServer = helpers.createServer;
+const createHotShotsClient = helpers.createHotShotsClient;
+
+describe('#aggregation', () => {
+  let server;
+  let statsd;
+  let clock;
+
+  afterEach(done => {
+    if (clock) {
+      clock.restore();
+      clock = null;
+    }
+    sinon.restore();
+    closeAll(server, statsd, false, done);
+    server = null;
+    statsd = null;
+  });
+
+  it('should sum counts for the same context', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.increment('agg.count');
+    statsd.increment('agg.count', 2);
+    statsd.decrement('agg.count');
+    assert.deepStrictEqual(statsd.mockBuffer, []);
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.count:2|c']);
+  });
+
+  it('should keep the last gauge value', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('agg.gauge', 1);
+    statsd.gauge('agg.gauge', 5);
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.gauge:5|g']);
+  });
+
+  it('should send each unique set value once', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.set('agg.set', 'a');
+    statsd.set('agg.set', 'a');
+    statsd.set('agg.set', 'b');
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer.sort(), ['agg.set:a|s', 'agg.set:b|s']);
+  });
+
+  it('should keep different tags in different contexts', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.increment('agg.count', 1, ['route:a']);
+    statsd.increment('agg.count', 1, ['route:b']);
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer.sort(), [
+      'agg.count:1|c|#route:a',
+      'agg.count:1|c|#route:b',
+    ]);
+  });
+
+  it('should not be affected by mutating the tags array after recording', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    const tags = ['route:a'];
+    statsd.increment('agg.count', 1, tags);
+    tags[0] = 'route:mutated';
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.count:1|c|#route:a']);
+  });
+
+  it('should not aggregate a metric with an explicit per-call sample rate < 1', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    const originalRandom = Math.random;
+    Math.random = () => 0;  // deterministically sample the metric in
+    try {
+      statsd.increment('agg.sampled', 1, 0.9999);
+    } finally {
+      Math.random = originalRandom;
+    }
+    // Sent immediately with the sample-rate marker rather than held for flush.
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.sampled:1|c|@0.9999']);
+    statsd.flush();
+    // Nothing was aggregated: flushing adds no unsampled duplicate.
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.sampled:1|c|@0.9999']);
+  });
+
+  it('should not aggregate delta gauges', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gaugeDelta('agg.gauge', 5);
+    statsd.gaugeDelta('agg.gauge', -2);
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.gauge:+5|g', 'agg.gauge:-2|g']);
+  });
+
+  it('should not aggregate timestamped metrics', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.increment('agg.ts', 1, { timestamp: 1700000000 });
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.ts:1|c|T1700000000']);
+  });
+
+  it('should not aggregate histograms or timings', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.histogram('agg.h', 5);
+    statsd.timing('agg.t', 10);
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.h:5|h', 'agg.t:10|ms']);
+  });
+
+  it('should invoke the metric callback synchronously when aggregated', done => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.increment('agg.cb', 1, err => {
+      assert.ok(!err);
+      done();
+    });
+  });
+
+  it('should aggregate separately for child clients with different global tags', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true, globalTags: ['parent:tag'] }, 'client');
+    const child = statsd.childClient({ globalTags: ['child:tag'] });
+    statsd.increment('agg.count');
+    child.increment('agg.count');
+    // Parent and child mock clients each have their own mockBuffer; flushing the
+    // shared aggregator sends each context through its recording client.
+    statsd.flush();
+    const sent = statsd.mockBuffer.concat(child.mockBuffer).sort();
+    assert.deepStrictEqual(sent, [
+      'agg.count:1|c|#parent:tag',
+      'agg.count:1|c|#parent:tag,child:tag',
+    ].sort());
+  });
+
+  it('should flush aggregated metrics recorded through a child when the child is closed', done => {
+    server = createServer('udp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, {
+        aggregation: { flushInterval: 60000 },
+      }), 'client');
+      const child = statsd.childClient({});
+      child.increment('agg.childclose', 4);
+      child.close();
+    });
+    server.on('metrics', metrics => {
+      assert.strictEqual(metrics, 'agg.childclose:4|c');
+      done();
+    });
+  });
+
+  it('should flush child-recorded aggregated metrics when the parent is closed', done => {
+    server = createServer('udp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, {
+        aggregation: { flushInterval: 60000 },
+      }), 'client');
+      const child = statsd.childClient({});
+      child.increment('agg.parentclose', 7);
+      statsd.close();
+      statsd = null;
+    });
+    server.on('metrics', metrics => {
+      assert.strictEqual(metrics, 'agg.parentclose:7|c');
+      done();
+    });
+  });
+
+  it('should flush on the aggregation interval', () => {
+    clock = sinon.useFakeTimers();
+    statsd = createHotShotsClient({
+      mock: true,
+      aggregation: { flushInterval: 25 },
+    }, 'client');
+    statsd.increment('agg.interval');
+    clock.tick(25);
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.interval:1|c']);
+  });
+
+  it('should flush aggregated metrics on close', done => {
+    server = createServer('udp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, {
+        aggregation: { flushInterval: 60000 },
+      }), 'client');
+      statsd.increment('agg.close', 3);
+      statsd.close();
+      statsd = null;
+    });
+    server.on('metrics', metrics => {
+      assert.strictEqual(metrics, 'agg.close:3|c');
+      done();
+    });
+  });
+
+  it('should still aggregate when the client default sampleRate is < 1', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true, sampleRate: 0.5 }, 'client');
+    statsd.increment('agg.defaultrate');
+    statsd.increment('agg.defaultrate');
+    // A client-level default sampleRate must not disable aggregation entirely;
+    // only an explicit per-call sample rate bypasses it.
+    assert.deepStrictEqual(statsd.mockBuffer, []);
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.defaultrate:2|c']);
+  });
+
+  it('should not aggregate NaN counts into the context sum', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.increment('agg.nan', NaN);
+    statsd.increment('agg.nan', 3);
+    statsd.flush();
+    // The NaN value passes through unaggregated rather than poisoning the sum.
+    assert.deepStrictEqual(statsd.mockBuffer.sort(), ['agg.nan:3|c', 'agg.nan:NaN|c'].sort());
+  });
+
+  it('should treat object tags differing only in key order as one context', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('agg.objorder', 1, { a: '1', b: '2' });
+    statsd.gauge('agg.objorder', 5, { b: '2', a: '1' });
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.objorder:5|g|#a:1,b:2']);
+  });
+
+  it('should treat array tags differing only in order as one context', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('agg.arrorder', 1, ['a:1', 'b:2']);
+    statsd.gauge('agg.arrorder', 5, ['b:2', 'a:1']);
+    statsd.gauge('agg.arrorder', 2, ['a:1', 'b:2']);
+    statsd.flush();
+    // One Datadog series: the final recorded value (2) must win, not a stale 5.
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.arrorder:2|g|#a:1,b:2']);
+  });
+
+  it('should treat object tags with equal String() forms as one context', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('agg.strform', 1, { a: 1 });
+    statsd.gauge('agg.strform', 5, { a: '1' });
+    statsd.flush();
+    // 1 and '1' both emit as a:1, so they must aggregate into one gauge (last wins).
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.strform:5|g|#a:1']);
+  });
+
+  it('should not merge object tags whose value is undefined vs null', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('agg.undefnull', 1, { a: undefined });
+    statsd.gauge('agg.undefnull', 2, { a: null });
+    statsd.flush();
+    // These emit different tags (a:undefined vs a:null), so they must stay in
+    // separate contexts rather than collapsing into one gauge value.
+    assert.strictEqual(statsd.mockBuffer.length, 2);
+  });
+
+  it('should not merge object tags whose values are different non-finite numbers', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('agg.nonfinite', 1, { a: NaN });
+    statsd.gauge('agg.nonfinite', 2, { a: Infinity });
+    statsd.gauge('agg.nonfinite', 3, { a: -Infinity });
+    statsd.flush();
+    // NaN, Infinity and -Infinity emit as different tags (a:NaN, a:Infinity,
+    // a:-Infinity), so they must stay in separate contexts rather than collapsing
+    // into one gauge value. JSON.stringify alone would convert all three to null.
+    assert.deepStrictEqual(statsd.mockBuffer.sort(), [
+      'agg.nonfinite:1|g|#a:NaN',
+      'agg.nonfinite:2|g|#a:Infinity',
+      'agg.nonfinite:3|g|#a:-Infinity',
+    ].sort());
+  });
+
+  it('should not merge parent and child contexts that differ in default cardinality', () => {
+    // originDetection off so the |c:<containerID> field does not appear on Linux
+    // (where cgroups yield a container ID) and break these exact-output assertions.
+    statsd = createHotShotsClient({ mock: true, datadog: true, originDetection: false, aggregation: true }, 'client');
+    const child = statsd.childClient({ cardinality: 'high' });
+    statsd.increment('agg.card');
+    child.increment('agg.card');
+    statsd.flush();
+    const sent = statsd.mockBuffer.concat(child.mockBuffer).sort();
+    assert.deepStrictEqual(sent, [
+      'agg.card:1|c',
+      'agg.card:1|c|card:high',
+    ].sort());
+  });
+
+  it('should merge per-call cardinality that equals the client default', () => {
+    statsd = createHotShotsClient({ mock: true, datadog: true, originDetection: false, cardinality: 'high', aggregation: true }, 'client');
+    statsd.gauge('agg.effcard', 1, { cardinality: 'high' });
+    statsd.gauge('agg.effcard', 5);
+    statsd.flush();
+    // Per-call 'high' and the default 'high' emit identically, so one context (last wins).
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.effcard:5|g|card:high']);
+  });
+
+  it('should merge per-call cardinality that differs only in case', () => {
+    statsd = createHotShotsClient({ mock: true, datadog: true, originDetection: false, aggregation: true }, 'client');
+    statsd.gauge('agg.cardcase', 1, { cardinality: 'HIGH' });
+    statsd.gauge('agg.cardcase', 5, { cardinality: 'high' });
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.cardcase:5|g|card:high']);
+  });
+
+  it('should ignore per-call cardinality for context keying in non-datadog mode', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('agg.nocard', 1, { cardinality: 'high' });
+    statsd.gauge('agg.nocard', 5, { cardinality: 'low' });
+    statsd.flush();
+    // Cardinality is never emitted outside datadog mode, so these are one context.
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.nocard:5|g']);
+  });
+
+  it('should reject an invalid aggregation flushInterval and use the default', () => {
+    const consoleError = sinon.stub(console, 'error');
+    statsd = createHotShotsClient({ mock: true, aggregation: { flushInterval: -5 } }, 'client');
+    assert.strictEqual(statsd.aggregator.flushInterval, 2000);
+    assert.ok(consoleError.calledOnce, 'expected exactly one validation warning');
+    assert.ok(consoleError.firstCall.args[0].indexOf('aggregation.flushInterval') !== -1,
+      'warning should name the rejected option');
+  });
+
+  it('should track only clients with in-flight routed sends, pruning once drained', done => {
+    server = createServer('udp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, {
+        maxBufferSize: 0,
+        aggregation: { flushInterval: 60000 },
+      }), 'client');
+      const child = statsd.childClient({ globalTags: ['c:1'] });
+      // Defer the routed send so it is genuinely in flight after the flush.
+      let resolveSend;
+      statsd.socket.send = (buf, cb) => {
+        resolveSend = cb;
+      };
+      child.increment('agg.routed');
+      // Simulate an interval-driven flush (no arguments). The child's send is in
+      // flight, so it is tracked.
+      statsd.aggregator.flush();
+      assert.ok(statsd.aggregator.activeClients.has(child));
+      // Completing the send drains the child, which must prune it from the set.
+      resolveSend();
+      setImmediate(() => {
+        assert.ok(!statsd.aggregator.activeClients.has(child));
+        done();
+      });
+    });
+  });
+
+  it('should not silently aggregate metrics recorded after close', done => {
+    statsd = createHotShotsClient({ mock: true, aggregation: { flushInterval: 60000 } }, 'client');
+    const child = statsd.childClient({});
+    statsd.close(() => {
+      assert.strictEqual(statsd.aggregator.closed, true);
+      child.increment('agg.postclose', 1);
+      // The post-close record goes straight through the send path rather than
+      // landing in a window that will never flush.
+      assert.strictEqual(statsd.aggregator.contexts.size, 0);
+      assert.deepStrictEqual(child.mockBuffer, ['agg.postclose:1|c']);
+      statsd = null;
+      done();
+    });
+  });
+
+  it('should fall through to direct send once the context cap is reached', () => {
+    const consoleError = sinon.stub(console, 'error');
+    statsd = createHotShotsClient({ mock: true, aggregation: { maxContexts: 2 } }, 'client');
+    statsd.gauge('agg.cap', 1, ['k:a']); // context 1 (aggregated)
+    statsd.gauge('agg.cap', 2, ['k:b']); // context 2 (aggregated)
+    statsd.gauge('agg.cap', 3, ['k:c']); // new -> over cap -> direct send now
+    statsd.gauge('agg.cap', 4, ['k:c']); // still over cap -> direct send now
+    // The two over-cap gauges were sent immediately (not held for flush).
+    assert.deepStrictEqual(statsd.mockBuffer, [
+      'agg.cap:3|g|#k:c',
+      'agg.cap:4|g|#k:c',
+    ]);
+    assert.strictEqual(consoleError.callCount, 1, 'overflow should signal exactly once');
+    // The two under-cap contexts still flush normally.
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer.slice(2).sort(), [
+      'agg.cap:1|g|#k:a',
+      'agg.cap:2|g|#k:b',
+    ].sort());
+  });
+
+  it('should still update an existing context when at the cap', () => {
+    const consoleError = sinon.stub(console, 'error');
+    statsd = createHotShotsClient({ mock: true, aggregation: { maxContexts: 1 } }, 'client');
+    statsd.increment('agg.capexisting', 1, ['k:a']);
+    statsd.increment('agg.capexisting', 2, ['k:a']); // same context: still aggregates
+    statsd.increment('agg.capexisting', 9, ['k:b']); // new over cap: direct send
+    assert.strictEqual(consoleError.callCount, 1, 'overflow should signal exactly once');
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.capexisting:9|c|#k:b']);
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.capexisting:9|c|#k:b', 'agg.capexisting:3|c|#k:a']);
+  });
+
+  it('should flush a pending aggregated gauge before a bypassing delta gauge', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('q.depth', 10);        // aggregated, held
+    statsd.gaugeDelta('q.depth', 2);    // bypasses; must not land before the 10
+    // The absolute gauge must be emitted before the delta so the server ends at 12.
+    assert.deepStrictEqual(statsd.mockBuffer, ['q.depth:10|g', 'q.depth:+2|g']);
+  });
+
+  it('should flush a pending aggregated gauge before a bypassing NaN gauge on the same context', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('q.depth', 10, ['k:a']);
+    statsd.gauge('q.depth', NaN, ['k:a']);
+    assert.deepStrictEqual(statsd.mockBuffer, ['q.depth:10|g|#k:a', 'q.depth:NaN|g|#k:a']);
+  });
+
+  it('should not flush a pending aggregated gauge when a per-call sampled gauge is sampled out', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('q.depth', 10);        // aggregated, held
+    const originalRandom = Math.random;
+    Math.random = () => 0.99;           // force the per-call sampled gauge to be sampled out
+    try {
+      statsd.gauge('q.depth', 7, 0.5);  // per-call sampled gauge, sampled out -> dropped
+    } finally {
+      Math.random = originalRandom;
+    }
+    // The sampled-out gauge is dropped and must NOT force the pending aggregate onto
+    // the wire — nothing is sent until the normal flush.
+    assert.deepStrictEqual(statsd.mockBuffer, []);
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer, ['q.depth:10|g']);
+  });
+
+  it('should flush a pending aggregated gauge before a sampled-in per-call gauge', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('q.depth', 10);        // aggregated, held
+    const originalRandom = Math.random;
+    Math.random = () => 0;              // force the per-call sampled gauge to be sampled in
+    try {
+      statsd.gauge('q.depth', 7, 0.5);  // per-call sampled gauge, sampled in -> sent
+    } finally {
+      Math.random = originalRandom;
+    }
+    // Sampled in: the pending absolute gauge is flushed first, then the sampled gauge.
+    assert.deepStrictEqual(statsd.mockBuffer, ['q.depth:10|g', 'q.depth:7|g|@0.5']);
+  });
+
+  it('should aggregate for telegraf clients using the telegraf tag format', () => {
+    statsd = createHotShotsClient({ mock: true, telegraf: true, aggregation: true }, 'client');
+    assert.notStrictEqual(statsd.aggregator, null);
+    statsd.increment('agg.telegraf', 1, ['route:a']);
+    statsd.increment('agg.telegraf', 2, ['route:a']);
+    // Held until flush, then summed and emitted with telegraf's inline tag format.
+    assert.deepStrictEqual(statsd.mockBuffer, []);
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.telegraf,route=a:3|c']);
+  });
+
+  it('should merge telegraf tag forms that emit identically into one context', () => {
+    statsd = createHotShotsClient({ mock: true, telegraf: true, aggregation: true }, 'client');
+    // ['route:a'] and ['route=a'] both emit as route=a on the telegraf wire, so
+    // they must share one context; otherwise the two contexts flush in creation
+    // order and the gauge settles on the stale value (20) instead of the last (30).
+    statsd.gauge('agg.g', 10, ['route:a']);
+    statsd.gauge('agg.g', 20, ['route=a']);
+    statsd.gauge('agg.g', 30, ['route:a']);
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.g,route=a:30|g']);
+  });
+
+  it('should merge telegraf child global tags that emit identically into one context', () => {
+    statsd = createHotShotsClient({ mock: true, telegraf: true, aggregation: true }, 'client');
+    const childColon = statsd.childClient({ globalTags: ['route:a'] });
+    const childEquals = statsd.childClient({ globalTags: ['route=a'] });
+    // Both children's global tag emits as route=a on the telegraf wire, so their
+    // gauges must share one context (last value wins) rather than flushing as two
+    // separate contexts in creation order and settling on the stale value (20).
+    childColon.gauge('agg.cg', 10);
+    childEquals.gauge('agg.cg', 20);
+    childColon.gauge('agg.cg', 30);
+    statsd.flush();
+    const sent = statsd.mockBuffer.concat(childColon.mockBuffer, childEquals.mockBuffer);
+    assert.deepStrictEqual(sent, ['agg.cg,route=a:30|g']);
+  });
+
+  it('should not drop remaining contexts when one context send throws', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    const consoleError = sinon.stub(console, 'error');
+    statsd.gauge('agg.throws', 1, ['k:a']);
+    statsd.gauge('agg.ok', 2, ['k:b']);
+    // Make the first context's send throw; the second must still be sent.
+    const realSend = statsd.send.bind(statsd);
+    let threwOnce = false;
+    statsd.send = (message, tags, cardinality, cb) => {
+      if (!threwOnce && message.indexOf('agg.throws') === 0) {
+        threwOnce = true;
+        throw new Error('boom');
+      }
+      return realSend(message, tags, cardinality, cb);
+    };
+    statsd.flush();
+    assert.ok(statsd.mockBuffer.some(m => m.indexOf('agg.ok:2|g') === 0),
+      'a throwing context aborted the flush and dropped the remaining context');
+    assert.ok(consoleError.calledOnce, 'the throwing context should be logged exactly once');
+    assert.ok(consoleError.firstCall.args[0].indexOf('aggregator flush send threw') !== -1,
+      'warning should identify the aggregator flush send');
+  });
+
+  it('should track a child client whose set send starts before a later value throws', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: { flushInterval: 60000 } }, 'client');
+    const child = statsd.childClient({ globalTags: ['c:1'] });
+    // Record a set with two values so sendContext iterates twice.
+    child.set('agg.partialset', 'a');
+    child.set('agg.partialset', 'b');
+    const consoleError = sinon.stub(console, 'error');
+    // Simulate the first value going in flight (drainPromise + messagesInFlight)
+    // and the second value's send throwing synchronously.
+    let calls = 0;
+    child.send = () => {
+      calls += 1;
+      if (calls === 1) {
+        child.messagesInFlight = 1;
+        child.drainPromise = new Promise(() => { /* stays pending */ });
+        return;
+      }
+      throw new Error('boom on second set value');
+    };
+    statsd.aggregator.flush();
+    // Capture only — assert after the failure-safe reset below, so a logging
+    // assertion failure cannot skip the cleanup Task 2 established.
+    const loggedOnce = consoleError.calledOnce;
+    // Capture the observation, then reset the simulated in-flight state BEFORE
+    // asserting: on assertion failure the reset must still have run, or
+    // afterEach's close() waits on a never-resolving drain and force-closes.
+    const trackedChild = statsd.aggregator.activeClients.has(child);
+    child.messagesInFlight = 0;
+    child.drainPromise = null;
+    statsd.aggregator.activeClients.delete(child);
+    // Even though the second value threw, the child had a send in flight from the
+    // first value, so it must be tracked for close()/flush() to wait on it.
+    assert.ok(trackedChild,
+      'partially-sent context did not track its in-flight child client');
+    assert.ok(loggedOnce, 'the throwing set value should be logged exactly once');
+  });
+
+  it('should aggregate a metric with an explicit per-call sample rate of 1', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.increment('agg.rateone', 1, 1);
+    statsd.increment('agg.rateone', 2, 1);
+    // A per-call rate of exactly 1 means "unsampled" and must still aggregate;
+    // only an explicit rate < 1 bypasses aggregation.
+    assert.deepStrictEqual(statsd.mockBuffer, []);
+    statsd.flush();
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.rateone:3|c']);
+  });
+
+  it('should surface a flushContext send error without dropping the bypassing gauge', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    statsd.gauge('agg.fcerr', 10);        // aggregated, held
+    const consoleError = sinon.stub(console, 'error');
+    const realSend = statsd.send.bind(statsd);
+    let threwOnce = false;
+    statsd.send = (message, tags, cardinality, cb) => {
+      if (!threwOnce && message.indexOf('agg.fcerr:10') === 0) {
+        threwOnce = true;
+        throw new Error('boom');
+      }
+      return realSend(message, tags, cardinality, cb);
+    };
+    // The delta gauge bypasses aggregation and triggers flushContext of the
+    // pending 10, whose send throws; the error must be logged and the delta
+    // must still reach the wire.
+    statsd.gaugeDelta('agg.fcerr', 2);
+    assert.ok(consoleError.calledOnce, 'the flushContext throw should be logged exactly once');
+    assert.ok(consoleError.firstCall.args[0].indexOf('flushContext send threw') !== -1,
+      'warning should identify the flushContext send');
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.fcerr:+2|g']);
+  });
+
+  it('should route the overflow signal through errorHandler when set', () => {
+    const errors = [];
+    statsd = createHotShotsClient({
+      mock: true,
+      aggregation: { maxContexts: 1 },
+      errorHandler: err => { errors.push(err); },
+    }, 'client');
+    statsd.increment('agg.ehcap', 1, ['k:a']);
+    statsd.increment('agg.ehcap', 1, ['k:b']); // new context over cap
+    assert.strictEqual(errors.length, 1);
+    assert.ok(errors[0].message.indexOf('aggregation context limit (1) reached') !== -1,
+      'errorHandler should receive the overflow message');
+  });
+
+  it('should route a flush send error through errorHandler when set', () => {
+    const errors = [];
+    statsd = createHotShotsClient({
+      mock: true,
+      aggregation: true,
+      errorHandler: err => { errors.push(err); },
+    }, 'client');
+    statsd.gauge('agg.eh', 1);
+    statsd.send = () => { throw new Error('boom'); };
+    statsd.flush();
+    assert.strictEqual(errors.length, 1);
+    assert.strictEqual(errors[0].message, 'boom');
+  });
+
+  it('should keep tracking a client across consecutive in-flight sends until fully drained', done => {
+    statsd = createHotShotsClient({ mock: true, aggregation: { flushInterval: 60000 } }, 'client');
+    // Simulate a send in flight whose drain resolves while a second send is
+    // already in flight: trackActive's recheck must follow the new drain promise
+    // rather than pruning early, and prune only once the client fully drains.
+    let resolveFirst;
+    let resolveSecond;
+    statsd.messagesInFlight = 1;
+    statsd.drainPromise = new Promise(resolve => { resolveFirst = resolve; });
+    statsd.aggregator.trackActive(statsd);
+    const trackedInitially = statsd.aggregator.activeClients.has(statsd);
+    // First drain resolves, but a second send is already in flight.
+    statsd.drainPromise = new Promise(resolve => { resolveSecond = resolve; });
+    resolveFirst();
+    setImmediate(() => {
+      const stillTracked = statsd.aggregator.activeClients.has(statsd);
+      // Fully drain, resetting the simulated state before the assertions so a
+      // failure cannot leave afterEach's close() waiting on a pending drain.
+      statsd.messagesInFlight = 0;
+      statsd.drainPromise = null;
+      resolveSecond();
+      setImmediate(() => {
+        const prunedAfterDrain = !statsd.aggregator.activeClients.has(statsd);
+        try {
+          assert.ok(trackedInitially, 'client with an in-flight send was not tracked');
+          assert.ok(stillTracked, 'client was pruned while a later send was still in flight');
+          assert.ok(prunedAfterDrain, 'client was not pruned after fully draining');
+          done();
+        } catch (err) {
+          done(err);
+        }
+      });
+    });
+  });
+});

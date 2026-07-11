@@ -4,6 +4,13 @@ import stream = require("stream");
 export type Tags = { [key: string]: string } | string[];
 export type Cardinality = 'none' | 'low' | 'orchestrator' | 'high';
 
+export interface AggregationOptions {
+  /** Interval in milliseconds between aggregation flushes. Default: 2000. */
+  flushInterval?: number;
+  /** Maximum number of distinct aggregation contexts held per flush window; new contexts beyond this are sent directly. Default: 5000. */
+  maxContexts?: number;
+}
+
 export interface ClientOptions {
   bufferFlushInterval?: number;
   bufferHolder?: { buffer: string };
@@ -47,6 +54,7 @@ export interface ClientOptions {
   };
   includeDatadogTelemetry?: boolean;
   telemetryFlushInterval?: number;
+  aggregation?: boolean | AggregationOptions;
 }
 
 export interface ChildClientOptions {
@@ -207,6 +215,8 @@ export class StatsD {
   unique(stat: string | string[], value: number | string, options?: MetricOptions, callback?: StatsCb): void;
 
   close(callback?: (error?: Error) => void): void;
+
+  flush(callback?: StatsCb): void;
 
   event(title: string, text?: string, options?: EventOptions, tags?: Tags, callback?: StatsCb): void;
   event(title: string, text?: string, options?: EventOptions, callback?: StatsCb): void;

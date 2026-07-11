@@ -1,15 +1,16 @@
 const assert = require('assert');
 const StatsD = require('../lib/statsd');
+const constants = require('../lib/constants');
 const helpers = require('./helpers/helpers.js');
 const closeAll = helpers.closeAll;
 const createServer = helpers.createServer;
 const createHotShotsClient = helpers.createHotShotsClient;
 
-const DD_ENV_VARS = [
-  'DD_AGENT_HOST', 'DD_DOGSTATSD_PORT', 'DD_ENTITY_ID', 'DD_ENV',
-  'DD_SERVICE', 'DD_VERSION', 'DD_EXTERNAL_ENV', 'DD_CARDINALITY',
-  'DATADOG_CARDINALITY', 'DD_ORIGIN_DETECTION_ENABLED',
-];
+// Derive the signal vars from constants so the cleanup list stays in sync as new
+// Datadog signal env vars are added, plus a couple of related vars not in that list.
+const DD_ENV_VARS = constants.DATADOG_SIGNAL_ENV_VARS.concat([
+  'DATADOG_CARDINALITY', 'DD_ORIGIN_DETECTION_ENABLED', 'DATADOG_TAGS',
+]);
 
 let savedEnv = {};
 

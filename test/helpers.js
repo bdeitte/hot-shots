@@ -748,4 +748,145 @@ describe('#helpersExtended', () => {
       assert(!result.includes('team:backend'));
     });
   });
+
+  describe('#parseDogstatsdUrl', () => {
+    it('should parse udp url with port', () => {
+      assert.deepStrictEqual(helpers.parseDogstatsdUrl('udp://host:9125'), {
+        protocol: 'udp', host: 'host', port: 9125,
+      });
+    });
+
+    it('should default the port to 8125 for a udp url without a port', () => {
+      assert.deepStrictEqual(helpers.parseDogstatsdUrl('udp://host'), {
+        protocol: 'udp', host: 'host', port: 8125,
+      });
+    });
+
+    it('should parse bracketed IPv6 udp url with port', () => {
+      assert.deepStrictEqual(helpers.parseDogstatsdUrl('udp://[::1]:9125'), {
+        protocol: 'udp', host: '::1', port: 9125,
+      });
+    });
+
+    it('should parse bare IPv6 udp url as host with default port', () => {
+      assert.deepStrictEqual(helpers.parseDogstatsdUrl('udp://::1'), {
+        protocol: 'udp', host: '::1', port: 8125,
+      });
+    });
+
+    it('should parse unixgram url path', () => {
+      assert.deepStrictEqual(helpers.parseDogstatsdUrl('unixgram:///var/run/dsd.socket'), {
+        protocol: 'uds', path: '/var/run/dsd.socket',
+      });
+    });
+
+    it('should parse unix url path', () => {
+      assert.deepStrictEqual(helpers.parseDogstatsdUrl('unix:///var/run/dsd.socket'), {
+        protocol: 'uds', path: '/var/run/dsd.socket',
+      });
+    });
+
+    it('should return null for empty host', () => {
+      assert.strictEqual(helpers.parseDogstatsdUrl('udp://'), null);
+    });
+
+    it('should return null for bad port', () => {
+      assert.strictEqual(helpers.parseDogstatsdUrl('udp://host:99999'), null);
+    });
+
+    it('should return null for malformed port', () => {
+      assert.strictEqual(helpers.parseDogstatsdUrl('udp://host:123abc'), null);
+    });
+
+    it('should return null for unknown scheme', () => {
+      assert.strictEqual(helpers.parseDogstatsdUrl('http://host:9125'), null);
+    });
+
+    it('should return null for unixstream scheme', () => {
+      assert.strictEqual(helpers.parseDogstatsdUrl('unixstream:///var/run/dsd.socket'), null);
+    });
+
+    it('should return null for empty unix path', () => {
+      assert.strictEqual(helpers.parseDogstatsdUrl('unix://'), null);
+    });
+
+    it('should return null for port 0', () => {
+      assert.strictEqual(helpers.parseDogstatsdUrl('udp://host:0'), null);
+    });
+
+    it('should parse bracketed IPv6 udp url without port using the default port', () => {
+      assert.deepStrictEqual(helpers.parseDogstatsdUrl('udp://[::1]'), {
+        protocol: 'udp', host: '::1', port: 8125,
+      });
+    });
+  });
+
+  describe('#getDogstatsdEnvTransport', () => {
+    let originalConsoleError;
+    const savedEnv = {};
+    const ENV_VARS = ['DD_DOGSTATSD_URL', 'DD_DOGSTATSD_SOCKET'];
+
+    beforeEach(() => {
+      originalConsoleError = console.error;
+      console.error = () => { /* suppress expected parse warnings */ };
+      ENV_VARS.forEach(name => {
+        savedEnv[name] = process.env[name];
+        delete process.env[name];
+      });
+    });
+
+    afterEach(() => {
+      console.error = originalConsoleError;
+      ENV_VARS.forEach(name => {
+        if (savedEnv[name] === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = savedEnv[name];
+        }
+      });
+    });
+
+    it('should return null when neither env var is set', () => {
+      assert.strictEqual(helpers.getDogstatsdEnvTransport(), null);
+    });
+
+    it('should parse a valid DD_DOGSTATSD_URL', () => {
+      process.env.DD_DOGSTATSD_URL = 'udp://host:9125';
+      assert.deepStrictEqual(helpers.getDogstatsdEnvTransport(), {
+        protocol: 'udp', host: 'host', port: 9125,
+      });
+    });
+
+    it('should use DD_DOGSTATSD_SOCKET when no url is set', () => {
+      process.env.DD_DOGSTATSD_SOCKET = '/var/run/datadog/dsd.socket';
+      assert.deepStrictEqual(helpers.getDogstatsdEnvTransport(), {
+        protocol: 'uds', path: '/var/run/datadog/dsd.socket',
+      });
+    });
+
+    it('should trim surrounding whitespace from DD_DOGSTATSD_SOCKET', () => {
+      process.env.DD_DOGSTATSD_SOCKET = '  /var/run/datadog/dsd.socket  ';
+      assert.deepStrictEqual(helpers.getDogstatsdEnvTransport(), {
+        protocol: 'uds', path: '/var/run/datadog/dsd.socket',
+      });
+    });
+
+    it('should return null for a whitespace-only DD_DOGSTATSD_SOCKET', () => {
+      process.env.DD_DOGSTATSD_SOCKET = '   ';
+      assert.strictEqual(helpers.getDogstatsdEnvTransport(), null);
+    });
+
+    it('should fall back to DD_DOGSTATSD_SOCKET when DD_DOGSTATSD_URL is invalid', () => {
+      process.env.DD_DOGSTATSD_URL = 'unixstream:///var/run/datadog/dsd.socket';
+      process.env.DD_DOGSTATSD_SOCKET = '/var/run/datadog/dsd.socket';
+      assert.deepStrictEqual(helpers.getDogstatsdEnvTransport(), {
+        protocol: 'uds', path: '/var/run/datadog/dsd.socket',
+      });
+    });
+
+    it('should return null when DD_DOGSTATSD_URL is invalid and no socket is set', () => {
+      process.env.DD_DOGSTATSD_URL = 'unixstream:///var/run/datadog/dsd.socket';
+      assert.strictEqual(helpers.getDogstatsdEnvTransport(), null);
+    });
+  });
 });

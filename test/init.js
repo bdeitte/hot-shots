@@ -32,6 +32,94 @@ describe('#init', () => {
     delete process.env.DD_ENV;
     delete process.env.DD_SERVICE;
     delete process.env.DD_VERSION;
+    delete process.env.DD_DOGSTATSD_URL;
+    delete process.env.DD_DOGSTATSD_SOCKET;
+  });
+
+  it('should use DD_DOGSTATSD_URL udp config when no transport options given', () => {
+    process.env.DD_DOGSTATSD_URL = 'udp://urlhost:4321';
+    statsd = createHotShotsClient({ mock: true }, clientType);
+    assert.strictEqual(statsd.protocol, 'udp');
+    assert.strictEqual(statsd.host, 'urlhost');
+    assert.strictEqual(statsd.port, 4321);
+  });
+
+  it('should default port to 8125 for DD_DOGSTATSD_URL without port', () => {
+    process.env.DD_DOGSTATSD_URL = 'udp://urlhost';
+    statsd = createHotShotsClient({ mock: true }, clientType);
+    assert.strictEqual(statsd.host, 'urlhost');
+    assert.strictEqual(statsd.port, 8125);
+  });
+
+  it('should let a portless DD_DOGSTATSD_URL win over DD_DOGSTATSD_PORT', () => {
+    process.env.DD_DOGSTATSD_URL = 'udp://urlhost';
+    process.env.DD_DOGSTATSD_PORT = '9999';
+    statsd = createHotShotsClient({ mock: true }, clientType);
+    assert.strictEqual(statsd.host, 'urlhost');
+    assert.strictEqual(statsd.port, 8125);
+  });
+
+  it('should use uds config from DD_DOGSTATSD_URL unix scheme', () => {
+    process.env.DD_DOGSTATSD_URL = 'unix:///var/run/test/dsd.socket';
+    statsd = createHotShotsClient({ mock: true }, clientType);
+    assert.strictEqual(statsd.protocol, 'uds');
+    assert.strictEqual(statsd.path, '/var/run/test/dsd.socket');
+  });
+
+  it('should use uds config from DD_DOGSTATSD_SOCKET', () => {
+    process.env.DD_DOGSTATSD_SOCKET = '/var/run/test/dsd.socket';
+    statsd = createHotShotsClient({ mock: true }, clientType);
+    assert.strictEqual(statsd.protocol, 'uds');
+    assert.strictEqual(statsd.path, '/var/run/test/dsd.socket');
+  });
+
+  it('should prefer DD_DOGSTATSD_URL over DD_DOGSTATSD_SOCKET and DD_AGENT_HOST', () => {
+    process.env.DD_DOGSTATSD_URL = 'udp://urlhost:4321';
+    process.env.DD_DOGSTATSD_SOCKET = '/var/run/test/dsd.socket';
+    process.env.DD_AGENT_HOST = 'envhost';
+    statsd = createHotShotsClient({ mock: true }, clientType);
+    assert.strictEqual(statsd.protocol, 'udp');
+    assert.strictEqual(statsd.host, 'urlhost');
+    assert.strictEqual(statsd.port, 4321);
+  });
+
+  it('should prefer explicit transport options over DD_DOGSTATSD_URL', () => {
+    process.env.DD_DOGSTATSD_URL = 'udp://urlhost:4321';
+    statsd = createHotShotsClient({ mock: true, host: 'optionhost' }, clientType);
+    assert.strictEqual(statsd.host, 'optionhost');
+    assert.strictEqual(statsd.port, 8125);
+  });
+
+  it('should prefer an explicit port option over DD_DOGSTATSD_URL', () => {
+    process.env.DD_DOGSTATSD_URL = 'udp://urlhost:4321';
+    statsd = createHotShotsClient({ mock: true, port: 1234 }, clientType);
+    // Any explicit transport option disables the env transport entirely: the
+    // URL's host must not leak in alongside the explicit port.
+    assert.strictEqual(statsd.port, 1234);
+    assert.strictEqual(statsd.host, undefined);
+    assert.strictEqual(statsd.protocol, 'udp');
+  });
+
+  it('should ignore DD_DOGSTATSD_URL with unsupported scheme', () => {
+    process.env.DD_DOGSTATSD_URL = 'unixstream:///var/run/test/dsd.socket';
+    statsd = createHotShotsClient({ mock: true }, clientType);
+    assert.strictEqual(statsd.protocol, 'udp');
+    assert.strictEqual(statsd.path, undefined);
+  });
+
+  it('should fall back to DD_DOGSTATSD_SOCKET when DD_DOGSTATSD_URL is invalid', () => {
+    process.env.DD_DOGSTATSD_URL = 'unixstream:///var/run/test/dsd.socket';
+    process.env.DD_DOGSTATSD_SOCKET = '/var/run/test/dsd.socket';
+    statsd = createHotShotsClient({ mock: true }, clientType);
+    assert.strictEqual(statsd.protocol, 'uds');
+    assert.strictEqual(statsd.path, '/var/run/test/dsd.socket');
+  });
+
+  it('should not apply DD_DOGSTATSD_URL env transport to a telegraf client', () => {
+    process.env.DD_DOGSTATSD_URL = 'unix:///var/run/test/dsd.socket';
+    statsd = createHotShotsClient({ mock: true, telegraf: true }, clientType);
+    assert.strictEqual(statsd.protocol, 'udp');
+    assert.strictEqual(statsd.path, undefined);
   });
 
   it('should set the proper values when specified', () => {

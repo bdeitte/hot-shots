@@ -341,3 +341,77 @@ describe('#globalTags', () => {
     });
   });
 });
+
+describe('#DD_TAGS env var', () => {
+  let statsd;
+
+  afterEach(done => {
+    delete process.env.DD_TAGS;
+    delete process.env.DATADOG_TAGS;
+    delete process.env.DD_ENV;
+    closeAll(null, statsd, false, done);
+    statsd = null;
+  });
+
+  it('should add DD_TAGS as global tags', () => {
+    process.env.DD_TAGS = 'rack:1,team:core';
+    statsd = createHotShotsClient({ mock: true }, 'client');
+    assert.deepStrictEqual(statsd.globalTags, ['rack:1', 'team:core']);
+  });
+
+  it('should trim whitespace and skip empty entries in DD_TAGS', () => {
+    process.env.DD_TAGS = ' rack:1 , ,team:core, ';
+    statsd = createHotShotsClient({ mock: true }, 'client');
+    assert.deepStrictEqual(statsd.globalTags, ['rack:1', 'team:core']);
+  });
+
+  it('should override user globalTags with matching keys from DD_TAGS', () => {
+    process.env.DD_TAGS = 'team:env';
+    statsd = createHotShotsClient({ mock: true, globalTags: ['team:user', 'other:tag'] }, 'client');
+    assert.deepStrictEqual(statsd.globalTags, ['other:tag', 'team:env']);
+  });
+
+  it('should fall back to DATADOG_TAGS when DD_TAGS is not set', () => {
+    process.env.DATADOG_TAGS = 'legacy:tag';
+    statsd = createHotShotsClient({ mock: true }, 'client');
+    assert.deepStrictEqual(statsd.globalTags, ['legacy:tag']);
+  });
+
+  it('should let DD_ENV win over an env tag in DD_TAGS', () => {
+    process.env.DD_TAGS = 'env:fromtags';
+    process.env.DD_ENV = 'fromenv';
+    statsd = createHotShotsClient({ mock: true }, 'client');
+    assert.deepStrictEqual(statsd.globalTags, ['env:fromenv']);
+  });
+
+  it('should ignore DD_TAGS when includeDataDogTags is false', () => {
+    process.env.DD_TAGS = 'rack:1';
+    statsd = createHotShotsClient({ mock: true, includeDataDogTags: false }, 'client');
+    assert.deepStrictEqual(statsd.globalTags, []);
+  });
+
+  it('should let a child globalTags override win over DD_TAGS', () => {
+    process.env.DD_TAGS = 'team:core';
+    statsd = createHotShotsClient({ mock: true }, 'client');
+    const child = statsd.childClient({ globalTags: ['team:checkout'] });
+    // The child explicitly overrides team; DD_TAGS must not clobber it back to
+    // team:core. The child inherits DD_TAGS only for keys it does not override.
+    assert.deepStrictEqual(child.globalTags, ['team:checkout']);
+  });
+
+  it('should let DD_ENV win over a child globalTags override', () => {
+    process.env.DD_ENV = 'prod';
+    statsd = createHotShotsClient({ mock: true }, 'client');
+    const child = statsd.childClient({ globalTags: ['env:childoverride'] });
+    // Unlike arbitrary DD_TAGS keys, the DD_ENV/DD_SERVICE/DD_VERSION mapping keeps
+    // its documented precedence and wins over a child's explicit override.
+    assert.deepStrictEqual(child.globalTags, ['env:prod']);
+  });
+
+  it('should prefer DD_TAGS over DATADOG_TAGS when both are set', () => {
+    process.env.DD_TAGS = 'source:ddtags';
+    process.env.DATADOG_TAGS = 'source:legacy';
+    statsd = createHotShotsClient({ mock: true }, 'client');
+    assert.deepStrictEqual(statsd.globalTags, ['source:ddtags']);
+  });
+});

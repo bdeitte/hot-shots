@@ -1,6 +1,14 @@
 CHANGELOG
 =========
 
+## Unreleased
+
+* [@bdeitte](https://github.com/bdeitte) Add opt-in client-side aggregation of counts, gauges and sets via the `aggregation` option, for better parity with official DogStatsD clients but also for use with any StatsD, DogStatsD or Telegraf client. This includes an aggregation `maxContexts` option (default 5000) bounding the number of live aggregation contexts; new contexts beyond the cap are sent directly with a one-time warning.
+* [@bdeitte](https://github.com/bdeitte) Add a public `flush()` method to send buffered metrics (and any pending aggregated metrics) immediately, useful for serverless and other short-lived environments
+* [@bdeitte](https://github.com/bdeitte) Support DD_TAGS / DATADOG_TAGS env vars for global tags, for better parity with official DogStatsD clients
+* [@bdeitte](https://github.com/bdeitte) Support DD_DOGSTATSD_URL and DD_DOGSTATSD_SOCKET env vars for transport configuration, for better parity with official DogStatsD clients
+* [@bdeitte](https://github.com/bdeitte) Fix dev-dependency security advisories (@babel/core, js-yaml) via `npm audit fix`
+
 ## 16.0.0 (2026-6-8)
 
 * [@bdeitte](https://github.com/bdeitte) BREAKING: Add Datadog mode for better parity with the official DogStatsD clients. A new `datadog` option (explicit `true`/`false`, or auto-detected from `DD_AGENT_HOST`/`DD_ENV`/other `DD_*` signals) enables:

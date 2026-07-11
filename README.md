@@ -11,6 +11,7 @@ includes many additional changes, including:
 * events
 * child clients
 * debug logging
+* client-side aggregation
 * much more, including many bug fixes
 
 You can read about all changes in [the changelog](CHANGES.md).
@@ -33,6 +34,8 @@ hot-shots supports Node 18.x and higher. When using types.d.ts, hot-shots requir
   - [Datadog's Unix domain socket support](#datadogs-unix-domain-socket-support)
   - [Datadog Telemetry](#datadog-telemetry)
   - [OpenTelemetry Collector Compatibility](#opentelemetry-collector-compatibility)
+- [Client-side aggregation](#client-side-aggregation)
+  - [Flushing buffered metrics](#flushing-buffered-metrics)
 - [Sanitization](#sanitization)
 - [Debugging](#debugging)
 - [Submitting changes](#submitting-changes)
@@ -95,6 +98,8 @@ Parameters (specified as one object passed into hot-shots):
   * `env` from `DD_ENV` ([docs](https://docs.datadoghq.com/getting_started/tagging/unified_service_tagging/?tab=kubernetes#full-configuration))
   * `service` from `DD_SERVICE` ([docs](https://docs.datadoghq.com/getting_started/tagging/unified_service_tagging/?tab=kubernetes#full-configuration))
   * `version` from `DD_VERSION` ([docs](https://docs.datadoghq.com/getting_started/tagging/unified_service_tagging/?tab=kubernetes#full-configuration))
+
+  In addition, comma-delimited tags from the `DD_TAGS` environment variable (or its legacy alias `DATADOG_TAGS`) are added to `globalTags`. For example `DD_TAGS=rack:1,team:core` adds `rack:1` and `team:core`. These are applied before the `DD_ENV`/`DD_SERVICE`/`DD_VERSION` mapping above, so those env vars win on a key conflict.
 * `maxBufferSize`: If larger than 0,  metrics will be buffered and only sent when the string length is greater than the size. `default: 0` for udp and tcp.  `default: 8192` for uds.
 * `bufferFlushInterval`: If buffering is in use, this is the time in ms to always flush any buffered metrics. `default: 1000`
 * `telegraf`:    Use Telegraf's StatsD line protocol, which is slightly different than the rest `default: false`
@@ -104,6 +109,12 @@ Parameters (specified as one object passed into hot-shots):
 * `protocol`: Use `tcp` option for TCP protocol, or `uds` for the Unix Domain Socket protocol or `stream` for the raw stream. Defaults to `udp` otherwise.
 * `path`: Used only when the protocol is `uds`. Defaults to `/var/run/datadog/dsd.socket`.
 * `stream`: Reference to a stream instance. Used only when the protocol is `stream`.
+
+If no transport options (`host`, `port`, `protocol`, `path`, `stream`) are passed, the transport can be configured from environment variables for parity with the official DogStatsD clients (these are Datadog-agent variables and are ignored for `telegraf` clients):
+* `DD_DOGSTATSD_URL`: A transport URL. `udp://host[:port]` configures UDP (port defaults to 8125), while `unix:///path/to/socket` or `unixgram:///path/to/socket` configures a Unix Domain Socket. The `unixstream://` scheme is not supported.
+* `DD_DOGSTATSD_SOCKET`: A Unix Domain Socket path (used when `DD_DOGSTATSD_URL` is not set, or is set but invalid/unsupported).
+
+Precedence is: explicit transport options > `DD_DOGSTATSD_URL` > `DD_DOGSTATSD_SOCKET` > `DD_AGENT_HOST`/`DD_DOGSTATSD_PORT`.
 * `tcpGracefulErrorHandling`: Used only when the protocol is `tcp`. Boolean indicating whether to handle socket errors gracefully. Defaults to true.
 * `tcpGracefulRestartRateLimit`: Used only when the protocol is `tcp`. Time (ms) between re-creating the socket. Defaults to `1000`.
 * `udsGracefulErrorHandling`: Used only when the protocol is `uds`. Boolean indicating whether to handle socket errors gracefully. Defaults to true.
@@ -117,10 +128,11 @@ Parameters (specified as one object passed into hot-shots):
 * `udpSocketOptions`: Used only when the protocol is `udp`. Specify the options passed into dgram.createSocket(). The socket type (`udp4` or `udp6`) is auto-detected based on the host: IPv6 addresses (e.g., `::1`) use `udp6`, IPv4 addresses use `udp4`, and hostnames default to `udp4`. You can override auto-detection by explicitly setting `type` (e.g., `{ type: 'udp6' }`).
 * `includeDatadogTelemetry`: Enable client-side telemetry to track metrics about the client itself. This helps diagnose high-throughput metric delivery issues. Telemetry metrics are prefixed with `datadog.dogstatsd.client.` and are not billed as custom metrics. `default: false`, except it defaults to `true` whenever Datadog mode is active (an explicit `datadog: true` or one of the Datadog signal env vars listed under the `datadog` option). An explicit value always wins. See [Client-Side Telemetry](#client-side-telemetry) for details.
 * `telemetryFlushInterval`: When telemetry is enabled, how often (in ms) to send telemetry metrics. `default: 10000`
-* `datadog`: Enable Datadog mode, turning on origin detection (`|c:`), External Data (`|e:`), cardinality (`|card:`), and client telemetry. Pass `true`/`false` to force it (like `telegraf`). When unset, it auto-detects: enabled when not using `telegraf` and a Datadog signal env var is set (`DD_AGENT_HOST`, `DD_DOGSTATSD_PORT`, `DD_ENTITY_ID`, `DD_ENV`, `DD_SERVICE`, `DD_VERSION`, `DD_EXTERNAL_ENV`, `DD_CARDINALITY`). The `uds` protocol alone does **not** auto-enable Datadog mode — set `datadog: true` explicitly if you want it. `default: auto-detect`
+* `datadog`: Enable Datadog mode, turning on origin detection (`|c:`), External Data (`|e:`), cardinality (`|card:`), and client telemetry. Pass `true`/`false` to force it (like `telegraf`). When unset, it auto-detects: enabled when not using `telegraf` and a Datadog signal env var is set (`DD_AGENT_HOST`, `DD_DOGSTATSD_PORT`, `DD_ENTITY_ID`, `DD_ENV`, `DD_SERVICE`, `DD_VERSION`, `DD_EXTERNAL_ENV`, `DD_CARDINALITY`, `DD_TAGS`, `DD_DOGSTATSD_URL`, `DD_DOGSTATSD_SOCKET`). Note that the legacy `DATADOG_TAGS` alias does **not** auto-enable Datadog mode — only `DD_TAGS` is treated as a signal. The `uds` protocol alone does **not** auto-enable Datadog mode — set `datadog: true` explicitly if you want it. `default: auto-detect`
 * `originDetection`: When in Datadog mode, auto-detect the container ID from cgroups and send it as `|c:` for [origin detection](https://docs.datadoghq.com/developers/dogstatsd/?tab=kubernetes#origin-detection-over-udp). Respects `DD_ORIGIN_DETECTION_ENABLED`. Linux only. `default: true in datadog mode`
 * `containerID`: Manually set the container ID (skips cgroup parsing). Only used in Datadog mode. `default: undefined`
 * `cardinality`: Client-wide default tag cardinality sent as `|card:` — one of `none`, `low`, `orchestrator`, `high`. Falls back to the `DD_CARDINALITY` / `DATADOG_CARDINALITY` env var. Only used in Datadog mode. `default: undefined`
+* `aggregation`: Enable client-side aggregation of counts, gauges and sets before sending, reducing packet volume for hot metrics. Pass `true` to enable with defaults, or an object `{ flushInterval, maxContexts }` to configure the flush interval (ms, `default: 2000`) and the max distinct contexts held per flush window (`default: 5000`). `default: false`. See [Client-side aggregation](#client-side-aggregation) for details.
 
 ### StatsD methods
 All StatsD methods other than `event`, `close`, and `check` have the same API:
@@ -540,6 +552,38 @@ client.gauge('queue_size', 100);
 client.gaugeDelta('connections', 1);
 client.timing('response_time', 250);
 client.histogram('request_size', 1024);
+```
+
+## Client-side aggregation
+
+hot-shots can optionally aggregate counts, gauges and sets on the client before sending, reducing packet volume for hot metrics. It mirrors the client-side aggregation in the official DogStatsD clients, but it should work for StatsD, DogStatsD and Telegraf clients alike. It is opt-in via the `aggregation` option:
+
+```javascript
+const client = new StatsD({ aggregation: true });
+// or configure the flush interval (default 2000ms) and/or context cap (default 5000):
+const client = new StatsD({ aggregation: { flushInterval: 1000, maxContexts: 5000 } });
+```
+
+When enabled, metrics are combined per context (metric type, name, per-call tags, cardinality and the recording client's global tags) and flushed on the aggregation interval, on [`flush()`](#flushing-buffered-metrics), and on `close()`:
+* Counts are summed.
+* Gauges keep the most recent value.
+* Sets emit each unique value once.
+
+The following always bypass aggregation and are sent immediately: histograms, distributions, timings, events and service checks, plus any count/gauge/set that uses a *per-call* sample rate, a timestamp, a delta gauge (`+`/`-` value), or a `NaN` value. A client-level default `sampleRate` does **not** disable aggregation. Child clients share the parent's aggregator instance; clients that differ in their global tags or default cardinality aggregate into separate contexts.
+
+The per-metric callback fires synchronously when a metric is aggregated, as a "queued" signal (the same way buffered mode behaves).
+
+To bound memory, at most `maxContexts` (default 5000) distinct contexts are held per flush window; once the cap is reached, additional new contexts are sent directly without aggregation and a one-time warning is emitted.
+
+### Flushing buffered metrics
+
+`flush([callback])` sends any buffered metrics to the transport immediately, without waiting for the `bufferFlushInterval`. With client-side-aggregation enabled, pending aggregated metrics are flushed into the buffer first. This is useful in serverless and other short-lived environments where you want to ensure metrics are sent before the process freezes or exits.
+
+```javascript
+client.increment('my.metric');
+client.flush(() => {
+  // buffered payload has been handed to the transport
+});
 ```
 
 ## Sanitization
