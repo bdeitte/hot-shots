@@ -541,14 +541,16 @@ describe('#aggregation', () => {
     } finally {
       console.error = originalConsoleError;
     }
-    // Even though the second value threw, the child had a send in flight from the
-    // first value, so it must be tracked for close()/flush() to wait on it.
-    assert.ok(statsd.aggregator.activeClients.has(child),
-      'partially-sent context did not track its in-flight child client');
-    // Reset the simulated in-flight state so afterEach's close() does not wait for
-    // a never-resolving drain and emit a force-close warning.
+    // Capture the observation, then reset the simulated in-flight state BEFORE
+    // asserting: on assertion failure the reset must still have run, or
+    // afterEach's close() waits on a never-resolving drain and force-closes.
+    const trackedChild = statsd.aggregator.activeClients.has(child);
     child.messagesInFlight = 0;
     child.drainPromise = null;
     statsd.aggregator.activeClients.delete(child);
+    // Even though the second value threw, the child had a send in flight from the
+    // first value, so it must be tracked for close()/flush() to wait on it.
+    assert.ok(trackedChild,
+      'partially-sent context did not track its in-flight child client');
   });
 });
