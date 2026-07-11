@@ -17,6 +17,7 @@ describe('#flush', () => {
       clock.restore();
       clock = null;
     }
+    sinon.restore();
     closeAll(server, statsd, false, done);
     server = null;
     statsd = null;
@@ -165,14 +166,17 @@ describe('#flush', () => {
 
   it('should invoke the flush callback even when the aggregator flush throws', done => {
     statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
-    const originalConsoleError = console.error;
-    console.error = () => { /* suppress expected aggregator-throw warning */ };
+    const consoleError = sinon.stub(console, 'error');
     statsd.aggregator.flush = () => { throw new Error('boom'); };
     statsd.flush(err => {
-      console.error = originalConsoleError;
-      // A synchronous aggregator throw must not escape flush() or orphan the callback.
-      assert.ok(!err);
-      done();
+      try {
+        // A synchronous aggregator throw must not escape flush() or orphan the callback.
+        assert.ok(!err);
+        assert.ok(consoleError.calledOnce, 'the aggregator throw should be logged exactly once');
+        done();
+      } catch (assertErr) {
+        done(assertErr);
+      }
     });
   });
 
@@ -182,8 +186,7 @@ describe('#flush', () => {
         maxBufferSize: 0,
         closingFlushInterval: 5,
       }), 'client');
-      const originalConsoleError = console.error;
-      console.error = () => { /* suppress the expected "messages in flight" warning */ };
+      const consoleError = sinon.stub(console, 'error');
       // Never invoke the send callback: the send stays in flight, so close() must
       // hit its force-close path.
       statsd.socket.send = () => { /* leave the send permanently in flight */ };
@@ -193,10 +196,15 @@ describe('#flush', () => {
         flushCalledBack = true;
       });
       statsd.close(() => {
-        console.error = originalConsoleError;
-        assert.ok(flushCalledBack, 'concurrent flush callback was orphaned by force-close');
-        statsd = null;
-        done();
+        try {
+          assert.ok(flushCalledBack, 'concurrent flush callback was orphaned by force-close');
+          assert.ok(consoleError.called, 'force-close should log the messages-in-flight warning');
+          statsd = null;
+          done();
+        } catch (assertErr) {
+          statsd = null;
+          done(assertErr);
+        }
       });
     });
   });

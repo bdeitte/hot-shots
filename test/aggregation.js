@@ -16,6 +16,7 @@ describe('#aggregation', () => {
       clock.restore();
       clock = null;
     }
+    sinon.restore();
     closeAll(server, statsd, false, done);
     server = null;
     statsd = null;
@@ -299,14 +300,12 @@ describe('#aggregation', () => {
   });
 
   it('should reject an invalid aggregation flushInterval and use the default', () => {
-    const originalConsoleError = console.error;
-    console.error = () => { /* suppress expected validation warning */ };
-    try {
-      statsd = createHotShotsClient({ mock: true, aggregation: { flushInterval: -5 } }, 'client');
-    } finally {
-      console.error = originalConsoleError;
-    }
+    const consoleError = sinon.stub(console, 'error');
+    statsd = createHotShotsClient({ mock: true, aggregation: { flushInterval: -5 } }, 'client');
     assert.strictEqual(statsd.aggregator.flushInterval, 2000);
+    assert.ok(consoleError.calledOnce, 'expected exactly one validation warning');
+    assert.ok(consoleError.firstCall.args[0].indexOf('aggregation.flushInterval') !== -1,
+      'warning should name the rejected option');
   });
 
   it('should track only clients with in-flight routed sends, pruning once drained', done => {
@@ -351,24 +350,18 @@ describe('#aggregation', () => {
   });
 
   it('should fall through to direct send once the context cap is reached', () => {
-    const originalConsoleError = console.error;
-    let overflowLogged = 0;
-    console.error = () => { overflowLogged += 1; };
-    try {
-      statsd = createHotShotsClient({ mock: true, aggregation: { maxContexts: 2 } }, 'client');
-      statsd.gauge('agg.cap', 1, ['k:a']); // context 1 (aggregated)
-      statsd.gauge('agg.cap', 2, ['k:b']); // context 2 (aggregated)
-      statsd.gauge('agg.cap', 3, ['k:c']); // new -> over cap -> direct send now
-      statsd.gauge('agg.cap', 4, ['k:c']); // still over cap -> direct send now
-    } finally {
-      console.error = originalConsoleError;
-    }
+    const consoleError = sinon.stub(console, 'error');
+    statsd = createHotShotsClient({ mock: true, aggregation: { maxContexts: 2 } }, 'client');
+    statsd.gauge('agg.cap', 1, ['k:a']); // context 1 (aggregated)
+    statsd.gauge('agg.cap', 2, ['k:b']); // context 2 (aggregated)
+    statsd.gauge('agg.cap', 3, ['k:c']); // new -> over cap -> direct send now
+    statsd.gauge('agg.cap', 4, ['k:c']); // still over cap -> direct send now
     // The two over-cap gauges were sent immediately (not held for flush).
     assert.deepStrictEqual(statsd.mockBuffer, [
       'agg.cap:3|g|#k:c',
       'agg.cap:4|g|#k:c',
     ]);
-    assert.strictEqual(overflowLogged, 1, 'overflow should signal exactly once');
+    assert.strictEqual(consoleError.callCount, 1, 'overflow should signal exactly once');
     // The two under-cap contexts still flush normally.
     statsd.flush();
     assert.deepStrictEqual(statsd.mockBuffer.slice(2).sort(), [
@@ -378,16 +371,12 @@ describe('#aggregation', () => {
   });
 
   it('should still update an existing context when at the cap', () => {
-    const originalConsoleError = console.error;
-    console.error = () => { /* suppress overflow signal */ };
-    try {
-      statsd = createHotShotsClient({ mock: true, aggregation: { maxContexts: 1 } }, 'client');
-      statsd.increment('agg.capexisting', 1, ['k:a']);
-      statsd.increment('agg.capexisting', 2, ['k:a']); // same context: still aggregates
-      statsd.increment('agg.capexisting', 9, ['k:b']); // new over cap: direct send
-    } finally {
-      console.error = originalConsoleError;
-    }
+    const consoleError = sinon.stub(console, 'error');
+    statsd = createHotShotsClient({ mock: true, aggregation: { maxContexts: 1 } }, 'client');
+    statsd.increment('agg.capexisting', 1, ['k:a']);
+    statsd.increment('agg.capexisting', 2, ['k:a']); // same context: still aggregates
+    statsd.increment('agg.capexisting', 9, ['k:b']); // new over cap: direct send
+    assert.strictEqual(consoleError.callCount, 1, 'overflow should signal exactly once');
     assert.deepStrictEqual(statsd.mockBuffer, ['agg.capexisting:9|c|#k:b']);
     statsd.flush();
     assert.deepStrictEqual(statsd.mockBuffer, ['agg.capexisting:9|c|#k:b', 'agg.capexisting:3|c|#k:a']);
@@ -479,8 +468,7 @@ describe('#aggregation', () => {
 
   it('should not drop remaining contexts when one context send throws', () => {
     statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
-    const originalConsoleError = console.error;
-    console.error = () => { /* suppress expected per-context send error */ };
+    const consoleError = sinon.stub(console, 'error');
     statsd.gauge('agg.throws', 1, ['k:a']);
     statsd.gauge('agg.ok', 2, ['k:b']);
     // Make the first context's send throw; the second must still be sent.
@@ -493,13 +481,12 @@ describe('#aggregation', () => {
       }
       return realSend(message, tags, cardinality, cb);
     };
-    try {
-      statsd.flush();
-    } finally {
-      console.error = originalConsoleError;
-    }
+    statsd.flush();
     assert.ok(statsd.mockBuffer.some(m => m.indexOf('agg.ok:2|g') === 0),
       'a throwing context aborted the flush and dropped the remaining context');
+    assert.ok(consoleError.calledOnce, 'the throwing context should be logged exactly once');
+    assert.ok(consoleError.firstCall.args[0].indexOf('aggregator flush send threw') !== -1,
+      'warning should identify the aggregator flush send');
   });
 
   it('should track a child client whose set send starts before a later value throws', () => {
@@ -508,8 +495,7 @@ describe('#aggregation', () => {
     // Record a set with two values so sendContext iterates twice.
     child.set('agg.partialset', 'a');
     child.set('agg.partialset', 'b');
-    const originalConsoleError = console.error;
-    console.error = () => { /* suppress expected send-throw error */ };
+    const consoleError = sinon.stub(console, 'error');
     // Simulate the first value going in flight (drainPromise + messagesInFlight)
     // and the second value's send throwing synchronously.
     let calls = 0;
@@ -522,11 +508,10 @@ describe('#aggregation', () => {
       }
       throw new Error('boom on second set value');
     };
-    try {
-      statsd.aggregator.flush();
-    } finally {
-      console.error = originalConsoleError;
-    }
+    statsd.aggregator.flush();
+    // Capture only — assert after the failure-safe reset below, so a logging
+    // assertion failure cannot skip the cleanup Task 2 established.
+    const loggedOnce = consoleError.calledOnce;
     // Capture the observation, then reset the simulated in-flight state BEFORE
     // asserting: on assertion failure the reset must still have run, or
     // afterEach's close() waits on a never-resolving drain and force-closes.
@@ -538,5 +523,6 @@ describe('#aggregation', () => {
     // first value, so it must be tracked for close()/flush() to wait on it.
     assert.ok(trackedChild,
       'partially-sent context did not track its in-flight child client');
+    assert.ok(loggedOnce, 'the throwing set value should be logged exactly once');
   });
 });
