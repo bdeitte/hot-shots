@@ -555,7 +555,7 @@ client.histogram('request_size', 1024);
 
 ## Client-side aggregation
 
-hot-shots can optionally aggregate counts, gauges and sets on the client before sending, reducing packet volume for hot metrics. It mirrors the client-side aggregation in the official DogStatsD clients, but works for StatsD, DogStatsD and Telegraf clients alike. It is opt-in via the `aggregation` option:
+hot-shots can optionally aggregate counts, gauges and sets on the client before sending, reducing packet volume for hot metrics. It mirrors the client-side aggregation in the official DogStatsD clients, but it should work for StatsD, DogStatsD and Telegraf clients alike. It is opt-in via the `aggregation` option:
 
 ```javascript
 const client = new StatsD({ aggregation: true });
