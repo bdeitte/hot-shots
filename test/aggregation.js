@@ -68,15 +68,20 @@ describe('#aggregation', () => {
     assert.deepStrictEqual(statsd.mockBuffer, ['agg.count:1|c|#route:a']);
   });
 
-  it('should not aggregate sampled metrics', () => {
-    statsd = createHotShotsClient({ mock: true, aggregation: true, sampleRate: 1 }, 'client');
-    statsd.increment('agg.sampled', 1, 0.9999);
-    // sampled metrics bypass aggregation entirely: either sent (in mockBuffer
-    // with |@) or sampled out (not recorded anywhere)
+  it('should not aggregate a metric with an explicit per-call sample rate < 1', () => {
+    statsd = createHotShotsClient({ mock: true, aggregation: true }, 'client');
+    const originalRandom = Math.random;
+    Math.random = () => 0;  // deterministically sample the metric in
+    try {
+      statsd.increment('agg.sampled', 1, 0.9999);
+    } finally {
+      Math.random = originalRandom;
+    }
+    // Sent immediately with the sample-rate marker rather than held for flush.
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.sampled:1|c|@0.9999']);
     statsd.flush();
-    statsd.mockBuffer.forEach(entry => {
-      assert.ok(entry.includes('|@0.9999'));
-    });
+    // Nothing was aggregated: flushing adds no unsampled duplicate.
+    assert.deepStrictEqual(statsd.mockBuffer, ['agg.sampled:1|c|@0.9999']);
   });
 
   it('should not aggregate delta gauges', () => {
