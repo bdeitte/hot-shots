@@ -42,11 +42,17 @@ describe('#constants', () => {
       if (process.platform === 'linux') {
         assert.ok(errors.includes('ENOTCONN'));
         assert.ok(errors.includes('ECONNREFUSED'));
-        assert.strictEqual(errors.length, 2);
+        // unix-dgram sets err.code to negative errno (ENOTCONN=107, ECONNREFUSED=111)
+        assert.ok(errors.includes(-107));
+        assert.ok(errors.includes(-111));
+        assert.strictEqual(errors.length, 4);
       } else if (process.platform === 'darwin') {
         assert.ok(errors.includes('EDESTADDRREQ'));
         assert.ok(errors.includes('ECONNRESET'));
-        assert.strictEqual(errors.length, 2);
+        // unix-dgram sets err.code to negative errno (EDESTADDRREQ=39, ECONNRESET=54)
+        assert.ok(errors.includes(-39));
+        assert.ok(errors.includes(-54));
+        assert.strictEqual(errors.length, 4);
       } else {
         // Unknown platforms return empty array
         assert.strictEqual(errors.length, 0);
