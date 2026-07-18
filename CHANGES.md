@@ -1,6 +1,10 @@
 CHANGELOG
 =========
 
+## Unreleased
+
+* Fix UDS graceful restart never firing for unix-dgram errors: `udsErrors()` now includes negative numeric errno codes (`-107`/`-111` on Linux, `-39`/`-54` on Darwin) alongside the existing string codes. unix-dgram sets `err.code` to a negative number (e.g. `-107`), so the string-only check introduced in v14 for #301/#302 could never match and sockets were never replaced after Agent UDS inode churn.
+
 ## 17.0.0 (2026-7-11)
 
 * [@bdeitte](https://github.com/bdeitte) Add opt-in client-side aggregation of counts, gauges and sets via the `aggregation` option, for better parity with official DogStatsD clients but also for use with any StatsD, DogStatsD or Telegraf client. This includes an aggregation `maxContexts` option (default 5000) bounding the number of live aggregation contexts; new contexts beyond the cap are sent directly with a one-time warning.
