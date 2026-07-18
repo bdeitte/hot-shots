@@ -3,7 +3,7 @@ CHANGELOG
 
 ## Unreleased
 
-* Fix UDS graceful restart never firing for unix-dgram errors: `udsErrors()` now includes negative numeric errno codes (`-107`/`-111` on Linux, `-39`/`-54` on Darwin) alongside the existing string codes. unix-dgram sets `err.code` to a negative number (e.g. `-107`), so the string-only check introduced in v14 for #301/#302 could never match and sockets were never replaced after Agent UDS inode churn.
+* [@KeenanLawrenceStitch](https://github.com/KeenanLawrenceStitch) Fix UDS graceful restart never firing for unix-dgram errors: `udsErrors()` now includes the negative numeric errno codes (e.g. `-111` on Linux, `-54` on Darwin) that unix-dgram sets on `err.code`, alongside the existing string codes. The errnos are derived from `os.constants.errno` so they stay correct across architectures. The string-only check introduced in v14 for [#301](https://github.com/bdeitte/hot-shots/issues/301) / [#302](https://github.com/bdeitte/hot-shots/issues/302) could never match unix-dgram's numeric codes, so sockets were never replaced after Agent UDS inode churn. See [#322](https://github.com/bdeitte/hot-shots/issues/322) / [#323](https://github.com/bdeitte/hot-shots/issues/323).
 
 ## 17.0.0 (2026-7-11)
 

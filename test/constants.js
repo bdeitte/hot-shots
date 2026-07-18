@@ -1,5 +1,6 @@
 const assert = require('assert');
 const constants = require('../lib/constants');
+const os = require('os');
 
 describe('#constants', () => {
   describe('PROTOCOL', () => {
@@ -39,19 +40,20 @@ describe('#constants', () => {
 
     it('should return platform-specific error codes', () => {
       const errors = constants.udsErrors();
+      const errno = os.constants.errno;
       if (process.platform === 'linux') {
         assert.ok(errors.includes('ENOTCONN'));
         assert.ok(errors.includes('ECONNREFUSED'));
-        // unix-dgram sets err.code to negative errno (ENOTCONN=107, ECONNREFUSED=111)
-        assert.ok(errors.includes(-107));
-        assert.ok(errors.includes(-111));
+        // unix-dgram sets err.code to the negative errno (e.g. -107 for ENOTCONN)
+        assert.ok(errors.includes(-errno.ENOTCONN));
+        assert.ok(errors.includes(-errno.ECONNREFUSED));
         assert.strictEqual(errors.length, 4);
       } else if (process.platform === 'darwin') {
         assert.ok(errors.includes('EDESTADDRREQ'));
         assert.ok(errors.includes('ECONNRESET'));
-        // unix-dgram sets err.code to negative errno (EDESTADDRREQ=39, ECONNRESET=54)
-        assert.ok(errors.includes(-39));
-        assert.ok(errors.includes(-54));
+        // unix-dgram sets err.code to the negative errno (e.g. -54 for ECONNRESET)
+        assert.ok(errors.includes(-errno.EDESTADDRREQ));
+        assert.ok(errors.includes(-errno.ECONNRESET));
         assert.strictEqual(errors.length, 4);
       } else {
         // Unknown platforms return empty array

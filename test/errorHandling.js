@@ -437,6 +437,42 @@ describe('#errorHandling', () => {
             });
           });
 
+          it('should re-create the socket on numeric unix-dgram errno for type uds', function (done) {
+            const code = badUDSNumericCode();
+            if (code === null) {
+              // No known unix-dgram numeric errno for this platform
+              this.skip();
+              return;
+            }
+            Date.now = () => '4857394578';
+            // emit an error, like the real unix-dgram transport would: err.code
+            // is a negative numeric errno, not a string name (regression for the
+            // v14 string-only check that never matched unix-dgram errors)
+            server = createServer('uds_broken', opts => {
+              const client = statsd = createHotShotsClient(Object.assign(opts, {
+                protocol: 'uds',
+                errorHandler(error) {
+                  assert.ok(error);
+                  assert.strictEqual(error.code, code);
+                }
+              }), 'client');
+              const initialSocket = client.socket;
+              setTimeout(() => {
+                initialSocket.emit('error', { code });
+                assert.ok(Object.is(initialSocket, client.socket));
+                // it should not create the socket if it breaks too quickly
+                // change time and make another error
+                Date.now = () => 4857394578 + 1000; // 1 second later
+                initialSocket.emit('error', { code });
+                setTimeout(() => {
+                  // make sure the socket was re-created
+                  assert.notEqual(initialSocket, client.socket);
+                  done();
+                }, 5);
+              }, 5);
+            });
+          });
+
           it('should re-create the socket on bad descriptor error for type uds', (done) => {
             const code = badUDSDescriptorCode();
             Date.now = () => '4857394578';
@@ -980,4 +1016,27 @@ function badUDSDescriptorCode() {
   }
 
   return 'not-implemented';
+}
+
+/**
+ * Return the negative numeric errno that `unix-dgram` sets on `err.code` for a
+ * "bad connection" UDS failure. unix-dgram does `err.code = errorno` where
+ * errorno is a negative errno (e.g. -111 for ECONNREFUSED on Linux), not a
+ * string name. This is the code the real UDS transport produces.
+ *
+ * - -ECONNREFUSED on Linux
+ * - -ECONNRESET on macOS
+ * - null on other platforms
+ */
+function badUDSNumericCode() {
+  const errno = require('os').constants.errno; // eslint-disable-line global-require
+  if (process.platform === 'linux') {
+    return -errno.ECONNREFUSED;
+  }
+
+  if (process.platform === 'darwin') {
+    return -errno.ECONNRESET;
+  }
+
+  return null;
 }
