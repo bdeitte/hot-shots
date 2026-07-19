@@ -1,7 +1,7 @@
 CHANGELOG
 =========
 
-## Unreleased
+## 17.0.1 (2026-7-18)
 
 * [@KeenanLawrenceStitch](https://github.com/KeenanLawrenceStitch) Fix UDS graceful restart never firing for unix-dgram errors: `udsErrors()` now includes the negative numeric errno codes (e.g. `-111` on Linux, `-54` on Darwin) that unix-dgram sets on `err.code`, alongside the existing string codes. See [#322](https://github.com/bdeitte/hot-shots/issues/322)
 
