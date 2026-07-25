@@ -15,7 +15,7 @@
 - ESLint rules that bite here: single quotes, curly braces on every `if`, JSDoc required on every function (`require-jsdoc`), sorted imports (`sort-imports`), operators at end of line, no trailing whitespace.
 - `npm test` runs lint first. Lint failures block tests.
 - Real errors must be visible without `NODE_DEBUG=hot-shots`. `debug()` may add context but must never be the only signal for a real failure.
-- Every queued send must invoke its callback exactly once on every path. `lib/statsd.js:618-625` decrements `messagesInFlight` and resolves `drainPromise` in that callback; a skipped callback makes `close()` hang forever.
+- Every queued send must invoke its callback exactly once on every path, and at the right time. `lib/statsd.js:618-625` decrements `messagesInFlight` and resolves `drainPromise` in that callback. A skipped callback stalls `close()` for its full drain budget and triggers the force-close warning at `lib/statsd.js:811`; a callback fired after `finish()` zeroes the counter at `lib/statsd.js:813` drives it negative. See Task 4.
 - Do not add public constructor options in this work. The queue cap is an internal constant.
 
 ---
@@ -961,15 +961,16 @@ git commit -m "Bound the pending DNS queue and report drops through the error pa
 
 ### Task 4: Drain safety on close
 
-If `close()` runs while a lookup is in flight, queued entries would never call back, `messagesInFlight` would never reach zero, and the close callback would never fire.
+If `close()` runs while a lookup is in flight, the queued entries hold `messagesInFlight` above zero. Close then stalls for its full drain budget, emits a spurious force-close warning, zeroes the counter, and only afterwards fires the queued callbacks — driving the counter negative. Read Step 2 before implementing; the obvious fix does not work.
 
 **Files:**
-- Modify: `lib/transport.js` (UDP transport `close`)
+- Modify: `lib/transport.js` (add `cancelPendingSends`, drain in `close`)
+- Modify: `lib/statsd.js:804` (cancel pending sends at the top of `finish()`)
 - Test: `test/udpDnsCacheClose.js` (create)
 
 **Interfaces:**
 - Consumes: `dnsResolutionData.pending` and `flushPending` from Task 2.
-- Produces: nothing.
+- Produces: `transport.cancelPendingSends(error)` on the UDP transport, an optional method other transports do not implement, so callers must guard with `typeof`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -998,10 +999,14 @@ describe('#udpDnsCacheClose', () => {
     done();
   });
 
-  it('calls back from close while a dns lookup is still in flight', done => {
+  it('does not force-close or corrupt the counter when a lookup is stuck', done => {
     server = createServer(udpServerType, opts => {
       // Never invoke the callback: the lookup stays in flight forever.
       dns.lookup = () => {};
+
+      const logged = [];
+      const originalConsoleError = console.error;
+      console.error = msg => logged.push(String(msg));
 
       const statsd = createHotShotsClient(Object.assign(opts, {
         host: 'localhost',
@@ -1010,12 +1015,44 @@ describe('#udpDnsCacheClose', () => {
 
       let sendErrored = false;
       statsd.send('stuck', {}, error => {
-        assert.ok(error, 'the queued send should be failed on close');
+        assert.ok(error, 'the queued send should be failed during close');
         sendErrored = true;
       });
 
       statsd.close(() => {
-        assert.ok(sendErrored, 'close must fail queued sends before completing');
+        console.error = originalConsoleError;
+        assert.ok(sendErrored, 'close must fail the queued send');
+        assert.strictEqual(statsd.messagesInFlight, 0,
+          `messagesInFlight must not go negative, saw ${statsd.messagesInFlight}`);
+        const forced = logged.filter(msg => msg.includes('could not clear out messages in flight'));
+        assert.strictEqual(forced.length, 0, 'cancelling pending sends should avoid the force-close path');
+        done();
+      });
+    });
+  });
+
+  it('still delivers a queued send when the lookup resolves before the timeout', done => {
+    server = createServer(udpServerType, opts => {
+      let release;
+      dns.lookup = (host, callback) => {
+        release = () => callback(null, '127.0.0.1');
+      };
+
+      const statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true
+      }), 'client');
+
+      let sendError = 'not called';
+      statsd.send('inflight', {}, error => {
+        sendError = error;
+      });
+
+      // Resolve shortly after close() begins, well inside the drain budget.
+      setTimeout(() => release(), 10);
+
+      statsd.close(() => {
+        assert.strictEqual(sendError, null, 'a send that resolves in time must not be cancelled');
         done();
       });
     });
@@ -1023,39 +1060,87 @@ describe('#udpDnsCacheClose', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [ ] **Step 2: Run to verify the first one fails**
 
 Run: `npx mocha test/udpDnsCacheClose.js --timeout 5000`
-Expected: FAIL by timing out after 5000ms, because the close callback never fires.
 
-- [ ] **Step 3: Fail pending entries on close**
+Expected: `does not force-close or corrupt the counter` FAILS. Trace the actual close sequence before implementing, because the naive "drain in `transport.close()`" fix does not work here:
 
-In `lib/transport.js`, replace the UDP transport's `close` property with:
+`Client.close()` (`lib/statsd.js:722`) runs `flushQueue`, then `waitForDrain()`, then `finish()`, then `_close()`, and only `_close()` reaches `transport.close()`. The queued DNS callbacks are what decrement `messagesInFlight`, so draining them inside `transport.close()` happens too late. With `closingFlushInterval` defaulting to 50 (`lib/statsd.js:149`), `waitForDrain` burns its full `closingFlushInterval * 11` budget (`:794`), `finish()` logs `could not clear out messages in flight but closing anyways` (`:811`) and forces the counter to 0 (`:813`) — and only then does `transport.close()` fire the queued callbacks, each decrementing past zero and leaving `messagesInFlight` negative.
+
+The cancellation must therefore run inside `finish()`, before the counter is zeroed. It must not run any earlier: `flushQueue`'s own final flush issues sends through the same DNS path, and cancelling before the drain wait would discard them, breaking the documented serverless "flush then exit" behavior. Running it at the force-close point preserves every send that resolves within the budget, which is what the second test pins down.
+
+- [ ] **Step 3: Expose a cancel hook on the UDP transport**
+
+In `lib/transport.js`, add a `cancelPendingSends` property to the object returned by `createUdpTransport`, alongside `send` and `close`:
+
+```js
+    cancelPendingSends: (error) => {
+      if (dnsResolutionData.pending.length === 0) {
+        return;
+      }
+      debug('hot-shots UDP transport: cancelling %d sends queued behind a DNS lookup',
+        dnsResolutionData.pending.length);
+      flushPending(error);
+    },
+```
+
+Also keep a drain in `close()` as a safety net for any path that reaches the transport with entries still queued:
 
 ```js
     close: () => {
       debug('hot-shots UDP transport: closing socket');
-      // Queued sends must always call back, or the client's drain never resolves.
+      // Normally already empty: Client.close() cancels pending sends before it
+      // zeroes messagesInFlight. This only catches a transport closed directly.
       flushPending(new Error('hot-shots: transport closed while resolving DNS'));
       socket.close();
     },
 ```
 
-- [ ] **Step 4: Run the test**
+- [ ] **Step 4: Cancel pending sends before the counter is forced to zero**
+
+In `lib/statsd.js`, at the top of `finish()` (line 804, before the `if (totalInFlight() > 0)` check), add:
+
+```js
+    const finish = () => {
+      // Fail sends still queued behind an in-flight DNS lookup so their callbacks
+      // decrement messagesInFlight before we read it below. Draining them later —
+      // in transport.close() — would fire those callbacks after the counter was
+      // forced to 0, leaving it negative. Doing it here rather than before the
+      // drain wait preserves every send whose lookup resolves within the budget,
+      // including the final flushQueue's own sends.
+      drainClients.forEach(client => {
+        if (client.socket && typeof client.socket.cancelPendingSends === 'function') {
+          client.socket.cancelPendingSends(
+            new Error('hot-shots: closing while still resolving DNS'));
+        }
+      });
+
+      if (totalInFlight() > 0) {
+```
+
+Clients sharing a socket will call this more than once; it is idempotent because `flushPending` empties the queue.
+
+- [ ] **Step 5: Run the tests**
 
 Run: `npx mocha test/udpDnsCacheClose.js --timeout 5000`
-Expected: PASS.
+Expected: both PASS.
 
-- [ ] **Step 5: Run the full suite**
+- [ ] **Step 6: Run the close and drain suites specifically**
+
+Run: `npx mocha test/close.js --timeout 5000`
+Expected: PASS. This file contains the force-close and drain tests that the `finish()` change touches.
+
+- [ ] **Step 7: Run the full suite**
 
 Run: `npm test`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add lib/transport.js test/udpDnsCacheClose.js
-git commit -m "Fail queued DNS sends on close so drain always resolves"
+git add lib/statsd.js lib/transport.js test/udpDnsCacheClose.js
+git commit -m "Cancel DNS-queued sends before close forces the in-flight counter to zero"
 ```
 
 ---
