@@ -408,6 +408,30 @@ describe('#DD_TAGS env var', () => {
     assert.deepStrictEqual(child.globalTags, ['env:prod']);
   });
 
+  it('should split DD_TAGS on whitespace when there are no commas', () => {
+    process.env.DD_TAGS = 'env:staging service:my-service version:abc123';
+    statsd = createHotShotsClient({ mock: true }, 'client');
+    assert.deepStrictEqual(statsd.globalTags, ['env:staging', 'service:my-service', 'version:abc123']);
+  });
+
+  it('should treat runs of any whitespace as a single DD_TAGS separator', () => {
+    process.env.DD_TAGS = ' rack:1 \t\n team:core  ';
+    statsd = createHotShotsClient({ mock: true }, 'client');
+    assert.deepStrictEqual(statsd.globalTags, ['rack:1', 'team:core']);
+  });
+
+  it('should keep whitespace inside DD_TAGS values when commas are present', () => {
+    process.env.DD_TAGS = 'rack:1,team:core team';
+    statsd = createHotShotsClient({ mock: true }, 'client');
+    assert.deepStrictEqual(statsd.globalTags, ['rack:1', 'team:core team']);
+  });
+
+  it('should split DATADOG_TAGS on whitespace when there are no commas', () => {
+    process.env.DATADOG_TAGS = 'legacy:tag rack:1';
+    statsd = createHotShotsClient({ mock: true }, 'client');
+    assert.deepStrictEqual(statsd.globalTags, ['legacy:tag', 'rack:1']);
+  });
+
   it('should prefer DD_TAGS over DATADOG_TAGS when both are set', () => {
     process.env.DD_TAGS = 'source:ddtags';
     process.env.DATADOG_TAGS = 'source:legacy';
