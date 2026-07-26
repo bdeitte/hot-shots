@@ -87,7 +87,12 @@ Parameters (specified as one object passed into hot-shots):
 * `tagSeparator`: Separate tags with character `default: ','`. Note does not work with `telegraf` option.
 * `globalize`:   Expose this StatsD instance globally. `default: false`
 * `cacheDns`:    Caches dns lookup to *host* for *cacheDnsTtl*, only used
-  when protocol is `udp`, `default: false`
+  when protocol is `udp`, `default: false`. Concurrent sends during a cold
+  start share a single lookup. Once cached, a send after the TTL expires
+  goes out immediately on the previous address while one background lookup
+  refreshes it; a failed refresh is reported once per failure streak (via
+  `errorHandler`, or `console.error` if none is set) and sends keep using the
+  last good address until the refresh succeeds.
 * `cacheDnsTtl`: time-to-live of dns lookups in milliseconds, when *cacheDns* is enabled. `default: 60000`
 * `mock`:        Create a mock StatsD instance, using a mock transport that doesn't create real sockets.
   Stats are not sent to the server but can be read from mockBuffer for testing.  Note that

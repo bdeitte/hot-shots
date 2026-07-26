@@ -128,4 +128,19 @@ describe('#udpDnsLookupCount', () => {
       });
     });
   });
+
+  it('performs one dns lookup per TTL with cacheDns and a hostname', done => {
+    server = createServer(udpServerType, opts => {
+      counter = dnsCounter.startCounting();
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        cacheDnsTtl: 60000
+      }), 'client');
+      sendN(statsd, 20, () => {
+        assert.strictEqual(counter.count, 1, `expected 1 lookup, saw ${counter.hostnames}`);
+        done();
+      });
+    });
+  });
 });

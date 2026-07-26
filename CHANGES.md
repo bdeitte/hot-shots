@@ -4,6 +4,7 @@ CHANGELOG
 ## Unreleased
 
 * [@bdeitte](https://github.com/bdeitte) Bypass `dns.lookup` for IP literals on every UDP send, not just when the configured `host` is an IP. Node routes the default address and any hostname resolved by `cacheDns` through the socket's `lookup` option for every packet, so the previous host-only check still paid a `dns.lookup` call (and the APM span it creates) per send in the common no-`host` configuration.
+* [@bdeitte](https://github.com/bdeitte) Fix `cacheDns` performing one DNS lookup per concurrent send during a cold start, since the cache was only populated in the lookup callback. Concurrent sends now share a single in-flight lookup, and a send past the TTL goes out immediately on the previous address while one background lookup refreshes it (stale-while-revalidate), instead of every concurrent stale send triggering its own refresh.
 
 ## 17.1.0 (2026-7-25)
 
