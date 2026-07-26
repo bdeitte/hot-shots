@@ -103,7 +103,7 @@ describe('#udpDnsCacheDrops', () => {
 
       const cap = constants.DNS_MAX_PENDING;
       const resendBudget = 20;
-      const state = { maxPending: 0, reentrantSent: 0 };
+      const state = { maxPending: 0, reentrantSent: 0, finished: false };
 
       const recordMax = () => {
         const len = statsd.socket.getDnsPendingCount();
@@ -119,6 +119,13 @@ describe('#udpDnsCacheDrops', () => {
       // The drop callback now fires on a deferred tick (see the recursion
       // regression test below), so this chain runs to completion - and this
       // test waits for that - before asserting and calling done().
+      //
+      // The cap entries left in the queue forever (dns.lookup never resolves)
+      // share this same callback, and close() now cancels them in afterEach
+      // (see task 4: Client.close() drains sends still queued behind a stuck
+      // lookup instead of orphaning them) - so this fires again after done()
+      // has already run. Guard so the extra cancellation callbacks are a
+      // no-op instead of a double done() call.
       const onDropped = error => {
         recordMax();
         if (!error) {
@@ -129,6 +136,10 @@ describe('#udpDnsCacheDrops', () => {
           statsd.send(`reentrant.${state.reentrantSent}`, {}, onDropped);
           return;
         }
+        if (state.finished) {
+          return;
+        }
+        state.finished = true;
         // The whole chain has run; assert on what it actually exercised, not
         // just that nothing blew up. A test that passes because the queue
         // never filled, or the drop path never fired, would be vacuous.
@@ -167,7 +178,7 @@ describe('#udpDnsCacheDrops', () => {
       // the chain terminates deterministically instead of resending forever
       // against the never-resolving lookup.
       const resendBudget = 5000;
-      const state = { maxPending: 0, reentrantSent: 0 };
+      const state = { maxPending: 0, reentrantSent: 0, finished: false };
 
       const recordMax = () => {
         const len = statsd.socket.getDnsPendingCount();
@@ -176,6 +187,10 @@ describe('#udpDnsCacheDrops', () => {
         }
       };
 
+      // See the equivalent guard in the test above: the cap entries left in
+      // the queue forever share this callback, and close() (afterEach) now
+      // cancels them instead of orphaning them, so this can fire again after
+      // done() has already run.
       const onDropped = error => {
         recordMax();
         if (!error) {
@@ -186,6 +201,10 @@ describe('#udpDnsCacheDrops', () => {
           statsd.send(`reentrant.${state.reentrantSent}`, {}, onDropped);
           return;
         }
+        if (state.finished) {
+          return;
+        }
+        state.finished = true;
         // Reaching here at all (without a RangeError further up the stack,
         // and within the test's timeout) is the regression check: the
         // deferred scheduling must have kept this from recursing.
