@@ -66,9 +66,18 @@ describe('#udpDnsCacheCoalescing', () => {
       clock = sinon.useFakeTimers();
       const cacheDnsTtl = 100;
       let lookupCount = 0;
+      let release;
       dns.lookup = (host, callback) => {
         lookupCount++;
-        callback(null, '127.0.0.1');
+        if (lookupCount === 1) {
+          // Warm-up lookup resolves immediately.
+          callback(null, '127.0.0.1');
+          return;
+        }
+        // The refresh lookup is held open so three concurrent stale sends can
+        // be issued while it is still in flight, proving they share it rather
+        // than each completing before the next is issued.
+        release = () => callback(null, '127.0.0.1');
       };
 
       statsd = createHotShotsClient(Object.assign(opts, {
@@ -88,6 +97,8 @@ describe('#udpDnsCacheCoalescing', () => {
       statsd.send('b', {}, error => assert.strictEqual(error, null));
       statsd.send('c', {}, error => assert.strictEqual(error, null));
 
+      assert.strictEqual(lookupCount, 2, 'concurrent stale sends must share one in-flight refresh');
+      release();
       clock.tick(1);
       assert.strictEqual(lookupCount, 2, 'concurrent stale sends must share one refresh');
       done();
@@ -284,6 +295,41 @@ describe('#udpDnsCacheCoalescing', () => {
         statsd.send(`test.${i}`, {}, onSendFailed);
       }
       release();
+    });
+  });
+
+  it('calls back every queued send exactly once when dns.lookup throws synchronously', done => {
+    server = createServer(udpServerType, opts => {
+      dns.lookup = () => {
+        // Some inputs (e.g. a non-string host) make dns.lookup throw synchronously
+        // instead of invoking its callback.
+        throw new Error('ERR_INVALID_ARG_TYPE: host must be a string');
+      };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true
+      }), 'client');
+
+      const state = { failed: 0 };
+      /**
+       * Callback shared by every queued send, tracking failure count via the
+       * closed-over state object rather than a per-iteration function.
+       * @param {Error|null} error - the lookup error propagated to the send
+       * @returns {void}
+       */
+      const onSendFailed = error => {
+        assert.ok(error, 'queued send should receive the lookup error');
+        state.failed++;
+        if (state.failed === 10) {
+          assert.strictEqual(statsd.messagesInFlight, 0,
+            'messagesInFlight should drain back to 0 after every queued send is called back');
+          done();
+        }
+      };
+      for (let i = 0; i < 10; i++) {
+        statsd.send(`test.${i}`, {}, onSendFailed);
+      }
     });
   });
 });
