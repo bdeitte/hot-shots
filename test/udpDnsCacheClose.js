@@ -249,4 +249,70 @@ describe('#udpDnsCacheClose', () => {
       });
     });
   });
+
+  it('ignores a DNS lookup that resolves after cancellation but before deferred rejections run (regression, late-resolve latch bypass)', done => {
+    server = createServer(udpServerType, opts => {
+      // Release-style stub: we control exactly when the lookup completes,
+      // instead of it never resolving at all.
+      let release;
+      dns.lookup = (host, callback) => {
+        release = () => callback(null, '127.0.0.1');
+      };
+
+      const logged = [];
+      const originalConsoleError = console.error;
+      console.error = msg => logged.push(String(msg));
+
+      const statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true
+      }), 'client');
+
+      const seen = {};
+      const initialIds = ['entry0', 'entry1', 'entry2'];
+      // Each initial entry's cancellation callback resolves the still-in-flight
+      // lookup (once, on the first callback to run) and then resends once,
+      // under a distinct id. This is the exact race the finding describes:
+      // the cancellation callback only runs from cancelPendingSends' flush,
+      // which sets the `cancelled` latch before invoking any callback, so the
+      // lookup resolves strictly AFTER cancellation - but strictly BEFORE any
+      // deferred (setImmediate) rejection for the resend has had a chance to
+      // run. If the late address were allowed to set resolvedAddress and
+      // matter (the bug), the resend would take the warm sendToSocket branch
+      // instead of being rejected.
+      let released = false;
+      const track = id => error => {
+        seen[id] = (seen[id] || 0) + 1;
+        if (!released) {
+          released = true;
+          release();
+        }
+        if (error && !id.endsWith('-retry')) {
+          statsd.send(`retry.${id}`, {}, track(`${id}-retry`));
+        }
+      };
+
+      initialIds.forEach(id => {
+        statsd.send(`test.${id}`, {}, track(id));
+      });
+
+      statsd.close(() => {
+        // Let any still-settling deferred rejections land before asserting.
+        setImmediate(() => {
+          console.error = originalConsoleError;
+          const expectedIds = initialIds.concat(initialIds.map(id => `${id}-retry`));
+          const missing = expectedIds.filter(id => !seen[id]);
+          const duplicates = Object.keys(seen).filter(id => seen[id] > 1);
+          assert.deepStrictEqual(missing, [], `entries never called back: ${missing}`);
+          assert.deepStrictEqual(duplicates, [], `entries called back more than once: ${duplicates}`);
+          assert.strictEqual(statsd.messagesInFlight, 0,
+            `messagesInFlight must settle to 0, saw ${statsd.messagesInFlight}`);
+          const forced = logged.filter(msg => msg.includes('could not clear out messages in flight'));
+          assert.strictEqual(forced.length, 0,
+            'a lookup resolving after cancellation must not trip the force-close path');
+          done();
+        });
+      });
+    });
+  });
 });
