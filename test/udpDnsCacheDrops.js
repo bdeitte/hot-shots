@@ -87,4 +87,53 @@ describe('#udpDnsCacheDrops', () => {
       release();
     });
   });
+
+  it('never lets the pending queue exceed the cap, even when a drop callback sends again', done => {
+    server = createServer(udpServerType, opts => {
+      // dns.lookup never calls back, so every send stays queued (or dropped)
+      // instead of being delivered - this isolates the queue-length invariant
+      // from delivery timing.
+      // eslint-disable-next-line no-empty-function
+      dns.lookup = () => {};
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true
+      }), 'client');
+
+      const cap = constants.DNS_MAX_PENDING;
+      const state = { maxPending: 0, reentrantSent: 0 };
+
+      const recordMax = () => {
+        const len = statsd.socket.getDnsPendingCount();
+        if (len > state.maxPending) {
+          state.maxPending = len;
+        }
+      };
+
+      // A drop callback that synchronously sends again, e.g. an errorHandler
+      // that emits a metric on drop. On the old shift-then-callback-then-push
+      // ordering, this reentrant send observes the queue one entry under the
+      // cap and does not drop, so the queue creeps upward by one per send.
+      const onDropped = error => {
+        recordMax();
+        if (error && state.reentrantSent < 200) {
+          state.reentrantSent++;
+          statsd.send('reentrant', {}, onDropped);
+        }
+      };
+
+      // Send well past the cap so any creep is unambiguous, not a one-off
+      // overshoot.
+      const extra = 50;
+      for (let i = 0; i < cap + extra; i++) {
+        statsd.send(`test.${i}`, {}, onDropped);
+        recordMax();
+      }
+
+      assert.ok(state.maxPending <= cap,
+        `pending queue must never exceed the cap of ${cap}; observed ${state.maxPending}`);
+      done();
+    });
+  });
 });
