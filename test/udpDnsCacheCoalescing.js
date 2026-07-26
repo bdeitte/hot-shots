@@ -143,6 +143,65 @@ describe('#udpDnsCacheCoalescing', () => {
     });
   });
 
+  it('backs off for a full TTL after a failed refresh instead of retrying every send', done => {
+    server = createServer(udpServerType, opts => {
+      clock = sinon.useFakeTimers();
+      const cacheDnsTtl = 100;
+      let lookupCount = 0;
+      dns.lookup = (host, callback) => {
+        lookupCount++;
+        if (lookupCount === 1) {
+          // Warm the cache with one successful lookup.
+          callback(null, '1.1.1.1');
+          return;
+        }
+        // Every refresh after that fails, like a fast-failing resolver
+        // (cached NXDOMAIN, SERVFAIL).
+        callback(new Error('always fails'));
+      };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        cacheDnsTtl: cacheDnsTtl,
+        // eslint-disable-next-line no-empty-function
+        errorHandler: () => {}
+      }), 'client');
+
+      statsd.send('warm', {}, error => assert.strictEqual(error, null));
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 1);
+
+      clock.tick(cacheDnsTtl + 50);
+
+      // Several sends immediately after the TTL expires must share the one
+      // failed refresh, not each trigger their own lookup.
+      // eslint-disable-next-line no-empty-function
+      statsd.send('a', {}, () => {});
+      // eslint-disable-next-line no-empty-function
+      statsd.send('b', {}, () => {});
+      // eslint-disable-next-line no-empty-function
+      statsd.send('c', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 2, 'failed refresh should cool down, not retry per send');
+
+      // Still within the cooldown TTL: no further lookups.
+      clock.tick(cacheDnsTtl / 2);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('d', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 2, 'no additional lookup before the cooldown TTL elapses');
+
+      // Past the cooldown TTL: exactly one more attempt.
+      clock.tick(cacheDnsTtl + 50);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('e', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 3, 'cooldown should allow exactly one more attempt per TTL');
+      done();
+    });
+  });
+
   it('reports a refresh failure once per streak and re-arms after a success', done => {
     server = createServer(udpServerType, opts => {
       clock = sinon.useFakeTimers();
