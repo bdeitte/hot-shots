@@ -68,6 +68,7 @@ describe('#udpDnsCacheTransport', () => {
         const socketMock = mockDgramSocket();
 
         statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
           cacheDns: true
         }), 'client');
 
@@ -99,6 +100,7 @@ describe('#udpDnsCacheTransport', () => {
         const socketMock = mockDgramSocket();
 
         statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
           cacheDns: true
         }), 'client');
 
@@ -134,6 +136,7 @@ describe('#udpDnsCacheTransport', () => {
 
         const cacheDnsTtl = 100;
         statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
           cacheDns: true,
           cacheDnsTtl: cacheDnsTtl
         }), 'client');
@@ -175,6 +178,7 @@ describe('#udpDnsCacheTransport', () => {
         mockDgramSocket();
 
         statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
           cacheDns: true,
         }), 'client');
 
@@ -260,6 +264,7 @@ describe('#udpDnsCacheTransport', () => {
 
         const cacheDnsTtl = 100;
         statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
           cacheDns: true,
           cacheDnsTtl: cacheDnsTtl
         }), 'client');
@@ -282,7 +287,17 @@ describe('#udpDnsCacheTransport', () => {
         // Advance past TTL
         clock.tick(cacheDnsTtl + 50);
 
+        // Stale-while-revalidate: this send goes out on the previous address
+        // while the refresh runs in the background.
         statsd.send('second', {}, (error) => {
+          assert.strictEqual(error, null);
+        });
+
+        clock.tick(1);
+        assert.strictEqual(socketMock.host, '1.1.1.1');
+
+        // The next send picks up the refreshed address.
+        statsd.send('third', {}, (error) => {
           assert.strictEqual(error, null);
         });
 
