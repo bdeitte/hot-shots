@@ -143,4 +143,110 @@ describe('#udpDnsCacheClose', () => {
       });
     });
   });
+
+  it('does not go negative or force-close when a resending errorHandler races the cancel pass (regression, Critical 1)', done => {
+    server = createServer(udpServerType, opts => {
+      // Never invoke the callback: the lookup stays in flight forever.
+      // eslint-disable-next-line no-empty-function
+      dns.lookup = () => {};
+
+      const logged = [];
+      const originalConsoleError = console.error;
+      console.error = msg => logged.push(String(msg));
+
+      // A bounded stand-in for the documented "emit a metric on send failure"
+      // errorHandler pattern: an errorHandler that resends unconditionally,
+      // forever, on every single failure (including failures caused by its
+      // own resend) cannot be driven to completion by any library-side fix -
+      // it is a caller-side retry storm, not a defect this task can cure.
+      // This caps the resends the same way test/udpDnsCacheDrops.js's
+      // existing resendBudget tests do, while still exercising exactly the
+      // reported shape: no per-send callbacks anywhere, only errorHandler,
+      // against a lookup that never resolves.
+      const resendBudget = 20;
+      const state = { errorHandlerCalls: 0 };
+
+      const statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        errorHandler: () => {
+          state.errorHandlerCalls++;
+          if (state.errorHandlerCalls <= resendBudget) {
+            statsd.increment('send.failure');
+          }
+        }
+      }), 'client');
+
+      statsd.increment('a');
+      statsd.increment('b');
+      statsd.increment('c');
+
+      statsd.close(() => {
+        // Let any still-settling deferred rejections land before asserting.
+        setImmediate(() => {
+          console.error = originalConsoleError;
+          assert.strictEqual(statsd.messagesInFlight, 0,
+            `messagesInFlight must not go negative or stay stuck, saw ${statsd.messagesInFlight}`);
+          const forced = logged.filter(msg => msg.includes('could not clear out messages in flight'));
+          assert.strictEqual(forced.length, 0,
+            'a resending errorHandler must not spuriously trip the force-close path');
+          assert.ok(state.errorHandlerCalls > 3,
+            'the resend chain should have run beyond the 3 original sends');
+          done();
+        });
+      });
+    });
+  });
+
+  it('calls every entry back exactly once across a close with a resending callback (regression, Critical 2)', done => {
+    server = createServer(udpServerType, opts => {
+      // Never invoke the callback: the lookup stays in flight forever.
+      // eslint-disable-next-line no-empty-function
+      dns.lookup = () => {};
+
+      const statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true
+      }), 'client');
+
+      const seen = {};
+      const initialIds = ['entry0', 'entry1', 'entry2'];
+      const maxGeneration = 2;
+      // Every entry's callback resends exactly once more, through two bounded
+      // generations of retry (generation 0 -> 1 -> 2, which does not resend
+      // again). A single-pass cancellation with no latch only ever gets two
+      // chances to flush `pending` (cancelPendingSends' one pass, then
+      // transport.close()'s one pass) - enough to catch generation 1, but
+      // generation 2 (created by generation 1's callback, during
+      // transport.close()'s flush) has no third flush to catch it and is
+      // orphaned forever. The latch fix must instead reject generation 2
+      // immediately (no more `pending` involved at all), so nothing is ever
+      // missing - and nothing is ever double-invoked either.
+      const track = (id, generation) => error => {
+        seen[id] = (seen[id] || 0) + 1;
+        if (error && generation < maxGeneration) {
+          const nextId = `${id}-gen${generation + 1}`;
+          statsd.send(`retry.${nextId}`, {}, track(nextId, generation + 1));
+        }
+      };
+
+      initialIds.forEach(id => {
+        statsd.send(`test.${id}`, {}, track(id, 0));
+      });
+
+      statsd.close(() => {
+        // Let the deferred later-generation rejections land before asserting.
+        setImmediate(() => {
+          const expectedIds = initialIds.
+            concat(initialIds.map(id => `${id}-gen1`)).
+            concat(initialIds.map(id => `${id}-gen1-gen2`));
+          const missing = expectedIds.filter(id => !seen[id]);
+          const duplicates = Object.keys(seen).filter(id => seen[id] > 1);
+          assert.deepStrictEqual(missing, [], `entries never called back: ${missing}`);
+          assert.deepStrictEqual(duplicates, [], `entries called back more than once: ${duplicates}`);
+          done();
+        });
+      });
+    });
+  });
 });
