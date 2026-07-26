@@ -315,4 +315,35 @@ describe('#udpDnsCacheClose', () => {
       });
     });
   });
+
+  it('does not report DNS cancellation for a closed client that never enabled cacheDns', done => {
+    server = createServer(udpServerType, opts => {
+      const statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost'
+        // cacheDns intentionally left off - this is exactly the case
+        // isDnsSendBlocked's `args.cacheDns` guard exists to leave untouched.
+        // Without that guard, close() latching `cancelled` unconditionally
+        // would make a post-close send here look DNS-cancelled even though
+        // this client never queued anything behind a lookup at all.
+      }), 'client');
+
+      statsd.close(() => {
+        const calls = [];
+        statsd.send('after-close', {}, error => {
+          calls.push(error);
+        });
+
+        // Let any deferred callback land before asserting exactly-once.
+        setImmediate(() => {
+          assert.strictEqual(calls.length, 1, `callback must fire exactly once, saw ${calls.length}`);
+          assert.ok(calls[0], 'a send after close should still fail');
+          assert.notStrictEqual(calls[0].code, constants.DNS_CANCELLED_CODE,
+            'a client that never enabled cacheDns must not report DNS cancellation on close');
+          assert.strictEqual(statsd.messagesInFlight, 0,
+            `messagesInFlight must settle to 0, saw ${statsd.messagesInFlight}`);
+          done();
+        });
+      });
+    });
+  });
 });
