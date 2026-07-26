@@ -1,6 +1,10 @@
 CHANGELOG
 =========
 
+## Unreleased
+
+* [@bdeitte](https://github.com/bdeitte) Bypass `dns.lookup` for IP literals on every UDP send, not just when the configured `host` is an IP. Node routes the default address and any hostname resolved by `cacheDns` through the socket's `lookup` option for every packet, so the previous host-only check still paid a `dns.lookup` call (and the APM span it creates) per send in the common no-`host` configuration.
+
 ## 17.1.0 (2026-7-25)
 
 * [@bdeitte](https://github.com/bdeitte) Parse whitespace-delimited `DD_TAGS` / `DATADOG_TAGS` values: when the value contains no comma, whitespace is used as the separator, matching `dd-trace-js` and the Datadog Agent. See [#325](https://github.com/bdeitte/hot-shots/issues/325)
