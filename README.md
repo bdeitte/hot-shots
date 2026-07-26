@@ -92,7 +92,10 @@ Parameters (specified as one object passed into hot-shots):
   goes out immediately on the previous address while one background lookup
   refreshes it; a failed refresh is reported once per failure streak (via
   `errorHandler`, or `console.error` if none is set) and sends keep using the
-  last good address until the refresh succeeds.
+  last good address until the refresh succeeds. A failed refresh still
+  advances the cache timestamp, so the next attempt waits a full
+  *cacheDnsTtl* rather than retrying on every send; once DNS recovers, the
+  client may keep using the stale address for up to one extra TTL.
 * `cacheDnsTtl`: time-to-live of dns lookups in milliseconds, when *cacheDns* is enabled. `default: 60000`
 * `mock`:        Create a mock StatsD instance, using a mock transport that doesn't create real sockets.
   Stats are not sent to the server but can be read from mockBuffer for testing.  Note that
@@ -114,6 +117,12 @@ Parameters (specified as one object passed into hot-shots):
 * `protocol`: Use `tcp` option for TCP protocol, or `uds` for the Unix Domain Socket protocol or `stream` for the raw stream. Defaults to `udp` otherwise.
 * `path`: Used only when the protocol is `uds`. Defaults to `/var/run/datadog/dsd.socket`.
 * `stream`: Reference to a stream instance. Used only when the protocol is `stream`.
+
+When *host* is an IP address, or is left unset entirely, hot-shots performs no
+DNS lookups regardless of *cacheDns*. Node otherwise routes every UDP packet's
+destination through `dns.lookup`, which is a no-op for an IP address but still
+registers as an async operation that APM tools report as a span, so the client
+short-circuits it.
 
 If no transport options (`host`, `port`, `protocol`, `path`, `stream`) are passed, the transport can be configured from environment variables for parity with the official DogStatsD clients (these are Datadog-agent variables and are ignored for `telegraf` clients):
 * `DD_DOGSTATSD_URL`: A transport URL. `udp://host[:port]` configures UDP (port defaults to 8125), while `unix:///path/to/socket` or `unixgram:///path/to/socket` configures a Unix Domain Socket. The `unixstream://` scheme is not supported.
@@ -367,6 +376,8 @@ You can have an error in both the message and close callbacks. See [Callback sem
 If the optional callback is not given, an error is thrown in some cases and a console.error message is used in others. An error will only be explicitly thrown when there is a missing callback or if it is some potential configuration issue to be fixed.
 
 For broad error coverage, specify an `errorHandler` in your root client. It catches errors in socket setup, sending of messages, and closing of the socket.
+
+An `errorHandler` that unconditionally sends a metric on every call has no terminating condition: that send can itself fail, invoking the handler again. This applies to every transport, not just UDP, and is not specific to any one failure mode, but a stalled DNS resolver is one easy way to hit it. Guard a handler like this with a re-entrancy flag or a counter.
 
 In unbuffered mode (`maxBufferSize === 0`), if you specify both an `errorHandler` and a per-metric callback, the callback takes precedence. In buffered mode (`maxBufferSize > 0`), per-metric callbacks do not receive send errors from periodic or overflow-driven flushes — those errors go to `errorHandler` (or are logged). See [Callback semantics](#callback-semantics) for details.
 
