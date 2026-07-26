@@ -357,6 +357,66 @@ describe('#udpDnsCacheCoalescing', () => {
     });
   });
 
+  it('backs off for a full TTL after a synchronous-throw refresh, on a warm cache', done => {
+    server = createServer(udpServerType, opts => {
+      clock = sinon.useFakeTimers();
+      const cacheDnsTtl = 100;
+      let lookupCount = 0;
+      dns.lookup = (host, callback) => {
+        lookupCount++;
+        if (lookupCount === 1) {
+          // Warm the cache with one successful lookup.
+          callback(null, '1.1.1.1');
+          return;
+        }
+        if (lookupCount === 2) {
+          // The refresh triggered once the cache goes stale throws
+          // synchronously instead of calling back, like an invalid-argument
+          // dns.lookup failure.
+          throw new Error('ERR_INVALID_ARG_TYPE: host must be a string');
+        }
+        callback(null, '1.1.1.1');
+      };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        cacheDnsTtl: cacheDnsTtl,
+        // eslint-disable-next-line no-empty-function
+        errorHandler: () => {}
+      }), 'client');
+
+      // eslint-disable-next-line no-empty-function
+      statsd.send('warm', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 1);
+
+      // Past the TTL: the send goes out on the stale address and triggers a
+      // background refresh, which throws synchronously.
+      clock.tick(cacheDnsTtl + 50);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('a', {}, () => {});
+      assert.strictEqual(lookupCount, 2, 'stale send should trigger exactly one refresh attempt');
+
+      // Still within the cooldown TTL earned by the synchronous-throw catch
+      // block: no further lookups.
+      clock.tick(cacheDnsTtl / 2);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('b', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 2,
+        'no additional lookup before the cooldown TTL elapses after a synchronous throw');
+
+      // Past the cooldown TTL: exactly one more attempt.
+      clock.tick(cacheDnsTtl + 50);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('c', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 3, 'cooldown should allow exactly one more attempt per TTL');
+      done();
+    });
+  });
+
   it('calls back every queued send exactly once when dns.lookup throws synchronously', done => {
     server = createServer(udpServerType, opts => {
       dns.lookup = () => {

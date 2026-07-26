@@ -74,7 +74,8 @@ describe('#udpDnsCacheDrops', () => {
       const onSent = () => {
         state.completed++;
         if (state.completed === cap + 1) {
-          assert.strictEqual(statsd.telemetry.packetsDroppedWriter, 1);
+          assert.strictEqual(statsd.telemetry.packetsDroppedQueue, 1);
+          assert.strictEqual(statsd.telemetry.packetsDroppedWriter, 0);
           done();
         }
       };
