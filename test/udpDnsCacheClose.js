@@ -390,6 +390,8 @@ describe('#udpDnsCacheClose', () => {
           assert.ok(calls[0], 'a send after close should still fail');
           assert.notStrictEqual(calls[0].code, constants.DNS_CANCELLED_CODE,
             'a client that never enabled cacheDns must not report DNS cancellation on close');
+          assert.notStrictEqual(calls[0].code, constants.DNS_CLOSED_CODE,
+            'a client that never enabled cacheDns must not report a DNS-closed-queue code either');
           assert.strictEqual(statsd.messagesInFlight, 0,
             `messagesInFlight must settle to 0, saw ${statsd.messagesInFlight}`);
           done();
@@ -437,8 +439,48 @@ describe('#udpDnsCacheClose', () => {
               `error message must not claim DNS resolution was cancelled, got: ${message}`);
             assert.ok(message && message.includes('closed'),
               `error message should describe a closed client, got: ${message}`);
+            assert.strictEqual(socketErrors[0].code, constants.DNS_CLOSED_CODE,
+              'a send arriving after close on a warm client should carry DNS_CLOSED_CODE, not DNS_CANCELLED_CODE');
             done();
           });
+        });
+      });
+    });
+  });
+
+  it('uses distinct codes for a cancelled in-flight lookup versus a send arriving after close (regression, DNS_CANCELLED_CODE vs DNS_CLOSED_CODE)', done => {
+    server = createServer(udpServerType, opts => {
+      // Never invoke the callback: the lookup for the first send stays in
+      // flight forever, so close() must cancel it mid-lookup - the genuine
+      // DNS_CANCELLED_CODE case.
+      // eslint-disable-next-line no-empty-function
+      dns.lookup = () => {};
+
+      const statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true
+      }), 'client');
+
+      // Queued behind the never-resolving lookup - close() below will cancel
+      // this one mid-flight.
+      let cancelledError = null;
+      statsd.send('queued-before-close', {}, err => {
+        cancelledError = err;
+      });
+
+      statsd.close(() => {
+        // Arrives after close() already latched the queue shut - a
+        // different case from the one above, even though both fail.
+        statsd.send('after-close', {}, closedError => {
+          assert.ok(cancelledError, 'the queued send should fail when close() cancels its lookup');
+          assert.ok(closedError, 'the post-close send should also fail');
+          assert.strictEqual(cancelledError.code, constants.DNS_CANCELLED_CODE,
+            `a send queued and cancelled mid-lookup should carry DNS_CANCELLED_CODE, got ${cancelledError.code}`);
+          assert.strictEqual(closedError.code, constants.DNS_CLOSED_CODE,
+            `a send arriving after close should carry DNS_CLOSED_CODE, got ${closedError.code}`);
+          assert.notStrictEqual(cancelledError.code, closedError.code,
+            'the two cases must be distinguishable by error code');
+          done();
         });
       });
     });
