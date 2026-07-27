@@ -98,7 +98,9 @@ Parameters (specified as one object passed into hot-shots):
   lookup per metric. The cost is that recovery may go unnoticed for up to one
   extra TTL. During that wait a client that has never resolved an address has
   nowhere to send, so its sends fail immediately instead of queueing; a client
-  with a cached address keeps using it.
+  with a cached address keeps using it. A `close()` whose final flush is refused
+  this way still closes the socket, reporting the dropped metrics through
+  `errorHandler` (or the console) rather than failing the close.
 * `cacheDnsTtl`: time-to-live of dns lookups in milliseconds, when *cacheDns* is enabled. `default: 60000`
 * `mock`:        Create a mock StatsD instance, using a mock transport that doesn't create real sockets.
   Stats are not sent to the server but can be read from mockBuffer for testing.  Note that

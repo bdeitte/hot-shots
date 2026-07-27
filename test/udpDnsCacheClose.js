@@ -547,4 +547,51 @@ describe('#udpDnsCacheClose', () => {
       });
     });
   });
+
+  it('still closes the socket when the final flush is refused by the DNS cooldown', done => {
+    server = createServer(udpServerType, opts => {
+      // Every lookup fails, so the first send arms the cooldown and the
+      // buffered final flush below is refused without a lookup being attempted.
+      dns.lookup = (host, callback) => setImmediate(() => callback(new Error('ENOTFOUND')));
+
+      const statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        cacheDnsTtl: 60000,
+        maxBufferSize: 1024,
+        bufferFlushInterval: 100000,
+        // eslint-disable-next-line no-empty-function
+        errorHandler: () => {}
+      }), 'client');
+
+      // Arm the cooldown with one genuinely failed lookup.
+      statsd.increment('arm.the.cooldown');
+      statsd.flush();
+
+      setTimeout(() => {
+        const state = { closed: false };
+        const realSocketClose = statsd.socket.close.bind(statsd.socket);
+        statsd.socket.close = () => {
+          state.closed = true;
+          realSocketClose();
+        };
+
+        // Give the final flush a payload to be refused.
+        statsd.increment('buffered.during.cooldown');
+        assert.ok(statsd.bufferLength > 0, 'metric should be sitting in the buffer');
+
+        statsd.close(closeError => {
+          // The refusal is reported through errorHandler, not by failing the
+          // close: a refused flush means nothing reached the socket, so there
+          // is no reason to abort the close and leak the socket.
+          assert.ok(!closeError,
+            `close should not fail on a refused final flush, got ${closeError && closeError.message}`);
+          assert.ok(state.closed, 'the socket must still be closed after a refused final flush');
+          assert.strictEqual(statsd.messagesInFlight, 0,
+            `messagesInFlight must settle to 0, saw ${statsd.messagesInFlight}`);
+          done();
+        });
+      }, 50);
+    });
+  });
 });
