@@ -2,6 +2,7 @@ const assert = require('assert');
 const constants = require('../lib/constants');
 const dns = require('dns');
 const helpers = require('./helpers/helpers.js');
+const sinon = require('sinon');
 
 const createHotShotsClient = helpers.createHotShotsClient;
 const createServer = helpers.createServer;
@@ -10,9 +11,14 @@ describe('#udpDnsCacheClose', () => {
   const udpServerType = 'udp';
   const originalDnsLookup = dns.lookup;
   let server;
+  let clock;
 
   afterEach(done => {
     dns.lookup = originalDnsLookup;
+    if (clock) {
+      clock.restore();
+      clock = null;
+    }
     if (server) {
       server.close(() => done());
       server = null;
@@ -54,11 +60,15 @@ describe('#udpDnsCacheClose', () => {
     });
   });
 
-  it('completes close in buffered mode when the final flush lookup is stuck', done => {
+  it('completes close in buffered mode when the final flush lookup is stuck (regression, Important 2)', done => {
     server = createServer(udpServerType, opts => {
-      // Never invoke the callback: the lookup stays in flight forever.
+      // Never invoke the callback: the lookup stays in flight forever. The
+      // close-time flush guard now waits DNS_CLOSE_FLUSH_TIMEOUT (5s) instead of
+      // the old closingFlushInterval * 11 (~550ms) budget, so drive it with fake
+      // timers rather than actually waiting 5 real seconds.
       // eslint-disable-next-line no-empty-function
       dns.lookup = () => {};
+      clock = sinon.useFakeTimers();
 
       const errors = [];
       const statsd = createHotShotsClient(Object.assign(opts, {
@@ -80,6 +90,47 @@ describe('#udpDnsCacheClose', () => {
         assert.strictEqual(errors.length, 1, 'the dropped final flush should be reported');
         assert.strictEqual(errors[0].code, constants.DNS_CANCELLED_CODE);
         done();
+      });
+
+      // Advance past DNS_CLOSE_FLUSH_TIMEOUT (5000ms) to fire the flush guard,
+      // plus a little more to cover the subsequent drain-wait tick.
+      clock.tick(constants.DNS_CLOSE_FLUSH_TIMEOUT + 1000);
+    });
+  });
+
+  it('delivers the buffered final flush when a slow first lookup resolves within the close budget (regression, Important 2)', done => {
+    server = createServer(udpServerType, opts => {
+      // Resolves at ~800ms - well under the new 5s DNS_CLOSE_FLUSH_TIMEOUT budget,
+      // but well past the old ~550ms drain-only budget that used to silently drop
+      // this flush. Real timers here (not faked): this exercises the real send
+      // path end-to-end, and 800ms real wait is short enough to stay well inside
+      // mocha's 5000ms per-test timeout.
+      dns.lookup = (host, callback) => {
+        setTimeout(() => callback(null, '127.0.0.1'), 800);
+      };
+
+      const statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        maxBufferSize: 1024,
+        bufferFlushInterval: 100000
+      }), 'client');
+
+      let received = null;
+      server.on('metrics', metrics => {
+        received = metrics;
+      });
+
+      statsd.increment('slow.lookup.metric');
+      assert.ok(statsd.bufferLength > 0, 'metric should be sitting in the buffer');
+
+      statsd.close(closeError => {
+        assert.ok(!closeError, `close should not fail, got ${closeError && closeError.message}`);
+        setTimeout(() => {
+          assert.ok(received && received.includes('slow.lookup.metric'),
+            `buffered metric should still be delivered, saw ${received}`);
+          done();
+        }, 50);
       });
     });
   });
@@ -342,6 +393,52 @@ describe('#udpDnsCacheClose', () => {
           assert.strictEqual(statsd.messagesInFlight, 0,
             `messagesInFlight must settle to 0, saw ${statsd.messagesInFlight}`);
           done();
+        });
+      });
+    });
+  });
+
+  it('does not claim DNS was cancelled for an ordinary post-close send on a warmed cacheDns client (regression, Important 1)', done => {
+    server = createServer(udpServerType, opts => {
+      // Resolves successfully right away - the lookup completes long before
+      // close() ever runs, so nothing is stalled or queued behind DNS at close
+      // time. Only the transport's cacheDns queue gets latched closed by
+      // close() itself (finish() cancels it unconditionally on every close).
+      dns.lookup = (host, callback) => callback(null, '127.0.0.1');
+
+      const statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true
+        // Deliberately no errorHandler here: the post-close send below has no
+        // per-call callback either, so the only way to observe the error is a
+        // socket 'error' listener - which is exactly what part (c) of the fix
+        // must still deliver.
+      }), 'client');
+
+      // Warm the cache with a real resolved address before closing.
+      statsd.send('warmup', {}, warmupError => {
+        assert.strictEqual(warmupError, null, 'the warmup send should succeed');
+
+        statsd.close(closeError => {
+          assert.ok(!closeError, `close should not fail, got ${closeError && closeError.message}`);
+
+          const socketErrors = [];
+          statsd.socket.on('error', err => socketErrors.push(err));
+
+          // No callback and no errorHandler: the only path left to observe the
+          // failure is the socket 'error' listener above.
+          statsd.send('after-close', {});
+
+          setImmediate(() => {
+            assert.strictEqual(socketErrors.length, 1,
+              `expected exactly one socket error, saw ${socketErrors.length}`);
+            const message = socketErrors[0] && socketErrors[0].message;
+            assert.ok(message && !(/DNS resolution.*cancelled/).test(message),
+              `error message must not claim DNS resolution was cancelled, got: ${message}`);
+            assert.ok(message && message.includes('closed'),
+              `error message should describe a closed client, got: ${message}`);
+            done();
+          });
         });
       });
     });

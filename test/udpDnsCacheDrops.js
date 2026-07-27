@@ -220,4 +220,76 @@ describe('#udpDnsCacheDrops', () => {
       }
     });
   }).timeout(9000);
+
+  it('never lets messagesInFlight go negative when an overflow batch races finish()\'s force-zero (regression, Important 3)', done => {
+    server = createServer(udpServerType, opts => {
+      // Never resolves: every send stays queued (or overflows and drops)
+      // rather than being delivered, so the flood below keeps racing the
+      // DNS_MAX_PENDING cap for the whole close/drain window.
+      // eslint-disable-next-line no-empty-function
+      dns.lookup = () => {};
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true
+        // Default closingFlushInterval (50ms) -> ~550ms drain budget, matching
+        // the reported repro's default-config case (cfi=50, final=-100).
+      }), 'client');
+
+      const cap = constants.DNS_MAX_PENDING;
+      let sending = true;
+      let created = 0;
+      let seenNegative = false;
+
+      const checkNegative = () => {
+        if (statsd.messagesInFlight < 0) {
+          seenNegative = true;
+        }
+      };
+
+      const floodOnce = () => {
+        if (!sending) {
+          return;
+        }
+        created++;
+        statsd.send(`flood.${created}`, {}, checkNegative);
+        checkNegative();
+      };
+
+      // Prime the queue past the cap so overflow drops start immediately...
+      for (let i = 0; i < cap + 1; i++) {
+        floodOnce();
+      }
+      // ...then keep sending continuously (one per event-loop turn, not a
+      // tight synchronous loop) so a fresh overflow batch - with its
+      // callbacks deferred via setImmediate - is reliably still scheduled
+      // when close()'s drain timeout elapses and finish() force-zeroes
+      // messagesInFlight below.
+      const pump = () => {
+        if (!sending) {
+          return;
+        }
+        floodOnce();
+        setImmediate(pump);
+      };
+      pump();
+
+      statsd.close(() => {
+        sending = false;
+        // Let any overflow-drop callbacks still scheduled from before close()
+        // finished land before asserting on the final settled state.
+        setTimeout(() => {
+          assert.strictEqual(seenNegative, false,
+            'messagesInFlight must never be observed negative');
+          assert.ok(statsd.messagesInFlight >= 0,
+            `messagesInFlight must settle to >= 0, saw ${statsd.messagesInFlight}`);
+          assert.ok(created > cap,
+            'the flood should have produced more sends than the queue cap to actually exercise overflow');
+          // Already closed above; let afterEach's closeAll skip re-closing.
+          statsd = null;
+          done();
+        }, 100);
+      });
+    });
+  }).timeout(9000);
 });
