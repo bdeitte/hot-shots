@@ -92,10 +92,13 @@ Parameters (specified as one object passed into hot-shots):
   goes out immediately on the previous address while one background lookup
   refreshes it; a failed refresh is reported once per failure streak (via
   `errorHandler`, or `console.error` if none is set) and sends keep using the
-  last good address until the refresh succeeds. A failed refresh still
-  advances the cache timestamp, so the next attempt waits a full
-  *cacheDnsTtl* rather than retrying on every send; once DNS recovers, the
-  client may keep using the stale address for up to one extra TTL.
+  last good address until the refresh succeeds. Any failed lookup, on a cold
+  start or a refresh, waits a full *cacheDnsTtl* before the next attempt rather
+  than retrying on every send, so a fast-failing resolver does not produce a
+  lookup per metric. The cost is that recovery may go unnoticed for up to one
+  extra TTL. During that wait a client that has never resolved an address has
+  nowhere to send, so its sends fail immediately instead of queueing; a client
+  with a cached address keeps using it.
 * `cacheDnsTtl`: time-to-live of dns lookups in milliseconds, when *cacheDns* is enabled. `default: 60000`
 * `mock`:        Create a mock StatsD instance, using a mock transport that doesn't create real sockets.
   Stats are not sent to the server but can be read from mockBuffer for testing.  Note that
