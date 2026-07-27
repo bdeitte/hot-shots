@@ -1,6 +1,8 @@
 const assert = require('assert');
 const constants = require('../lib/constants');
+const dgram = require('dgram');
 const dns = require('dns');
+const EventEmitter = require('events');
 const helpers = require('./helpers/helpers.js');
 const sinon = require('sinon');
 
@@ -10,11 +12,13 @@ const createServer = helpers.createServer;
 describe('#udpDnsCacheClose', () => {
   const udpServerType = 'udp';
   const originalDnsLookup = dns.lookup;
+  const originalDgramCreateSocket = dgram.createSocket;
   let server;
   let clock;
 
   afterEach(done => {
     dns.lookup = originalDnsLookup;
+    dgram.createSocket = originalDgramCreateSocket;
     if (clock) {
       clock.restore();
       clock = null;
@@ -480,6 +484,64 @@ describe('#udpDnsCacheClose', () => {
             `a send arriving after close should carry DNS_CLOSED_CODE, got ${closedError.code}`);
           assert.notStrictEqual(cancelledError.code, closedError.code,
             'the two cases must be distinguishable by error code');
+          done();
+        });
+      });
+    });
+  });
+
+  it('completes a second close() on an already-closed cacheDns client (regression, close() must accept DNS_CLOSED_CODE too)', done => {
+    server = createServer(udpServerType, opts => {
+      // Resolves successfully right away, so the first close() latches the
+      // queue shut without ever cancelling an in-flight lookup - the second
+      // close()'s own final flush is what then gets rejected with
+      // DNS_CLOSED_CODE (not DNS_CANCELLED_CODE), since the queue was already
+      // closed by the first close() by the time it runs.
+      dns.lookup = (host, callback) => callback(null, '127.0.0.1');
+
+      // A real dgram socket throws ERR_SOCKET_DGRAM_NOT_RUNNING on a second
+      // close() regardless of any DNS-code handling - that's pre-existing,
+      // general repeat-close behavior (reproduced independently, outside this
+      // suite, against an unmocked client), orthogonal to what this test
+      // targets. Mock the socket with an idempotent close() - emitting
+      // 'close' the way the real socket eventually does, so Client._close()'s
+      // listener-based callback still fires - so the assertions below isolate
+      // exactly the regression under test: whether close()'s flush-error
+      // branch lets a second close reach finish() at all for a DNS_CLOSED_CODE
+      // flush error, the way it already does for DNS_CANCELLED_CODE.
+      const socketMock = new EventEmitter();
+      socketMock.send = (buf, offset, length, port, host, callback) => callback();
+      socketMock.close = () => setImmediate(() => socketMock.emit('close'));
+      // eslint-disable-next-line no-empty-function
+      socketMock.unref = () => {};
+      dgram.createSocket = () => socketMock;
+
+      const statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        maxBufferSize: 1024,
+        bufferFlushInterval: 100000
+      }), 'client');
+
+      // Buffered mode: this just queues - the actual dns.lookup (warming the
+      // cache) happens when the buffer is flushed, which the first close()
+      // below triggers.
+      statsd.increment('warmup');
+      assert.ok(statsd.bufferLength > 0, 'metric should be sitting in the buffer');
+
+      statsd.close(firstCloseError => {
+        assert.ok(!firstCloseError, `first close should not fail, got ${firstCloseError && firstCloseError.message}`);
+
+        // Buffer another metric between the two closes so the second
+        // close()'s own final flushQueue() has something to reject.
+        statsd.increment('buffered.after.first.close');
+        assert.ok(statsd.bufferLength > 0, 'metric should be sitting in the buffer');
+
+        statsd.close(secondCloseError => {
+          assert.ok(!secondCloseError,
+            `second close should not fail, got ${secondCloseError && secondCloseError.message}`);
+          assert.strictEqual(statsd.messagesInFlight, 0,
+            `messagesInFlight must settle to 0 after the second close, saw ${statsd.messagesInFlight}`);
           done();
         });
       });
