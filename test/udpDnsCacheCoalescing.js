@@ -451,4 +451,114 @@ describe('#udpDnsCacheCoalescing', () => {
       }
     });
   });
+
+  it('backs off for a full TTL after a failed cold-start lookup, with no cache to fall back on', done => {
+    server = createServer(udpServerType, opts => {
+      clock = sinon.useFakeTimers();
+      const cacheDnsTtl = 100;
+      let lookupCount = 0;
+      // Never resolves, like a host whose name does not exist. There is no
+      // cached address to fall back on, so the cooldown is the only thing
+      // standing between this and a lookup per send.
+      dns.lookup = (host, callback) => {
+        lookupCount++;
+        callback(new Error('ENOTFOUND'));
+      };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        cacheDnsTtl: cacheDnsTtl,
+        // eslint-disable-next-line no-empty-function
+        errorHandler: () => {}
+      }), 'client');
+
+      // eslint-disable-next-line no-empty-function
+      statsd.send('a', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 1, 'the first cold-start send should attempt one lookup');
+
+      // Still inside the cooldown: these sends must fail without attempting
+      // another lookup, rather than each starting their own.
+      for (let i = 0; i < 10; i++) {
+        // eslint-disable-next-line no-empty-function
+        statsd.send(`b.${i}`, {}, () => {});
+      }
+      clock.tick(cacheDnsTtl / 2);
+      assert.strictEqual(lookupCount, 1, 'cold-start failure should cool down, not retry per send');
+
+      // Past the cooldown: exactly one more attempt.
+      clock.tick(cacheDnsTtl + 50);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('c', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 2, 'cooldown should allow exactly one more attempt per TTL');
+      done();
+    });
+  });
+
+  it('fails a send issued during the cold-start cooldown instead of queueing it forever', done => {
+    server = createServer(udpServerType, opts => {
+      dns.lookup = (host, callback) => callback(new Error('ENOTFOUND'));
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        cacheDnsTtl: 60000
+      }), 'client');
+
+      statsd.send('first', {}, firstError => {
+        assert.ok(firstError, 'the send that triggered the lookup should get the lookup error');
+        // This one arrives while the cooldown is in effect, so there is no
+        // lookup in flight for it to wait behind. It must call back rather than
+        // sit in the pending queue until close().
+        statsd.send('during-cooldown', {}, error => {
+          assert.ok(error, 'a send during the cooldown should fail rather than queue');
+          assert.ok(error.message.includes('recently failed'),
+            `expected a cooldown message, got: ${error.message}`);
+          assert.strictEqual(statsd.socket.getDnsPendingCount(), 0,
+            'nothing should be left queued behind a lookup that is not running');
+          assert.strictEqual(statsd.messagesInFlight, 0,
+            'messagesInFlight should drain back to 0');
+          done();
+        });
+      });
+    });
+  });
+
+  it('does not recurse without bound when a resending errorHandler meets a throwing lookup', done => {
+    server = createServer(udpServerType, opts => {
+      dns.lookup = () => {
+        throw new Error('ERR_INVALID_ARG_TYPE: host must be a string');
+      };
+
+      // Raised so the depth measurements below are not truncated at the default
+      // limit of 10 frames, which would hide the recursion this guards against.
+      const originalStackLimit = Error.stackTraceLimit;
+      Error.stackTraceLimit = Infinity;
+
+      const state = { calls: 0, maxDepth: 0 };
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        // The documented "emit a metric on send failure" pattern. Before the
+        // failure paths were deferred, this re-entered the throwing lookup on
+        // the same stack frame and grew the stack until the process wedged.
+        errorHandler: () => {
+          state.calls++;
+          state.maxDepth = Math.max(state.maxDepth, new Error().stack.split('\n').length);
+          if (state.calls < 200) {
+            statsd.increment('resend');
+            return;
+          }
+          Error.stackTraceLimit = originalStackLimit;
+          assert.ok(state.maxDepth < 100,
+            `each failure should land on a fresh tick, but the stack grew to ${state.maxDepth} frames`);
+          done();
+        }
+      }), 'client');
+
+      statsd.increment('first');
+    });
+  });
 });
