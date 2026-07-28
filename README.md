@@ -87,20 +87,14 @@ Parameters (specified as one object passed into hot-shots):
 * `tagSeparator`: Separate tags with character `default: ','`. Note does not work with `telegraf` option.
 * `globalize`:   Expose this StatsD instance globally. `default: false`
 * `cacheDns`:    Caches dns lookup to *host* for *cacheDnsTtl*, only used
-  when protocol is `udp`, `default: false`. Concurrent sends during a cold
-  start share a single lookup. Once cached, a send after the TTL expires
-  goes out immediately on the previous address while one background lookup
-  refreshes it; a failed refresh is reported once per failure streak (via
-  `errorHandler`, or `console.error` if none is set) and sends keep using the
-  last good address until the refresh succeeds. Any failed lookup, on a cold
-  start or a refresh, waits a full *cacheDnsTtl* before the next attempt rather
-  than retrying on every send, so a fast-failing resolver does not produce a
-  lookup per metric. The cost is that recovery may go unnoticed for up to one
-  extra TTL. During that wait a client that has never resolved an address has
-  nowhere to send, so its sends fail immediately instead of queueing; a client
-  with a cached address keeps using it. A `close()` whose final flush is refused
-  this way still closes the socket, reporting the dropped metrics through
-  `errorHandler` (or the console) rather than failing the close.
+  when protocol is `udp`, `default: false`. Concurrent sends share a single
+  lookup, and a send after the TTL expires goes out immediately on the previous
+  address while one lookup refreshes it in the background. A failed lookup waits
+  a full *cacheDnsTtl* before the next attempt rather than retrying on every
+  send, so recovery may go unnoticed for up to one extra TTL; during that wait a
+  client with a cached address keeps using it, while one that has never resolved
+  an address fails its sends. A failed refresh is reported once per failure
+  streak via `errorHandler`, or `console.error` if none is set.
 * `cacheDnsTtl`: time-to-live of dns lookups in milliseconds, when *cacheDns* is enabled. `default: 60000`
 * `mock`:        Create a mock StatsD instance, using a mock transport that doesn't create real sockets.
   Stats are not sent to the server but can be read from mockBuffer for testing.  Note that
@@ -121,22 +115,18 @@ Parameters (specified as one object passed into hot-shots):
 * `useDefaultRoute`: Use the default interface on a Linux system. Useful when running in containers
 * `protocol`: Use `tcp` option for TCP protocol, or `uds` for the Unix Domain Socket protocol or `stream` for the raw stream. Defaults to `udp` otherwise.
 * `path`: Used only when the protocol is `uds`. Defaults to `/var/run/datadog/dsd.socket`.
-* `stream`: Reference to a stream instance. Used only when the protocol is `stream`. Destroying the stream yourself before calling `close()` is supported; `close()` still completes and invokes its callback.
+* `stream`: Reference to a stream instance. Used only when the protocol is `stream`. Destroying the stream yourself before calling `close()` is supported.
 
-For `tcp` and `stream` clients, Node queues writes in memory without limit while a
-socket is still connecting or its peer has stopped reading, so an unreachable host
-would otherwise turn every metric into retained memory. Once a transport has 1 MB
-waiting to flush, further sends are refused: the callback (or `errorHandler`)
-receives an error with code `HOTSHOTS_WRITE_QUEUE_FULL`, and with
-`includeDatadogTelemetry` enabled the drop is counted as `packets_dropped_queue`.
-Writes to a healthy peer drain immediately, so this is never reached in normal
-operation.
+For `tcp` and `stream` clients, sends are refused once 1 MB is waiting to flush,
+since Node otherwise queues writes in memory without limit while a socket is
+connecting or its peer has stopped reading. Refused sends fail with code
+`HOTSHOTS_WRITE_QUEUE_FULL` and count as `packets_dropped_queue`. Writes to a
+healthy peer drain immediately, so this is not reached in normal operation.
 
-For UDP clients, when *host* is an IP address, or is left unset entirely,
-hot-shots performs no DNS lookups regardless of *cacheDns*. Node otherwise
-routes every UDP packet's destination through `dns.lookup`, which is a no-op
-for an IP address but still registers as an async operation that APM tools
-report as a span, so the client short-circuits it.
+For UDP clients, when *host* is an IP address or is left unset, hot-shots
+performs no DNS lookups regardless of *cacheDns*. Node otherwise routes every
+packet's destination through `dns.lookup`, which is a no-op for an IP address
+but still registers as an async operation that APM tools report as a span.
 
 If no transport options (`host`, `port`, `protocol`, `path`, `stream`) are passed, the transport can be configured from environment variables for parity with the official DogStatsD clients (these are Datadog-agent variables and are ignored for `telegraf` clients):
 * `DD_DOGSTATSD_URL`: A transport URL. `udp://host[:port]` configures UDP (port defaults to 8125), while `unix:///path/to/socket` or `unixgram:///path/to/socket` configures a Unix Domain Socket. The `unixstream://` scheme is not supported.
@@ -147,7 +137,7 @@ Precedence is: explicit transport options > `DD_DOGSTATSD_URL` > `DD_DOGSTATSD_S
 * `tcpGracefulRestartRateLimit`: Used only when the protocol is `tcp`. Time (ms) between re-creating the socket. Defaults to `1000`.
 * `udsGracefulErrorHandling`: Used only when the protocol is `uds`. Boolean indicating whether to handle socket errors gracefully. Defaults to true.
 * `udsGracefulRestartRateLimit`: Used only when the protocol is `uds`. Time (ms) between re-creating the socket. Defaults to `1000`.
-* `closingFlushInterval`: Before closing, StatsD will check for inflight messages. Time (ms) between each check. Defaults to `50`. Separately, `close()` waits up to 5 seconds for the final buffered flush to complete before giving up on it. This covers any transport that can stall the flush — an unresolved DNS lookup with *cacheDns*, or a `tcp`/`stream` write sitting in a socket whose connection never completes. If the flush has not completed after that, it is dropped and reported via `errorHandler` (or logged to console if none is set), and `close()` proceeds to close the socket and invoke its callback rather than hanging indefinitely.
+* `closingFlushInterval`: Before closing, StatsD will check for inflight messages. Time (ms) between each check. Defaults to `50`. Separately, `close()` waits up to 5 seconds for the final buffered flush, whatever is stalling it — an unresolved DNS lookup with *cacheDns*, or a `tcp`/`stream` connection that never completes. Past that the flush is dropped and reported via `errorHandler` (or the console), and `close()` closes the socket and invokes its callback rather than hanging.
 * `udsRetryOptions`: Used only when the protocol is `uds`. Retry/backoff options for UDS sends:
   * `retries`: Number of retry attempts for failed packet sends. Defaults to `3`.
   * `retryDelayMs`: Initial delay in milliseconds before retrying a failed packet send. Defaults to `100`.
@@ -391,7 +381,7 @@ If the optional callback is not given, an error is thrown in some cases and a co
 
 For broad error coverage, specify an `errorHandler` in your root client. It catches errors in socket setup, sending of messages, and closing of the socket.
 
-An `errorHandler` that unconditionally sends a metric on every call has no terminating condition: that send can itself fail, invoking the handler again. This applies to every transport, not just UDP, and is not specific to any one failure mode. Send failures are always delivered on a later tick, never on the same stack frame as the send that failed, so such a handler will not grow the stack or wedge the process — but it will still loop indefinitely against a persistently failing transport. Guard a handler like this with a re-entrancy flag or a counter.
+An `errorHandler` that unconditionally sends a metric on every call has no terminating condition: that send can itself fail, invoking the handler again. Send failures are always delivered on a later tick, so this will not grow the stack or wedge the process, but it will still loop indefinitely against a persistently failing transport. Guard such a handler with a re-entrancy flag or a counter.
 
 In unbuffered mode (`maxBufferSize === 0`), if you specify both an `errorHandler` and a per-metric callback, the callback takes precedence. In buffered mode (`maxBufferSize > 0`), per-metric callbacks do not receive send errors from periodic or overflow-driven flushes — those errors go to `errorHandler` (or are logged). See [Callback semantics](#callback-semantics) for details.
 
