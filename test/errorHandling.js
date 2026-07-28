@@ -756,6 +756,7 @@ describe('#errorHandling', () => {
               // Mock unix-dgram socket to always fail
               const unixDgramModule = require('unix-dgram'); // eslint-disable-line global-require
               const realCreateSocket = unixDgramModule.createSocket;
+              let reported = false;
               unixDgramModule.createSocket = function(type) {
                 const realSocket = realCreateSocket(type);
                 realSocket.send = function(buffer, callback) {
@@ -772,8 +773,15 @@ describe('#errorHandling', () => {
                   retries: 5,
                 },
                 maxBufferSize: 0,
+                // Only the first error is the one under test. close() may report
+                // a second one later if it gives up on its final flush, so this
+                // must not assume a single invocation.
                 errorHandler: (err) => {
                   assert.ok(err);
+                  if (reported) {
+                    return;
+                  }
+                  reported = true;
                   // restore
                   unixDgramModule.createSocket = realCreateSocket;
                   // clean up the uds server to avoid hanging the test
@@ -797,10 +805,14 @@ describe('#errorHandling', () => {
                   retries: 0
                 },
                 maxBufferSize: 1,
+                // Asserts on the first error only: close() may report a second
+                // one later if it gives up on its final flush.
                 errorHandler: (err) => {
                   errorCount++;
                   assert.ok(err);
-                  assert.strictEqual(errorCount, 1);
+                  if (errorCount > 1) {
+                    return;
+                  }
                   done();
                 }
               }, 'client');
@@ -828,6 +840,15 @@ describe('#errorHandling', () => {
                   return;
                 }
                 cleanedUp = true;
+                // Stop the afterEach from blocking on this client. Its
+                // udsRetryOptions allow 20 attempts at up to 800ms, so a send
+                // still mid-retry here can take far longer to settle than
+                // close()'s CLOSE_FLUSH_TIMEOUT budget. Close it without
+                // waiting so the shared afterEach does not race that budget.
+                if (statsd === client) {
+                  statsd = null;
+                }
+                client.close();
                 udsServer.cleanup();
                 // restore unix-dgram createSocket if we patched it
                 try {
