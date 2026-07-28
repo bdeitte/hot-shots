@@ -9,7 +9,7 @@ CHANGELOG
 * [@bdeitte](https://github.com/bdeitte) Fix `close()` with `cacheDns` when a lookup is stalled: buffered and unbuffered closes both complete, every queued send's callback fires exactly once, and sends issued after close fail fast rather than queueing
 * [@bdeitte](https://github.com/bdeitte) Deliver send failures on a later tick rather than on the same stack frame as the send, so an `errorHandler` that emits a metric on failure can no longer grow the stack without bound against a persistently failing transport
 * [@bdeitte](https://github.com/bdeitte) Bound `close()`'s final buffered flush at 5 seconds for every transport, not just for a stalled `cacheDns` lookup. A `tcp` client whose connection never completes previously hung `close()` forever
-* [@bdeitte](https://github.com/bdeitte) Refuse `tcp` and `stream` sends once 1 MB is waiting to flush, since Node otherwise queues writes in memory without limit while a socket is connecting or its peer has stalled. Refused sends fail with `HOTSHOTS_WRITE_QUEUE_FULL` and count as `packets_dropped_queue`
+* [@bdeitte](https://github.com/bdeitte) Refuse `tcp` and `stream` sends once 1 MB is waiting to flush, since Node otherwise queues writes in memory without limit while a socket is connecting or its peer has stalled. Refused sends fail with `HOTSHOTS_WRITE_QUEUE_FULL` and, with `includeDatadogTelemetry` enabled, count as `packets_dropped_queue`
 * [@bdeitte](https://github.com/bdeitte) Fix `close()` hanging when the socket was already destroyed, reachable when an application destroys the `stream` it supplied and then closes the client
 
 ## 17.1.0 (2026-7-25)

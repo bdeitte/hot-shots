@@ -120,8 +120,9 @@ Parameters (specified as one object passed into hot-shots):
 For `tcp` and `stream` clients, sends are refused once 1 MB is waiting to flush,
 since Node otherwise queues writes in memory without limit while a socket is
 connecting or its peer has stopped reading. Refused sends fail with code
-`HOTSHOTS_WRITE_QUEUE_FULL` and count as `packets_dropped_queue`. Writes to a
-healthy peer drain immediately, so this is not reached in normal operation.
+`HOTSHOTS_WRITE_QUEUE_FULL` and, with `includeDatadogTelemetry` enabled, count as
+`packets_dropped_queue`. Writes to a healthy peer drain immediately, so this is
+not reached in normal operation.
 
 For UDP clients, when *host* is an IP address or is left unset, hot-shots
 performs no DNS lookups regardless of *cacheDns*. Node otherwise routes every
