@@ -6,6 +6,7 @@
   "main": "./index.js",
   "types": "./types.d.ts",
   "files": [
+    "NETWORKING.md",
     "index.js",
     "index.mjs",
     "lib/",
