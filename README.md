@@ -121,7 +121,7 @@ Parameters (specified as one object passed into hot-shots):
 * `useDefaultRoute`: Use the default interface on a Linux system. Useful when running in containers
 * `protocol`: Use `tcp` option for TCP protocol, or `uds` for the Unix Domain Socket protocol or `stream` for the raw stream. Defaults to `udp` otherwise.
 * `path`: Used only when the protocol is `uds`. Defaults to `/var/run/datadog/dsd.socket`.
-* `stream`: Reference to a stream instance. Used only when the protocol is `stream`.
+* `stream`: Reference to a stream instance. Used only when the protocol is `stream`. Destroying the stream yourself before calling `close()` is supported; `close()` still completes and invokes its callback.
 
 For `tcp` and `stream` clients, Node queues writes in memory without limit while a
 socket is still connecting or its peer has stopped reading, so an unreachable host

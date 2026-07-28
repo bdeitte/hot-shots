@@ -121,6 +121,60 @@ describe('#transportBackpressure', () => {
     });
   });
 
+  describe('close completes when the socket was already destroyed', () => {
+    it('tcp: destroyed out of band before close()', function (done) {
+      this.timeout(4000);
+      const server = net.createServer(() => {}); // eslint-disable-line no-empty-function
+      server.listen(0, '127.0.0.1', () => {
+        const client = createHotShotsClient({
+          protocol: 'tcp',
+          host: '127.0.0.1',
+          port: server.address().port,
+          tcpGracefulErrorHandling: false,
+          // eslint-disable-next-line no-empty-function
+          errorHandler: () => {}
+        }, 'client');
+
+        setTimeout(() => {
+          // Destroy the socket behind the client's back, then close normally.
+          client.socket.close();
+          server.close();
+
+          const state = { calls: 0 };
+          client.close(() => {
+            state.calls++;
+            // Give any real 'close' event a chance to arrive after the emulated
+            // one, so a double-invocation would be caught.
+            setTimeout(() => {
+              assert.strictEqual(state.calls, 1,
+                `close callback must fire exactly once, fired ${state.calls} times`);
+              done();
+            }, 100);
+          });
+        }, 100);
+      });
+    });
+
+    it('stream: the application destroyed its own stream first', function (done) {
+      this.timeout(4000);
+      const stream = new PassThrough();
+      const client = createHotShotsClient({ protocol: 'stream', stream: stream }, 'client');
+
+      // The owning application destroys the stream it handed us.
+      stream.destroy();
+
+      const state = { calls: 0 };
+      client.close(() => {
+        state.calls++;
+        setTimeout(() => {
+          assert.strictEqual(state.calls, 1,
+            `close callback must fire exactly once, fired ${state.calls} times`);
+          done();
+        }, 100);
+      });
+    });
+  });
+
   describe('synchronous failure paths do not recurse', () => {
     /**
      * Drives a client whose sends always fail with an errorHandler that resends,
@@ -150,11 +204,11 @@ describe('#transportBackpressure', () => {
           Error.stackTraceLimit = originalStackLimit;
           assert.ok(state.maxDepth < 100,
             `failures must not stack: reached ${state.maxDepth} frames after ${state.calls} resends`);
-          // Deliberately not close()d: breakClient destroys the socket directly,
-          // and _close() waits on a 'close' event an already-destroyed socket
-          // does not re-emit. Nothing is left running - the socket is gone.
+          // close() works here even though breakClient destroyed the socket
+          // directly: the transport emulates the 'close' event its already-
+          // destroyed socket will not re-emit.
           statsd = null;
-          done();
+          client.close(() => done());
         }
       }), 'client');
       statsd = client;
