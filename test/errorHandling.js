@@ -689,6 +689,57 @@ describe('#errorHandling', () => {
               };
             }
 
+            it('should still deliver a retry that lands inside close()\'s drain budget', (done) => {
+              const socketPath = path.join(__dirname, 'test-retry-drain.sock');
+              const received = [];
+              const udsServer = createUdsTestServer(socketPath, buf => received.push(buf.toString()));
+
+              if (!udsServer) {
+                return done();
+              }
+
+              // First attempt reports congestion; the retry falls at the default
+              // 100ms, well inside the drain budget (closingFlushInterval * 11).
+              const unixDgramModule = require('unix-dgram'); // eslint-disable-line global-require
+              const realCreateSocket = unixDgramModule.createSocket;
+              let attempts = 0;
+              unixDgramModule.createSocket = function(type) {
+                const realSocket = realCreateSocket(type);
+                const realSend = realSocket.send.bind(realSocket);
+                realSocket.send = function(buffer, callback) {
+                  attempts++;
+                  if (attempts === 1) {
+                    return process.nextTick(() => callback(internalError('CONGESTION', 'congestion')));
+                  }
+                  return realSend(buffer, callback);
+                };
+                return realSocket;
+              };
+
+              // Not assigned to the shared `statsd`; this test closes it itself.
+              const client = createHotShotsClient({
+                protocol: 'uds',
+                path: socketPath,
+                maxBufferSize: 0
+              }, 'client');
+
+              client.timing('drain.retry.metric', 100);
+
+              // Closing while the retry is still in backoff must not abandon it:
+              // the drain wait exists precisely to let an in-flight send finish,
+              // and cancelling retries any earlier would drop this metric.
+              client.close(() => {
+                setTimeout(() => {
+                  unixDgramModule.createSocket = realCreateSocket;
+                  udsServer.cleanup();
+                  assert.strictEqual(attempts, 2, 'the retry should have been attempted');
+                  assert.ok(received.some(msg => msg.includes('drain.retry.metric')),
+                    `the retried metric should still be delivered, saw ${JSON.stringify(received)}`);
+                  done();
+                }, 150);
+              });
+            });
+
             it('should abandon a retry still waiting out its backoff when close() runs', (done) => {
               const socketPath = path.join(__dirname, 'test-retry-abandon.sock');
               const udsServer = createUdsTestServer(socketPath);
