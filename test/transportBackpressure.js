@@ -158,20 +158,34 @@ describe('#transportBackpressure', () => {
     it('stream: the application destroyed its own stream first', function (done) {
       this.timeout(4000);
       const stream = new PassThrough();
+      const state = { calls: 0, appCloseEvents: 0 };
+      // The application's own listener on the stream it owns.
+      stream.on('close', () => {
+        state.appCloseEvents++;
+      });
+
       const client = createHotShotsClient({ protocol: 'stream', stream: stream }, 'client');
 
       // The owning application destroys the stream it handed us.
       stream.destroy();
 
-      const state = { calls: 0 };
-      client.close(() => {
-        state.calls++;
-        setTimeout(() => {
-          assert.strictEqual(state.calls, 1,
-            `close callback must fire exactly once, fired ${state.calls} times`);
-          done();
-        }, 100);
-      });
+      setTimeout(() => {
+        assert.strictEqual(state.appCloseEvents, 1,
+          'the stream should have emitted its own close exactly once by now');
+
+        client.close(() => {
+          state.calls++;
+          setTimeout(() => {
+            assert.strictEqual(state.calls, 1,
+              `close callback must fire exactly once, fired ${state.calls} times`);
+            // The client must not synthesize a second 'close' on a stream it
+            // does not own: the application's listeners would run again.
+            assert.strictEqual(state.appCloseEvents, 1,
+              `close() must not re-emit 'close' on the caller's stream, saw ${state.appCloseEvents} events`);
+            done();
+          }, 100);
+        });
+      }, 50);
     });
   });
 
