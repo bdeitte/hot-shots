@@ -409,7 +409,7 @@ sequenceDiagram
         Client->>Client: onFlushSettled(HOTSHOTS_CLOSE_FLUSH_TIMEOUT)
     end
 
-    Note over Client: CLOSE_CONTINUE_CODES are reported but do not abort<br/>the close; any other flush error aborts it
+    Note over Client: CLOSE_CONTINUE_CODES are reported but do not abort<br/>the close. Any other flush error aborts it
     Client->>Client: wait for messagesInFlight → 0<br/>(closingFlushInterval * 11, ~550ms)
     Client->>Transport: cancelPendingSends
     Client->>Client: force messagesInFlight = 0 if still non-zero<br/>("could not clear out messages in flight")
