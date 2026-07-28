@@ -21,7 +21,7 @@ describe('#udpDnsCacheDrops', () => {
   it('drops the oldest pending send past the cap and errors its callback', done => {
     server = createServer(udpServerType, opts => {
       let release;
-      dns.lookup = (host, callback) => {
+      dns.lookup = (host, options, callback) => {
         release = () => callback(null, '127.0.0.1');
       };
 
@@ -58,7 +58,7 @@ describe('#udpDnsCacheDrops', () => {
   it('counts a dropped send in datadog telemetry', done => {
     server = createServer(udpServerType, opts => {
       let release;
-      dns.lookup = (host, callback) => {
+      dns.lookup = (host, options, callback) => {
         release = () => callback(null, '127.0.0.1');
       };
 

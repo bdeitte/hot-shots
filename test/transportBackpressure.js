@@ -66,7 +66,11 @@ describe('#transportBackpressure', () => {
     it('reports a refused write as a queue drop, not a writer error', done => {
       const stream = new PassThrough();
       // Nothing reads from the stream, so writes accumulate in it.
-      statsd = createHotShotsClient({ protocol: 'stream', stream: stream }, 'client');
+      statsd = createHotShotsClient({
+        protocol: 'stream',
+        stream: stream,
+        includeDatadogTelemetry: true
+      }, 'client');
 
       const big = 'x'.repeat(64 * 1024);
       for (let i = 0; i < 40; i++) {
@@ -76,10 +80,47 @@ describe('#transportBackpressure', () => {
       statsd.increment('one.past.the.cap', 1, err => {
         assert.ok(err, 'the send past the cap should fail');
         assert.strictEqual(err.code, constants.WRITE_QUEUE_FULL_CODE);
-        assert.ok(constants.REFUSED_CODES.includes(constants.WRITE_QUEUE_FULL_CODE),
-          'a refused write must count as a queue drop rather than a writer error');
+        // Observe the routing itself, not just that the code is listed in
+        // REFUSED_CODES: handleCallback picks the counter, so asserting on the
+        // constants alone would still pass if it picked the writer one.
+        assert.ok(statsd.telemetry.packetsDroppedQueue > 0,
+          'a refused write should count as a queue drop');
+        assert.strictEqual(statsd.telemetry.packetsDroppedWriter, 0,
+          'a refused write should not count as a writer error');
+        assert.ok(statsd.telemetry.bytesDroppedQueue > 0,
+          'the refused bytes should land in the queue-drop byte counter');
         done();
       });
+    });
+
+    it('drains messagesInFlight back to zero after a burst of refused writes', done => {
+      const stream = new PassThrough();
+      statsd = createHotShotsClient({ protocol: 'stream', stream: stream }, 'client');
+
+      const big = 'x'.repeat(64 * 1024);
+      const state = { refused: 0, sent: 200 };
+      // Well past the cap, so most of these are refused rather than written. The
+      // refusal path increments the counter in sendMessage and decrements it only
+      // when failLater's deferred batch runs, which is where a drift would live.
+      for (let i = 0; i < state.sent; i++) {
+        statsd.increment(`${big}.${i}`, 1, err => {
+          if (err && err.code === constants.WRITE_QUEUE_FULL_CODE) {
+            state.refused++;
+          }
+        });
+      }
+
+      // Start reading so the writes that did fit under the cap can flush and call
+      // back too. Without this the counter stays pinned at however many the stream
+      // is holding, and the assertion below could not tell that from a real leak.
+      stream.resume();
+
+      setTimeout(() => {
+        assert.ok(state.refused > 0, 'the burst should have been refused past the cap');
+        assert.strictEqual(statsd.messagesInFlight, 0,
+          `every send should have called back exactly once, but ${statsd.messagesInFlight} are still counted in flight`);
+        done();
+      }, 200);
     });
   });
 

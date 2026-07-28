@@ -43,7 +43,8 @@ flowchart TD
     T --> MOCK["mock"]
 ```
 
-`sendMessage` is the choke point worth knowing well (`lib/statsd.js:579`). In order it:
+`sendMessage` is the choke point worth knowing well (`Client.prototype.sendMessage` in
+`lib/statsd.js`). In order it:
 
 1. Returns immediately for an empty message or a mock client.
 2. Recreates a missing socket, but only for `tcp` and `uds` — those are the protocols
@@ -101,22 +102,37 @@ memory when its peer is gone, and each has a cap:
 | uds | nothing queues; `EAGAIN`/congestion is retried with backoff | `retries` = 3 by default | the underlying error |
 
 **Telemetry byte accounting splits by cause.** A client-side refusal (any code in
-`REFUSED_CODES`) is counted as a *queue* drop; anything that actually tried to resolve or
-write is counted as a *writer* error. See `handleCallback` in `lib/statsd.js:657`.
+`REFUSED_CODES`) is counted as a *queue* drop, incrementing `packets_dropped_queue` and
+`bytes_dropped_queue`; anything that actually tried to resolve or write is counted as a
+*writer* error, incrementing the `_writer` pair. Both also roll up into the overall
+`packets_dropped` / `bytes_dropped` totals. See `handleCallback` inside
+`Client.prototype.sendMessage` in `lib/statsd.js`.
 
-**Every transport attaches a default `error` listener.** An `EventEmitter` that emits
-`'error'` with no listener crashes the process, and `sendMessage`'s legacy
-`socket.emit('error', ...)` fallback would do exactly that on a bare socket or a
-user-supplied stream. The default listener only writes to `debug()`; the UDP transport
-additionally distinguishes it from a user listener so it knows whether a DNS refresh
-failure would otherwise go unseen.
+**A user callback that throws never escapes a fan-out.** Several paths call back a whole
+batch of sends in a loop — the DNS queue flush, the overflow drop batch, the deferred
+`failLater` drain — and each entry has already been spliced out of its queue by the time
+its callback runs. An escaping throw would leave the rest of the batch with no callback
+ever, breaking the exactly-once contract the drain logic depends on, and from `close()`'s
+cancel path it would strand the close itself. Every such invocation goes through
+`invokeCallback`, which reports the throw with `console.error` and continues. `errorHandler`
+is deliberately not used as the sink there, since it is the most likely thing to have
+thrown.
+
+**Every socket-backed transport (udp, tcp, uds, stream) attaches a default `error`
+listener.** An `EventEmitter` that emits `'error'` with no listener crashes the process,
+and `sendMessage`'s legacy `socket.emit('error', ...)` fallback would do exactly that on a
+bare socket or a user-supplied stream. The default listener only writes to `debug()`; the
+UDP transport additionally distinguishes it from a user listener so it knows whether a DNS
+refresh failure would otherwise go unseen. The `mock` transport is the exception — it is
+not an `EventEmitter`, so there is nothing to crash.
 
 ## UDP
 
 The default. Connectionless, so "sent" means "handed to the kernel" — there is no
 delivery guarantee and no peer-side backpressure.
 
-Socket construction (`lib/transport.js:194`) does two things worth knowing:
+Socket construction (`createUdpTransport` in `lib/transport.js`) does two things worth
+knowing:
 
 - **Socket type auto-detection.** If `host` is an IP literal, the socket becomes `udp6`
   or `udp4` to match it. Otherwise `udp4`. This is why `localhost` resolving to `::1` on
@@ -167,31 +183,44 @@ stateDiagram-v2
     Cold --> Resolving: first send starts a lookup
     Resolving --> Warm: success, cache address and flush the queue
     Resolving --> Cooldown: failure, flush the queue with the error
-    Cooldown --> Resolving: cacheDnsTtl elapsed, a send arrives
+    Cooldown --> Resolving: cooldown elapsed, a send arrives
     Warm --> Refreshing: a send past the TTL (sent on the stale address)
     Refreshing --> Warm: success, new address
     Refreshing --> WarmCooldown: failure, keep stale address and report once per streak
-    WarmCooldown --> Refreshing: cacheDnsTtl elapsed
+    WarmCooldown --> Refreshing: cooldown elapsed
     Warm --> Cancelled: close() / transport close
     Resolving --> Cancelled: close() cancels the queue
     Cancelled --> [*]
 ```
 
-Three behaviours in there are deliberate and easy to misread:
+Four behaviours in there are deliberate and easy to misread:
 
-**Failures earn a full `cacheDnsTtl` of cooldown.** Without it, a fast-failing resolver
-(a cached NXDOMAIN, a SERVFAIL) degrades into one lookup per send — exactly the
-per-packet behaviour the caching exists to eliminate. The cost is that recovery is
-noticed up to one TTL late. During a cold-start cooldown there is no address to send to
-and no lookup to wait behind, so the send is refused with `HOTSHOTS_DNS_COOLDOWN` rather
-than queued for a flush nothing would trigger.
+**Failures earn a cooldown that ramps.** Without one, a fast-failing resolver (a cached
+NXDOMAIN, a SERVFAIL) degrades into one lookup per send — exactly the per-packet
+behaviour the caching exists to eliminate. The wait is `DNS_COOLDOWN_BASE_MS` (1 s) after
+the first failure and doubles with each consecutive failure, capped at `cacheDnsTtl`; a
+success resets the streak. It ramps rather than sitting flat at one TTL because the cold
+path has no cached address to fall back on: a process that starts before its resolver is
+ready would otherwise drop every metric for a full TTL (60 s by default) over a blip that
+cleared in a second. During a cold-start cooldown there is no address to send to and no
+lookup to wait behind, so the send is refused with `HOTSHOTS_DNS_COOLDOWN` rather than
+queued for a flush nothing would trigger.
+
+**Lookups are pinned to the socket's address family.** `startLookup` passes
+`{ family: 4 }` for a `udp4` socket and `{ family: 6 }` for `udp6`. Unconstrained,
+`getaddrinfo` is free to answer with an address the socket cannot use — `localhost`
+resolves to `::1` on most modern systems, and handing that to the `udp4` socket that
+hostnames default to fails every send with `EINVAL`.
 
 **A stale address keeps working while a refresh runs.** A send past the TTL goes out
 immediately on the cached address and the refresh happens in the background. That refresh
 has no send callback to carry an error, so a failure is emitted on the socket and — only
 if no *user* `error` listener is attached — also written to `console.error`. It is
 reported once per contiguous failure streak, so a flapping resolver does not log every
-TTL.
+TTL. The streak counter is incremented *before* the emit and the emit is wrapped, so an
+`error` listener that throws can neither leave the streak stuck at its first failure (and
+thus re-report forever) nor propagate out of a send that has already been handed to the
+socket, which would call that send back twice.
 
 **The `cancelled` latch is permanent.** Once `cancelPendingSends` runs (from `close()`),
 every later send fails instead of re-queueing. Without the latch, a cancelled callback
@@ -205,6 +234,11 @@ The queue-overflow path pushes first and trims afterwards, invoking the dropped 
 callbacks only once the queue is back at the cap and only on a later tick. Shift-then-push
 would let a synchronously resending drop callback see room, not drop, and then have the
 outer push land on top — growing the queue by one per send.
+
+A background refresh cannot be cancelled. `getaddrinfo` requests are neither `unref`-able
+nor abortable, so a stale send that starts a refresh just before `close()` holds the
+process open until the resolver gives up. The `cancelled` latch makes the late result a
+no-op, so this delays exit rather than affecting correctness.
 
 UDP-only transport hooks, all of which callers must feature-check: `getDnsPendingCount()`
 (test hook), `isDnsSendBlocked()` (used by `sendMessage`), `cancelPendingSends(error)`
@@ -375,7 +409,7 @@ sequenceDiagram
         Client->>Client: onFlushSettled(HOTSHOTS_CLOSE_FLUSH_TIMEOUT)
     end
 
-    Note over Client: refused / timed-out flush errors are reported<br/>but do not abort the close
+    Note over Client: CLOSE_CONTINUE_CODES are reported but do not abort<br/>the close; any other flush error aborts it
     Client->>Client: wait for messagesInFlight → 0<br/>(closingFlushInterval * 11, ~550ms)
     Client->>Transport: cancelPendingSends
     Client->>Client: force messagesInFlight = 0 if still non-zero<br/>("could not clear out messages in flight")
@@ -391,10 +425,17 @@ Points that matter per transport:
   whose connect never completes. It is much larger than the drain budget on purpose — a
   first-ever DNS lookup or a TCP connect taking a few hundred milliseconds is ordinary and
   must not lose the flush.
+- **A flush error outside `CLOSE_CONTINUE_CODES` aborts the close.** The caller's callback
+  receives that error, `_close()` never runs, and the socket is left open — so a caller
+  must not assume a closed socket when its callback gets an error. Only the refusal codes
+  and the flush timeout take the "report and carry on" path drawn above.
 - **DNS cancellation runs at `finish()`**, not before the drain wait, so every send whose
   lookup resolves within the budget is preserved. Doing it later, in `transport.close()`,
   would fire those callbacks after `messagesInFlight` had been forced to zero and drive it
-  negative.
+  negative. It is invoked inside a `try`/`catch`, and each queued callback inside it is
+  invoked inside its own, because this runs synchronously on `close()`'s stack: an escaping
+  throw from a user callback here would skip the socket close and the caller's callback
+  entirely, hanging `close()` for good.
 - **`isSocketClosed()`** (tcp, stream) is checked *before* closing: `destroy()` only emits
   `'close'` on the first call, so a socket the application already destroyed would leave
   `_close` waiting on an event that never arrives.
@@ -412,12 +453,13 @@ Points that matter per transport:
 | `HOTSHOTS_DNS_COOLDOWN` | udp (`cacheDns`) | a recent lookup failed and the next attempt is not due yet | queue |
 | `HOTSHOTS_DNS_CANCELLED` | udp (`cacheDns`) | queued mid-lookup, cancelled by `close()` | queue |
 | `HOTSHOTS_DNS_CLOSED` | udp (`cacheDns`) | send arrived after `close()` latched the queue shut | queue |
+| `HOTSHOTS_UDS_RETRY_CANCELLED` | uds | a retry was waiting out its backoff when `close()` ran | queue |
 | `HOTSHOTS_WRITE_QUEUE_FULL` | tcp, stream | 1 MiB already unflushed in the socket | queue |
 | `HOTSHOTS_CLOSE_FLUSH_TIMEOUT` | any | `close()` gave up waiting on the final flush | n/a |
 | `ERR_SOCKET_DESTROYED` | tcp | write attempted on a destroyed socket | writer |
 | `ERR_STREAM_DESTROYED` | stream | write attempted on a destroyed stream | writer |
 | `EAGAIN` / `congestion` | uds | receiver buffer full; retried before surfacing | writer |
 
-The first five are `REFUSED_CODES` — the client turned the send away and nothing reached
-the socket. `CLOSE_CONTINUE_CODES` adds the flush timeout: errors that must not abort
-`close()`.
+The six `queue`-bucket codes are `REFUSED_CODES` — the client turned the send away and
+nothing reached the socket (or, for the abandoned uds retry, nothing reached it again).
+`CLOSE_CONTINUE_CODES` adds the flush timeout: errors that must not abort `close()`.

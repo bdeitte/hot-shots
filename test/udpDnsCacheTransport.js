@@ -74,7 +74,7 @@ describe('#udpDnsCacheTransport', () => {
 
         const resolvedHostAddress = '1.1.1.1';
         let dnsLookupCount = 0;
-        dns.lookup = (host, callback) => {
+        dns.lookup = (host, options, callback) => {
           dnsLookupCount++;
           callback(undefined, resolvedHostAddress);
         };
@@ -106,7 +106,7 @@ describe('#udpDnsCacheTransport', () => {
 
         const resolvedHostAddress = '1.1.1.1';
         let dnsLookupCount = 0;
-        dns.lookup = (host, callback) => {
+        dns.lookup = (host, options, callback) => {
           callback(undefined, resolvedHostAddress);
           dnsLookupCount++;
         };
@@ -143,7 +143,7 @@ describe('#udpDnsCacheTransport', () => {
 
         const resolvedHostAddress = '1.1.1.1';
         let dnsLookupCount = 0;
-        dns.lookup = (host, callback) => {
+        dns.lookup = (host, options, callback) => {
           callback(undefined, resolvedHostAddress);
           dnsLookupCount++;
         };
@@ -184,7 +184,7 @@ describe('#udpDnsCacheTransport', () => {
 
         const dnsError = new Error('DNS lookup failed');
         dnsError.code = 'ENOTFOUND';
-        dns.lookup = (host, callback) => {
+        dns.lookup = (host, options, callback) => {
           callback(dnsError);
         };
 
@@ -270,7 +270,7 @@ describe('#udpDnsCacheTransport', () => {
         }), 'client');
 
         let resolvedAddress = '1.1.1.1';
-        dns.lookup = (host, callback) => {
+        dns.lookup = (host, options, callback) => {
           callback(undefined, resolvedAddress);
         };
 

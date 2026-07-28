@@ -27,7 +27,7 @@ describe('#udpDnsCacheCoalescing', () => {
     server = createServer(udpServerType, opts => {
       let lookupCount = 0;
       let release;
-      dns.lookup = (host, callback) => {
+      dns.lookup = (host, options, callback) => {
         lookupCount++;
         release = () => callback(null, '127.0.0.1');
       };
@@ -67,7 +67,7 @@ describe('#udpDnsCacheCoalescing', () => {
       const cacheDnsTtl = 100;
       let lookupCount = 0;
       let release;
-      dns.lookup = (host, callback) => {
+      dns.lookup = (host, options, callback) => {
         lookupCount++;
         if (lookupCount === 1) {
           // Warm-up lookup resolves immediately.
@@ -110,7 +110,7 @@ describe('#udpDnsCacheCoalescing', () => {
       clock = sinon.useFakeTimers();
       const cacheDnsTtl = 100;
       let lookupCount = 0;
-      dns.lookup = (host, callback) => {
+      dns.lookup = (host, options, callback) => {
         lookupCount++;
         if (lookupCount === 1) {
           callback(null, '1.1.1.1');
@@ -143,12 +143,14 @@ describe('#udpDnsCacheCoalescing', () => {
     });
   });
 
+  // The TTL here is below DNS_COOLDOWN_BASE_MS, so the ramp is capped at it and
+  // the cooldown is exactly one TTL. See the ramp tests below for the general rule.
   it('backs off for a full TTL after a failed refresh instead of retrying every send', done => {
     server = createServer(udpServerType, opts => {
       clock = sinon.useFakeTimers();
       const cacheDnsTtl = 100;
       let lookupCount = 0;
-      dns.lookup = (host, callback) => {
+      dns.lookup = (host, options, callback) => {
         lookupCount++;
         if (lookupCount === 1) {
           // Warm the cache with one successful lookup.
@@ -208,7 +210,7 @@ describe('#udpDnsCacheCoalescing', () => {
       const cacheDnsTtl = 100;
       let lookupCount = 0;
       let failing = true;
-      dns.lookup = (host, callback) => {
+      dns.lookup = (host, options, callback) => {
         lookupCount++;
         if (lookupCount === 1) {
           callback(null, '1.1.1.1');
@@ -265,7 +267,7 @@ describe('#udpDnsCacheCoalescing', () => {
       clock = sinon.useFakeTimers();
       const cacheDnsTtl = 100;
       let lookupCount = 0;
-      dns.lookup = (host, callback) => {
+      dns.lookup = (host, options, callback) => {
         lookupCount++;
         if (lookupCount === 1) {
           callback(null, '1.1.1.1');
@@ -302,7 +304,7 @@ describe('#udpDnsCacheCoalescing', () => {
 
   it('sends on the resolved address with the correct family', done => {
     server = createServer(udpServerType, opts => {
-      dns.lookup = (host, callback) => {
+      dns.lookup = (host, options, callback) => {
         // Resolve to an address that differs from args.host, which is the case
         // the old fixed-ipVersion bypass got wrong.
         callback(null, '127.0.0.1');
@@ -327,7 +329,7 @@ describe('#udpDnsCacheCoalescing', () => {
   it('fails every queued send when the cold-start lookup fails', done => {
     server = createServer(udpServerType, opts => {
       let release;
-      dns.lookup = (host, callback) => {
+      dns.lookup = (host, options, callback) => {
         release = () => callback(new Error('cold boom'));
       };
 
@@ -357,12 +359,13 @@ describe('#udpDnsCacheCoalescing', () => {
     });
   });
 
+  // TTL below DNS_COOLDOWN_BASE_MS again, so the capped cooldown is one TTL.
   it('backs off for a full TTL after a synchronous-throw refresh, on a warm cache', done => {
     server = createServer(udpServerType, opts => {
       clock = sinon.useFakeTimers();
       const cacheDnsTtl = 100;
       let lookupCount = 0;
-      dns.lookup = (host, callback) => {
+      dns.lookup = (host, options, callback) => {
         lookupCount++;
         if (lookupCount === 1) {
           // Warm the cache with one successful lookup.
@@ -452,6 +455,7 @@ describe('#udpDnsCacheCoalescing', () => {
     });
   });
 
+  // TTL below DNS_COOLDOWN_BASE_MS again, so the capped cooldown is one TTL.
   it('backs off for a full TTL after a failed cold-start lookup, with no cache to fall back on', done => {
     server = createServer(udpServerType, opts => {
       clock = sinon.useFakeTimers();
@@ -460,7 +464,7 @@ describe('#udpDnsCacheCoalescing', () => {
       // Never resolves, like a host whose name does not exist. There is no
       // cached address to fall back on, so the cooldown is the only thing
       // standing between this and a lookup per send.
-      dns.lookup = (host, callback) => {
+      dns.lookup = (host, options, callback) => {
         lookupCount++;
         callback(new Error('ENOTFOUND'));
       };
@@ -499,7 +503,7 @@ describe('#udpDnsCacheCoalescing', () => {
 
   it('fails a send issued during the cold-start cooldown instead of queueing it forever', done => {
     server = createServer(udpServerType, opts => {
-      dns.lookup = (host, callback) => callback(new Error('ENOTFOUND'));
+      dns.lookup = (host, options, callback) => callback(new Error('ENOTFOUND'));
 
       statsd = createHotShotsClient(Object.assign(opts, {
         host: 'localhost',
@@ -522,6 +526,154 @@ describe('#udpDnsCacheCoalescing', () => {
             'messagesInFlight should drain back to 0');
           done();
         });
+      });
+    });
+  });
+
+  it('ramps the cooldown from one second rather than blocking for a whole TTL', done => {
+    server = createServer(udpServerType, opts => {
+      clock = sinon.useFakeTimers();
+      // Far larger than DNS_COOLDOWN_BASE_MS, so the ramp is visible instead of
+      // being flattened by the cap the way a short test TTL would flatten it.
+      const cacheDnsTtl = 60000;
+      let lookupCount = 0;
+      dns.lookup = (host, options, callback) => {
+        lookupCount++;
+        callback(new Error('EAI_AGAIN'));
+      };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        cacheDnsTtl: cacheDnsTtl,
+        // eslint-disable-next-line no-empty-function
+        errorHandler: () => {}
+      }), 'client');
+
+      // eslint-disable-next-line no-empty-function
+      statsd.send('cold', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 1);
+
+      // First failure: one second, not one TTL.
+      clock.tick(500);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('during-first-cooldown', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 1, 'no retry within the first cooldown');
+
+      clock.tick(600);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('after-first-cooldown', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 2, 'a retry should be due about a second after the first failure');
+
+      // Second failure doubles it to two seconds.
+      clock.tick(1500);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('during-second-cooldown', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 2, 'the second cooldown should be longer than the first');
+
+      clock.tick(600);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('after-second-cooldown', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 3, 'a retry should be due about two seconds after the second failure');
+      done();
+    });
+  });
+
+  it('caps the ramping cooldown at the TTL and resets it after a success', done => {
+    server = createServer(udpServerType, opts => {
+      clock = sinon.useFakeTimers();
+      const cacheDnsTtl = 10000;
+      let lookupCount = 0;
+      let failing = true;
+      dns.lookup = (host, options, callback) => {
+        lookupCount++;
+        if (failing) {
+          callback(new Error('EAI_AGAIN'));
+          return;
+        }
+        callback(null, '127.0.0.1');
+      };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        cacheDnsTtl: cacheDnsTtl,
+        // eslint-disable-next-line no-empty-function
+        errorHandler: () => {}
+      }), 'client');
+
+      // Doubling from 1s would pass the 10s TTL by the fifth failure, so drive
+      // the streak well past that and confirm the wait never exceeds the TTL.
+      for (let i = 0; i < 10; i++) {
+        // eslint-disable-next-line no-empty-function
+        statsd.send(`fail.${i}`, {}, () => {});
+        clock.tick(cacheDnsTtl + 1);
+      }
+      assert.strictEqual(lookupCount, 10, 'each attempt past the capped cooldown should be allowed exactly once');
+
+      // A success clears the streak, so the next failure starts back at one second.
+      failing = false;
+      statsd.send('recovers', {}, error => assert.strictEqual(error, null));
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 11);
+
+      failing = true;
+      clock.tick(cacheDnsTtl + 1);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('fails-again', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 12, 'a stale send after the success should refresh');
+
+      clock.tick(1100);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('after-reset-cooldown', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 13, 'the streak should have reset, so the wait is a second again');
+      done();
+    });
+  });
+
+  it('keeps flushing the queue when a queued send callback throws', done => {
+    server = createServer(udpServerType, opts => {
+      let release;
+      dns.lookup = (host, options, callback) => {
+        release = () => callback(new Error('ENOTFOUND'));
+      };
+
+      const originalConsoleError = console.error;
+      const state = { called: 0, logged: 0 };
+      // eslint-disable-next-line no-empty-function
+      console.error = () => { state.logged++; };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true
+      }), 'client');
+
+      // The first callback throws. Every later entry has already been spliced
+      // out of the pending queue by the time it runs, so if the throw escaped
+      // the flush loop nothing would ever call them back.
+      for (let i = 0; i < 5; i++) {
+        statsd.send(`test.${i}`, {}, () => {
+          state.called++;
+          if (state.called === 1) {
+            throw new Error('callback blew up');
+          }
+        });
+      }
+
+      release();
+      setImmediate(() => {
+        console.error = originalConsoleError;
+        assert.strictEqual(state.called, 5, 'every queued send should be called back despite the throw');
+        assert.ok(state.logged > 0, 'the throw should be reported rather than swallowed');
+        assert.strictEqual(statsd.messagesInFlight, 0, 'messagesInFlight should still drain to 0');
+        done();
       });
     });
   });

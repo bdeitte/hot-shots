@@ -13,12 +13,17 @@ describe('#udpDnsCacheClose', () => {
   const udpServerType = 'udp';
   const originalDnsLookup = dns.lookup;
   const originalDgramCreateSocket = dgram.createSocket;
+  const originalConsoleError = console.error;
   let server;
   let clock;
 
   afterEach(done => {
     dns.lookup = originalDnsLookup;
     dgram.createSocket = originalDgramCreateSocket;
+    // Restored here as well as in each test's close callback: a test whose close
+    // never calls back would otherwise leave console.error swallowed for the rest
+    // of the process, including mocha's own failure output.
+    console.error = originalConsoleError;
     if (clock) {
       clock.restore();
       clock = null;
@@ -38,7 +43,6 @@ describe('#udpDnsCacheClose', () => {
       dns.lookup = () => {};
 
       const logged = [];
-      const originalConsoleError = console.error;
       console.error = msg => logged.push(String(msg));
 
       const statsd = createHotShotsClient(Object.assign(opts, {
@@ -109,7 +113,7 @@ describe('#udpDnsCacheClose', () => {
       // this flush. Real timers here (not faked): this exercises the real send
       // path end-to-end, and 800ms real wait is short enough to stay well inside
       // mocha's 5000ms per-test timeout.
-      dns.lookup = (host, callback) => {
+      dns.lookup = (host, options, callback) => {
         setTimeout(() => callback(null, '127.0.0.1'), 800);
       };
 
@@ -142,7 +146,7 @@ describe('#udpDnsCacheClose', () => {
   it('delivers the buffered final flush when the lookup resolves in time', done => {
     server = createServer(udpServerType, opts => {
       let release;
-      dns.lookup = (host, callback) => {
+      dns.lookup = (host, options, callback) => {
         release = () => callback(null, '127.0.0.1');
       };
 
@@ -175,7 +179,7 @@ describe('#udpDnsCacheClose', () => {
   it('still delivers a queued send when the lookup resolves before the timeout', done => {
     server = createServer(udpServerType, opts => {
       let release;
-      dns.lookup = (host, callback) => {
+      dns.lookup = (host, options, callback) => {
         release = () => callback(null, '127.0.0.1');
       };
 
@@ -206,7 +210,6 @@ describe('#udpDnsCacheClose', () => {
       dns.lookup = () => {};
 
       const logged = [];
-      const originalConsoleError = console.error;
       console.error = msg => logged.push(String(msg));
 
       // A bounded stand-in for the documented "emit a metric on send failure"
@@ -247,6 +250,51 @@ describe('#udpDnsCacheClose', () => {
             'a resending errorHandler must not spuriously trip the force-close path');
           assert.ok(state.errorHandlerCalls > 3,
             'the resend chain should have run beyond the 3 original sends');
+          done();
+        });
+      });
+    });
+  });
+
+  it('completes close and calls every queued send back when the errorHandler throws', done => {
+    server = createServer(udpServerType, opts => {
+      // Never invoke the callback: the lookup stays in flight forever, so all
+      // five sends are still queued when close() cancels them.
+      // eslint-disable-next-line no-empty-function
+      dns.lookup = () => {};
+
+      const logged = [];
+      console.error = msg => logged.push(String(msg));
+
+      const state = { handlerCalls: 0 };
+      const statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        // A plainly buggy handler, but one the client must survive: close()
+        // drives this synchronously from finish(), so before the guard an
+        // escaping throw skipped the socket close and the close callback
+        // entirely, hanging close() and stranding the rest of the queue.
+        errorHandler: () => {
+          state.handlerCalls++;
+          throw new Error('handler blew up');
+        }
+      }), 'client');
+
+      for (let i = 0; i < 5; i++) {
+        statsd.increment(`queued.${i}`);
+      }
+      assert.strictEqual(statsd.socket.getDnsPendingCount(), 5, 'all five sends should be queued behind the lookup');
+
+      statsd.close(closeError => {
+        setImmediate(() => {
+          console.error = originalConsoleError;
+          assert.ok(!closeError, `close should still succeed, got ${closeError && closeError.message}`);
+          assert.strictEqual(state.handlerCalls, 5,
+            `every queued send should reach the handler, saw ${state.handlerCalls}`);
+          assert.strictEqual(statsd.messagesInFlight, 0,
+            `messagesInFlight should drain to 0, saw ${statsd.messagesInFlight}`);
+          const reported = logged.filter(msg => msg.includes('callback threw'));
+          assert.ok(reported.length > 0, 'the throws should be reported rather than swallowed');
           done();
         });
       });
@@ -310,12 +358,11 @@ describe('#udpDnsCacheClose', () => {
       // Release-style stub: we control exactly when the lookup completes,
       // instead of it never resolving at all.
       let release;
-      dns.lookup = (host, callback) => {
+      dns.lookup = (host, options, callback) => {
         release = () => callback(null, '127.0.0.1');
       };
 
       const logged = [];
-      const originalConsoleError = console.error;
       console.error = msg => logged.push(String(msg));
 
       const statsd = createHotShotsClient(Object.assign(opts, {
@@ -410,7 +457,7 @@ describe('#udpDnsCacheClose', () => {
       // close() ever runs, so nothing is stalled or queued behind DNS at close
       // time. Only the transport's cacheDns queue gets latched closed by
       // close() itself (finish() cancels it unconditionally on every close).
-      dns.lookup = (host, callback) => callback(null, '127.0.0.1');
+      dns.lookup = (host, options, callback) => callback(null, '127.0.0.1');
 
       const statsd = createHotShotsClient(Object.assign(opts, {
         host: 'localhost',
@@ -497,7 +544,7 @@ describe('#udpDnsCacheClose', () => {
       // close()'s own final flush is what then gets rejected with
       // DNS_CLOSED_CODE (not DNS_CANCELLED_CODE), since the queue was already
       // closed by the first close() by the time it runs.
-      dns.lookup = (host, callback) => callback(null, '127.0.0.1');
+      dns.lookup = (host, options, callback) => callback(null, '127.0.0.1');
 
       // A real dgram socket throws ERR_SOCKET_DGRAM_NOT_RUNNING on a second
       // close() regardless of any DNS-code handling - that's pre-existing,
@@ -552,7 +599,7 @@ describe('#udpDnsCacheClose', () => {
     server = createServer(udpServerType, opts => {
       // Every lookup fails, so the first send arms the cooldown and the
       // buffered final flush below is refused without a lookup being attempted.
-      dns.lookup = (host, callback) => setImmediate(() => callback(new Error('ENOTFOUND')));
+      dns.lookup = (host, options, callback) => setImmediate(() => callback(new Error('ENOTFOUND')));
 
       const statsd = createHotShotsClient(Object.assign(opts, {
         host: 'localhost',
