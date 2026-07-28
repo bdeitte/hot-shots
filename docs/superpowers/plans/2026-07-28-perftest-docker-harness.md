@@ -303,8 +303,14 @@ Expected: `dnsLookupIpLiteral` is 1 and `dnsLookupHostname` is 0.
 The instrumentation must be transparent. `test/helpers/dnsCounter.js` also patches `dns.lookup` and restores it; the two wrappers compose, but confirm it.
 
 ```bash
-HS_COUNTS_DIR=/tmp/hs-verify npx mocha -R dot --timeout 5000 test/udpDnsLookupCount.js test/transport.js
+HS_COUNTS_DIR=/tmp/hs-verify npx mocha -R dot --timeout 5000 \
+  --require ./perfTest/instrument.js \
+  test/udpDnsLookupCount.js test/transport.js
 ```
+
+Run it a second time without `--require ./perfTest/instrument.js` and confirm the
+result is identical. That comparison is the actual check — one run alone proves
+nothing about transparency.
 
 Expected: PASS, same result as running those files without `--require`. If `test/udpDnsLookupCount.js` fails, the preload is interfering — stop and fix `instrument.js` rather than changing the test.
 
