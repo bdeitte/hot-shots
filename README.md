@@ -16,6 +16,8 @@ includes many additional changes, including:
 
 You can read about all changes in [the changelog](CHANGES.md).
 
+For a deep dive into how each transport sends data and how failures are handled, see [NETWORKING.md](NETWORKING.md).
+
 hot-shots supports Node 18.x and higher. When using types.d.ts, hot-shots require TypeScript 4.0 or higher.
 
 ![Build Status](https://github.com/bdeitte/hot-shots/actions/workflows/node-test.js.yml/badge.svg)
@@ -375,6 +377,8 @@ The check method has the following API:
 ```
 
 ## Errors
+
+[NETWORKING.md](NETWORKING.md) traces the full send path for every transport, including which failures are possible where and what each error code means.
 
 You can have an error in both the message and close callbacks. See [Callback semantics](#callback-semantics) below for the exact contract per mode.
 

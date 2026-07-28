@@ -11,6 +11,7 @@ CHANGELOG
 * [@bdeitte](https://github.com/bdeitte) Bound `close()`'s final buffered flush at 5 seconds for every transport, not just for a stalled `cacheDns` lookup. A `tcp` client whose connection never completes previously hung `close()` forever
 * [@bdeitte](https://github.com/bdeitte) Refuse `tcp` and `stream` sends once 1 MB is waiting to flush, since Node otherwise queues writes in memory without limit while a socket is connecting or its peer has stalled. Refused sends fail with `HOTSHOTS_WRITE_QUEUE_FULL` and, with `includeDatadogTelemetry` enabled, count as `packets_dropped_queue`
 * [@bdeitte](https://github.com/bdeitte) Fix `close()` hanging when the socket was already destroyed, reachable when an application destroys the `stream` it supplied and then closes the client
+* [@bdeitte](https://github.com/bdeitte) Add NETWORKING.md, documenting the send path and failure modes of each transport with diagrams, linked from README.md
 
 ## 17.1.0 (2026-7-25)
 
