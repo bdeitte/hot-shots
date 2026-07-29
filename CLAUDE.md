@@ -27,6 +27,8 @@ The library supports multiple transport protocols:
 - **UDS**: Unix Domain Sockets (requires unix-dgram optional dependency)
 - **Stream**: Raw stream protocol for custom transports
 
+If you are in any DNS, retry, or other protocol code, read through NETWORKING.md
+
 ### Client Architecture
 - Main Client class handles initialization and configuration
 - Transport layer abstracts protocol differences

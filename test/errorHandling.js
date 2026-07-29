@@ -1,4 +1,5 @@
 const assert = require('assert');
+const constants = require('../lib/constants');
 const process = require('process');
 const path = require('path');
 const helpers = require('./helpers/helpers.js');
@@ -688,6 +689,112 @@ describe('#errorHandling', () => {
               };
             }
 
+            it('should still deliver a retry that lands inside close()\'s drain budget', (done) => {
+              const socketPath = path.join(__dirname, 'test-retry-drain.sock');
+              const received = [];
+              const udsServer = createUdsTestServer(socketPath, buf => received.push(buf.toString()));
+
+              if (!udsServer) {
+                return done();
+              }
+
+              // First attempt reports congestion; the retry falls at the default
+              // 100ms, well inside the drain budget (closingFlushInterval * 11).
+              const unixDgramModule = require('unix-dgram'); // eslint-disable-line global-require
+              const realCreateSocket = unixDgramModule.createSocket;
+              let attempts = 0;
+              unixDgramModule.createSocket = function(type) {
+                const realSocket = realCreateSocket(type);
+                const realSend = realSocket.send.bind(realSocket);
+                realSocket.send = function(buffer, callback) {
+                  attempts++;
+                  if (attempts === 1) {
+                    return process.nextTick(() => callback(internalError('CONGESTION', 'congestion')));
+                  }
+                  return realSend(buffer, callback);
+                };
+                return realSocket;
+              };
+
+              // Not assigned to the shared `statsd`; this test closes it itself.
+              const client = createHotShotsClient({
+                protocol: 'uds',
+                path: socketPath,
+                maxBufferSize: 0
+              }, 'client');
+
+              client.timing('drain.retry.metric', 100);
+
+              // Closing while the retry is still in backoff must not abandon it:
+              // the drain wait exists precisely to let an in-flight send finish,
+              // and cancelling retries any earlier would drop this metric.
+              client.close(() => {
+                setTimeout(() => {
+                  unixDgramModule.createSocket = realCreateSocket;
+                  udsServer.cleanup();
+                  assert.strictEqual(attempts, 2, 'the retry should have been attempted');
+                  assert.ok(received.some(msg => msg.includes('drain.retry.metric')),
+                    `the retried metric should still be delivered, saw ${JSON.stringify(received)}`);
+                  done();
+                }, 150);
+              });
+            });
+
+            it('should abandon a retry still waiting out its backoff when close() runs', (done) => {
+              const socketPath = path.join(__dirname, 'test-retry-abandon.sock');
+              const udsServer = createUdsTestServer(socketPath);
+
+              if (!udsServer) {
+                return done();
+              }
+
+              // Every attempt reports congestion, so the send is always sitting in
+              // a backoff timer rather than completing.
+              const unixDgramModule = require('unix-dgram'); // eslint-disable-line global-require
+              const realCreateSocket = unixDgramModule.createSocket;
+              unixDgramModule.createSocket = function(type) {
+                const realSocket = realCreateSocket(type);
+                realSocket.send = function(buffer, callback) {
+                  process.nextTick(() => callback(internalError('CONGESTION', 'congestion')));
+                };
+                return realSocket;
+              };
+
+              // Deliberately not assigned to the shared `statsd`: this test closes
+              // the client itself, and letting afterEach close it again races that
+              // close and trips a native assertion inside unix-dgram.
+              const client = createHotShotsClient({
+                protocol: 'uds',
+                path: socketPath,
+                udsRetryOptions: {
+                  // Long enough that the retry is certainly still pending at close.
+                  retries: 5,
+                  retryDelayMs: 2000,
+                  backoffFactor: 2
+                },
+                maxBufferSize: 0
+              }, 'client');
+
+              const state = { err: 'not called' };
+              client.timing('test.timer', 100, (err) => {
+                state.err = err;
+              });
+
+              // Let the first attempt fail and schedule its retry, then close.
+              setTimeout(() => {
+                client.close(() => {
+                  setImmediate(() => {
+                    unixDgramModule.createSocket = realCreateSocket;
+                    udsServer.cleanup();
+                    assert.ok(state.err && state.err !== 'not called',
+                      'the abandoned retry should fail its callback rather than hang');
+                    assert.strictEqual(state.err.code, constants.UDS_RETRY_CANCELLED_CODE);
+                    done();
+                  });
+                });
+              }, 50);
+            });
+
             it('should retry UDS send with exponential backoff on failure', (done) => {
               const socketPath = path.join(__dirname, 'test-retry.sock');
               const maxRetries = 2;
@@ -756,6 +863,7 @@ describe('#errorHandling', () => {
               // Mock unix-dgram socket to always fail
               const unixDgramModule = require('unix-dgram'); // eslint-disable-line global-require
               const realCreateSocket = unixDgramModule.createSocket;
+              let reported = false;
               unixDgramModule.createSocket = function(type) {
                 const realSocket = realCreateSocket(type);
                 realSocket.send = function(buffer, callback) {
@@ -772,8 +880,15 @@ describe('#errorHandling', () => {
                   retries: 5,
                 },
                 maxBufferSize: 0,
+                // Only the first error is the one under test. close() may report
+                // a second one later if it gives up on its final flush, so this
+                // must not assume a single invocation.
                 errorHandler: (err) => {
                   assert.ok(err);
+                  if (reported) {
+                    return;
+                  }
+                  reported = true;
                   // restore
                   unixDgramModule.createSocket = realCreateSocket;
                   // clean up the uds server to avoid hanging the test
@@ -797,10 +912,19 @@ describe('#errorHandling', () => {
                   retries: 0
                 },
                 maxBufferSize: 1,
+                // Bounded rather than exact. With retries off the send fails once,
+                // and close()'s final flush fails the same way (both are ENOENT
+                // against a socket with no server), so two is expected. Anything
+                // beyond that would mean a retry happened, which is what this test
+                // exists to catch.
                 errorHandler: (err) => {
-                  errorCount++;
                   assert.ok(err);
-                  assert.strictEqual(errorCount, 1);
+                  errorCount++;
+                  assert.ok(errorCount <= 2,
+                    `retries are off, so expected at most the send plus the close flush, saw ${errorCount}`);
+                  if (errorCount > 1) {
+                    return;
+                  }
                   done();
                 }
               }, 'client');
@@ -828,6 +952,15 @@ describe('#errorHandling', () => {
                   return;
                 }
                 cleanedUp = true;
+                // Stop the afterEach from blocking on this client. Its
+                // udsRetryOptions allow 20 attempts at up to 800ms, so a send
+                // still mid-retry here can take far longer to settle than
+                // close()'s CLOSE_FLUSH_TIMEOUT budget. Close it without
+                // waiting so the shared afterEach does not race that budget.
+                if (statsd === client) {
+                  statsd = null;
+                }
+                client.close();
                 udsServer.cleanup();
                 // restore unix-dgram createSocket if we patched it
                 try {
