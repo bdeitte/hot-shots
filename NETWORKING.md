@@ -66,7 +66,7 @@ These hold for every transport and explain most of the non-obvious code.
 | A user callback that throws never escapes a fan-out (`invokeCallback`) | Batch flushes would otherwise strand the rest of the batch, or the close itself |
 | In-memory queueing is capped in every transport | Each transport can otherwise accumulate unboundedly when its peer is gone |
 | Every socket-backed transport attaches a default `error` listener | An `EventEmitter` emitting `'error'` with no listener crashes the process |
-| Telemetry splits drops by cause | `REFUSED_CODES` count as `*_dropped_queue`; anything that reached the wire counts as `*_writer` |
+| Telemetry splits drops by cause | `REFUSED_CODES` (a client-side capacity or lifecycle refusal) count as `*_dropped_queue`; every other resolve or write failure counts as `*_writer` |
 
 The caps:
 
@@ -318,6 +318,7 @@ sequenceDiagram
 | `ERR_STREAM_DESTROYED` | stream | write attempted on a destroyed stream | writer |
 | `EAGAIN` / `congestion` | uds | receiver buffer full; retried before surfacing | writer |
 
-The six `queue`-bucket codes are `REFUSED_CODES` — the client turned the send away and
-nothing reached the socket. `CLOSE_CONTINUE_CODES` adds the flush timeout: errors that must
-not abort `close()`.
+The six `queue`-bucket codes are `REFUSED_CODES` — the client turned the send away (or, for
+the abandoned uds retry, stopped retrying it). Everything else, including a DNS lookup that
+failed before any packet was written, falls into the `writer` bucket.
+`CLOSE_CONTINUE_CODES` adds the flush timeout: errors that must not abort `close()`.
