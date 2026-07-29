@@ -5,6 +5,18 @@ const { Writable } = require('stream');
 const StatsD = require('../lib/statsd.js');
 
 describe('#transportExtended', () => {
+  let dnsCount;
+
+  afterEach(() => {
+    // Restore here too, not only on the success path. A test that never gets
+    // its data callback would otherwise leave dns.lookup patched for the rest
+    // of the mocha process, corrupting every later test that counts lookups.
+    if (dnsCount) {
+      dnsCount.restore();
+      dnsCount = null;
+    }
+  });
+
   it('should handle empty messages correctly', done => {
     class TestStream extends Writable {
       _write(chunk, encoding, callback) { // eslint-disable-line class-methods-use-this
@@ -252,13 +264,13 @@ describe('#transportExtended', () => {
   it('should perform no dns lookups for TCP when no host is given', done => {
     // Defaulting to the IPv4 literal rather than 'localhost' means the loopback
     // path costs no resolution at all, matching UDP's behavior (see #185).
-    let counter;
     const tcpServer = net.createServer(socket => {
       socket.setEncoding('ascii');
       socket.on('data', () => {
-        const seen = counter.count;
-        const hostnames = JSON.stringify(counter.hostnames);
-        counter.restore();
+        const seen = dnsCount.count;
+        const hostnames = JSON.stringify(dnsCount.hostnames);
+        dnsCount.restore();
+        dnsCount = null;
         // Tear down before asserting. An assertion thrown from this handler
         // would otherwise leave tcpServer open, and the live handle stops
         // mocha exiting at all rather than just failing the test.
@@ -275,7 +287,7 @@ describe('#transportExtended', () => {
     tcpServer.listen(0, '127.0.0.1', () => {
       // Start counting only now: listen() resolves its own bind address, and
       // that scaffolding lookup is not the client's.
-      counter = dnsCounter.startCounting();
+      dnsCount = dnsCounter.startCounting();
       client = new StatsD({
         protocol: 'tcp',
         port: tcpServer.address().port,
@@ -285,16 +297,18 @@ describe('#transportExtended', () => {
   });
 
   it('should reach an IPv4-only agent over TCP when no host is given', done => {
-    // With no host, Node connects to 'localhost'. Where that resolves to ::1
-    // first, the connection must still fall back to the IPv4 agent rather than
-    // failing outright. Node 20+ does this by default; Node 18 needs it asked
-    // for explicitly, and Node 18 is still supported.
+    // A guard for the older supported Node versions. On Node 20+ this passes
+    // with or without the fix, because localhost may resolve IPv4-first and
+    // autoSelectFamily is on by default. On Node 18 neither holds, and a
+    // no-host client would fail to reach an agent bound to 127.0.0.1.
     const tcpServer = net.createServer(socket => {
       socket.setEncoding('ascii');
       socket.on('data', data => {
-        assert.ok(data.includes('test.metric'), `unexpected payload: ${data}`);
+        // Tear down before asserting, per the note on the test above.
+        const payload = data;
         client.close(() => {
           tcpServer.close(() => {
+            assert.ok(payload.includes('test.metric'), `unexpected payload: ${payload}`);
             done();
           });
         });

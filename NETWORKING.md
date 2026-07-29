@@ -152,6 +152,13 @@ isDnsSendBlocked(), cancelPendingSends(error).
 A single persistent, keep-alive, unref'd net connection. Messages are newline-terminated
 and written as ascii.
 
+With no `host`, the connection targets `127.0.0.1` rather than letting Node fall back to
+`localhost`. That skips a DNS lookup on the loopback path, matching what dgram already
+does for UDP, and it avoids resolving to `::1` first and missing an agent bound to IPv4
+only. Reach an IPv6 agent by passing `host: '::1'`. When `host` is an explicit hostname,
+the connect tries every resolved address family rather than only the first, which Node 20+
+does by default and Node 18 does not.
+
 ```mermaid
 flowchart TD
     S["send(buf, cb)"] --> D{"socket.destroyed?"}
@@ -260,7 +267,7 @@ real transport would.
 | Connection | none | persistent | connected datagram | caller's stream | none |
 | Newline-terminated | no | yes | no | yes | n/a |
 | Default maxBufferSize | 0 | 0 | 8192 (hard cap) | 0 | 0 |
-| DNS | per-packet, or cached with cacheDns | at connect only | n/a | n/a | n/a |
+| DNS | per-packet, or cached with cacheDns | at connect only, and none at all without a host | n/a | n/a | n/a |
 | Backpressure guard | cacheDns lookup queue (1000) | 1 MiB unflushed | retry/backoff | 1 MiB unflushed | none |
 | Retries | none | none | EAGAIN / congestion, tuned by udsRetryOptions | none | none |
 | Socket auto-replacement | no | yes | yes | no | no |

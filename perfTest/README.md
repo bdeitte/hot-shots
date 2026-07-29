@@ -114,7 +114,7 @@ that a nonzero value would be visible if that ever stopped being true.
 `server.listen(0, '127.0.0.1')` and `server.bind(0, '127.0.0.1')` in the test
 helpers issues its own `dns.lookup` on that literal, and there are many of
 them across the suite. That is why `127.0.0.1` dominates the `dns.lookup by
-hostname` table (949 of 1295 total lookups in the verified run below) —
+hostname` table (951 of 982 total lookups in the verified run below) —
 most of it is test setup binding listeners, not client code resolving a
 destination.
 
@@ -126,39 +126,48 @@ what the library itself does.
 
 ### Example output
 
-From a clean run of the full suite (2018 passing, exit 0):
+From a clean run of the full suite (2020 passing, exit 0), abridged — the
+report also prints a `node processes measured` row and a trailing note:
 
 ```
-Wall time
-  test suite (instrumented)                       155.12s
-  test suite under strace (inflated)               188.75s
+ Wall time
+  test suite (instrumented)                       153.70s
+  test suite under strace (inflated)              188.14s
 
-In-process counts (API invocations)
-  dns.lookup calls                                    1295
-    ... for an IP literal                              949
-    ... for a hostname                                  346
-  dns.resolve* calls                                     0
-  dgram sends (UDP)                                   4748
-  net connects (TCP)                                   320
-  net writes (TCP)                                    26311
-  unix-dgram sends (UDS)                                292
-  http requests                                          0
-  https requests                                         0
+ In-process counts (API invocations)
+  dns.lookup calls                                    982
+    ... for an IP literal                             951
+    ... for a hostname                                 31
+  dns.resolve* calls                                    0
+  dgram sends (UDP)                                  4748
+  net connects (TCP)                                  322
+  net writes (TCP)                                  26315
+  unix-dgram sends (UDS)                              292
+  http requests                                         0
+  https requests                                        0
 
-dns.lookup by hostname
-  127.0.0.1                                            949
-  localhost                                             336
-  ...                                                      9
-  definitely-not-a-real-host-12345.invalid                 1
+ dns.lookup by hostname
+  127.0.0.1                                           951
+  localhost                                            21
+  ...                                                   9
+  definitely-not-a-real-host-12345.invalid              1
 
-Syscall counts (what the kernel saw)
-  resolver syscalls (port 53)                            1
-  socket()                                             3114
-  connect()                                             992
-  sendto()                                              339
-  sendmsg()                                             3031
-  sendmmsg()                                              0
+ Syscall counts (what the kernel saw)
+  resolver syscalls (port 53)                           1
+  socket()                                           2487
+  connect()                                           678
+  sendto()                                             24
+  sendmsg()                                          3031
+  sendmmsg()                                            0
 ```
+
+For a worked example of reading these numbers, an earlier run of this same
+harness — before TCP defaulted its host to `127.0.0.1` — reported 1295
+`dns.lookup` calls, 346 of them for a hostname, with `localhost` at 336.
+Defaulting the TCP host dropped hostname lookups to 31 and `localhost` to 21,
+while the IP-literal count stayed flat. That is the shape of change this
+harness is built to show: movement in the in-process counts with the port-53
+syscall count unchanged at 1.
 
 These are one run's numbers, shown as an illustration of the report's shape,
 not a guarantee of what any other run will print. Treat them the same way as
