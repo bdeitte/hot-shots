@@ -156,8 +156,9 @@ With no `host`, the connection targets `127.0.0.1` rather than letting Node fall
 `localhost`. That skips a DNS lookup on the loopback path, matching what dgram already
 does for UDP, and it avoids resolving to `::1` first and missing an agent bound to IPv4
 only. Reach an IPv6 agent by passing `host: '::1'`. When `host` is an explicit hostname,
-the connect tries every resolved address family rather than only the first, which Node 20+
-does by default and Node 18 does not.
+the connect tries every resolved address family rather than only the first. Node 20+ does
+that by default, but `autoSelectFamily` is set explicitly so it still holds when the
+default is turned off, such as under `--no-network-family-autoselection`.
 
 ```mermaid
 flowchart TD

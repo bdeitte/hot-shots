@@ -297,10 +297,10 @@ describe('#transportExtended', () => {
   });
 
   it('should reach an IPv4-only agent over TCP when no host is given', done => {
-    // A guard for the older supported Node versions. On Node 20+ this passes
-    // with or without the fix, because localhost may resolve IPv4-first and
-    // autoSelectFamily is on by default. On Node 18 neither holds, and a
-    // no-host client would fail to reach an agent bound to 127.0.0.1.
+    // On stock Node 20+ this passes with or without the fix, because localhost
+    // may resolve IPv4-first and autoSelectFamily is on by default. It still
+    // guards the no-host default for setups where neither holds, such as an
+    // IPv6-first resolver under --no-network-family-autoselection.
     const tcpServer = net.createServer(socket => {
       socket.setEncoding('ascii');
       socket.on('data', data => {

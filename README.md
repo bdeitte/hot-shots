@@ -18,7 +18,7 @@ You can read about all changes in [the changelog](CHANGES.md).
 
 For a deep dive into how each transport sends data and how failures are handled, see [NETWORKING.md](https://github.com/bdeitte/hot-shots/blob/main/NETWORKING.md).
 
-hot-shots supports Node 18.x and higher. When using types.d.ts, hot-shots require TypeScript 4.0 or higher.
+hot-shots supports Node 20.x and higher. When using types.d.ts, hot-shots require TypeScript 4.0 or higher.
 
 ![Build Status](https://github.com/bdeitte/hot-shots/actions/workflows/node-test.js.yml/badge.svg)
 

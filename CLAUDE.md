@@ -179,7 +179,7 @@ See `test/udpDnsCacheTransport.js` and `test/udpSocketOptions.js` for examples.
 
 ## Important Notes
 
-- Node.js >= 18.0.0 required (see `engines` in package.json)
+- Node.js >= 20.0.0 required (see `engines` in package.json)
 - TypeScript definitions in types.d.ts must be updated for API changes
 - Constructor parameter expansion is deprecated - use options object
 - Mock mode available for testing (prevents actual metric sending)

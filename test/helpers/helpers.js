@@ -116,8 +116,8 @@ function testProtocolTypes() {
  * server.address() reports `address`, but StatsD reads `host`, so without this
  * the client falls back to Node's default of 'localhost'. Where localhost
  * resolves to ::1 first, that leaves an IPv4-only server and an IPv6-seeking
- * client. Node 20+ hides it via autoSelectFamily; Node 18 (still supported in
- * engines and CI) does not, and every TCP test fails there.
+ * client. autoSelectFamily hides it for the client code under test, but these
+ * tests should target the bound address directly rather than lean on that.
  *
  * @param {Object} address - the result of server.address()
  * @returns {Object} client options carrying an explicit host
