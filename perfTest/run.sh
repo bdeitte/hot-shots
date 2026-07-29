@@ -19,7 +19,7 @@ if [ "$MODE" != "test" ]; then
 fi
 
 rm -rf "$COUNTS_ROOT"
-mkdir -p "$COUNTS_ROOT/pass1" "$COUNTS_ROOT/pass2"
+mkdir -p "$COUNTS_ROOT/pass1"
 
 echo '==> Pass 1: test suite with in-process counters'
 start_ns=$(date +%s%N)
@@ -40,10 +40,13 @@ if [ "$strace_ok" = "1" ]; then
   echo
   echo '==> Pass 2: test suite under strace (timing here is inflated)'
   start_ns=$(date +%s%N)
-  HS_COUNTS_DIR="$COUNTS_ROOT/pass2" \
-    strace -f -qq -o "$STRACE_LOG" \
-      -e trace=socket,connect,sendto,sendmsg,sendmmsg \
-      npm test --ignore-scripts
+  # Deliberately uninstrumented: no NODE_OPTIONS here. The wrappers would add
+  # their own syscalls to the very trace we are measuring.
+  # Do not add -tt/-ttt -- a timestamp prefix makes report.js's line parser
+  # match nothing, silently reporting every syscall count as zero.
+  strace -f -qq -o "$STRACE_LOG" \
+    -e trace=socket,connect,sendto,sendmsg,sendmmsg \
+    npm test --ignore-scripts
   strace_status=$?
   end_ns=$(date +%s%N)
   wall_strace=$(( (end_ns - start_ns) / 1000000 ))

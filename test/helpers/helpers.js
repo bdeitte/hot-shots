@@ -111,6 +111,22 @@ function testProtocolTypes() {
 }
 
 /**
+ * Point the client at the exact address the TCP server bound.
+ *
+ * server.address() reports `address`, but StatsD reads `host`, so without this
+ * the client falls back to Node's default of 'localhost'. Where localhost
+ * resolves to ::1 first, that leaves an IPv4-only server and an IPv6-seeking
+ * client. Node 20+ hides it via autoSelectFamily; Node 18 (still supported in
+ * engines and CI) does not, and every TCP test fails there.
+ *
+ * @param {Object} address - the result of server.address()
+ * @returns {Object} client options carrying an explicit host
+ */
+function tcpClientOptions(address) {
+  return Object.assign({}, address, { host: address.address });
+}
+
+/**
  * Create statsd server to send messages to for testing
  */
 function createServer(serverType, callback) {
@@ -180,13 +196,9 @@ function createServer(serverType, callback) {
       });
     });
     server.on('listening', () => {
-      onListening(server.address());
+      onListening(tcpClientOptions(server.address()));
     });
 
-    // Bind the IP literal rather than 'localhost', matching the UDP server
-    // above. On hosts where localhost resolves to ::1 first (Node defaults to
-    // verbatim DNS ordering), binding 'localhost' listens on IPv6 only while
-    // the client under test connects to 127.0.0.1, and every TCP test times out.
     server.listen(0, '127.0.0.1');
   }
   else if (serverType === TCP_BROKEN) {
@@ -200,10 +212,9 @@ function createServer(serverType, callback) {
       socket.destroy();
     });
     server.on('listening', () => {
-      onListening(server.address());
+      onListening(tcpClientOptions(server.address()));
     });
 
-    // See the note on the TCP server above.
     server.listen(0, '127.0.0.1');
   }
   else if (serverType === STREAM) {
