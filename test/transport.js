@@ -1,9 +1,22 @@
 const assert = require('assert');
+const dnsCounter = require('./helpers/dnsCounter.js');
 const net = require('net');
 const { Writable } = require('stream');
 const StatsD = require('../lib/statsd.js');
 
 describe('#transportExtended', () => {
+  let dnsCount;
+
+  afterEach(() => {
+    // Restore here too, not only on the success path. A test that never gets
+    // its data callback would otherwise leave dns.lookup patched for the rest
+    // of the mocha process, corrupting every later test that counts lookups.
+    if (dnsCount) {
+      dnsCount.restore();
+      dnsCount = null;
+    }
+  });
+
   it('should handle empty messages correctly', done => {
     class TestStream extends Writable {
       _write(chunk, encoding, callback) { // eslint-disable-line class-methods-use-this
@@ -233,12 +246,80 @@ describe('#transportExtended', () => {
     });
 
     let client;
-    tcpServer.listen(0, 'localhost', () => {
+    // Bind and connect the IP literal rather than 'localhost'. Where localhost
+    // resolves to ::1 first, the server listens on IPv6 only while the client
+    // reaches IPv4, and this test times out without ever closing tcpServer --
+    // the leaked handle then keeps mocha from exiting at all.
+    tcpServer.listen(0, '127.0.0.1', () => {
       const addr = tcpServer.address();
       client = new StatsD({
         protocol: 'tcp',
-        host: 'localhost',
+        host: '127.0.0.1',
         port: addr.port,
+      });
+      client.increment('test.metric');
+    });
+  });
+
+  it('should perform no dns lookups for TCP when no host is given', done => {
+    // Defaulting to the IPv4 literal rather than 'localhost' means the loopback
+    // path costs no resolution at all, matching UDP's behavior (see #185).
+    const tcpServer = net.createServer(socket => {
+      socket.setEncoding('ascii');
+      socket.on('data', () => {
+        const seen = dnsCount.count;
+        const hostnames = JSON.stringify(dnsCount.hostnames);
+        dnsCount.restore();
+        dnsCount = null;
+        // Tear down before asserting. An assertion thrown from this handler
+        // would otherwise leave tcpServer open, and the live handle stops
+        // mocha exiting at all rather than just failing the test.
+        client.close(() => {
+          tcpServer.close(() => {
+            assert.strictEqual(seen, 0, `expected no dns lookups, got ${seen} for ${hostnames}`);
+            done();
+          });
+        });
+      });
+    });
+
+    let client;
+    tcpServer.listen(0, '127.0.0.1', () => {
+      // Start counting only now: listen() resolves its own bind address, and
+      // that scaffolding lookup is not the client's.
+      dnsCount = dnsCounter.startCounting();
+      client = new StatsD({
+        protocol: 'tcp',
+        port: tcpServer.address().port,
+      });
+      client.increment('test.metric');
+    });
+  });
+
+  it('should reach an IPv4-only agent over TCP when no host is given', done => {
+    // On stock Node 20+ this passes with or without the fix, because localhost
+    // may resolve IPv4-first and autoSelectFamily is on by default. It still
+    // guards the no-host default for setups where neither holds, such as an
+    // IPv6-first resolver under --no-network-family-autoselection.
+    const tcpServer = net.createServer(socket => {
+      socket.setEncoding('ascii');
+      socket.on('data', data => {
+        // Tear down before asserting, per the note on the test above.
+        const payload = data;
+        client.close(() => {
+          tcpServer.close(() => {
+            assert.ok(payload.includes('test.metric'), `unexpected payload: ${payload}`);
+            done();
+          });
+        });
+      });
+    });
+
+    let client;
+    tcpServer.listen(0, '127.0.0.1', () => {
+      client = new StatsD({
+        protocol: 'tcp',
+        port: tcpServer.address().port,
       });
       client.increment('test.metric');
     });

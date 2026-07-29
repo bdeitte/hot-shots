@@ -18,7 +18,7 @@ You can read about all changes in [the changelog](CHANGES.md).
 
 For a deep dive into how each transport sends data and how failures are handled, see [NETWORKING.md](https://github.com/bdeitte/hot-shots/blob/main/NETWORKING.md).
 
-hot-shots supports Node 18.x and higher. When using types.d.ts, hot-shots require TypeScript 4.0 or higher.
+hot-shots supports Node 20.x and higher. When using types.d.ts, hot-shots require TypeScript 4.0 or higher.
 
 ![Build Status](https://github.com/bdeitte/hot-shots/actions/workflows/node-test.js.yml/badge.svg)
 
@@ -81,7 +81,7 @@ All initialization parameters are optional.
 Parameters (specified as one object passed into hot-shots):
 
 * `host`:        The host to send stats to, if not set, the constructor tries to
-  retrieve it from the `DD_AGENT_HOST` environment variable, `default: 'undefined'` which as per [UDP/datagram socket docs](https://nodejs.org/api/dgram.html#dgram_socket_send_msg_offset_length_port_address_callback) results in `127.0.0.1` or `::1` being used.
+  retrieve it from the `DD_AGENT_HOST` environment variable, `default: 'undefined'` which as per [UDP/datagram socket docs](https://nodejs.org/api/dgram.html#dgram_socket_send_msg_offset_length_port_address_callback) results in `127.0.0.1` or `::1` being used. With the `tcp` protocol an unset host means `127.0.0.1`; pass `host: '::1'` to reach an IPv6 agent.
 * `port`:        The port to send stats to, if not set, the constructor tries to retrieve it from the `DD_DOGSTATSD_PORT` environment variable, `default: 8125`
 * `prefix`:      What to prefix each stat name with `default: ''`. A period separator is automatically added if not present (e.g. `my_prefix` becomes `my_prefix.`).
 * `suffix`:      What to suffix each stat name with `default: ''`. A period separator is automatically added if not present (e.g. `my_suffix` becomes `.my_suffix`).
