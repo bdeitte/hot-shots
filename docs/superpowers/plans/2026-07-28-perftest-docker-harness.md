@@ -139,7 +139,7 @@ git commit -m "Add the Ubuntu image for the perfTest harness"
 
 - [ ] **Step 1: Write `perfTest/instrument.js`**
 
-Load order is load-bearing. Node's `dgram`, `net`, and `http` modules capture `dns.lookup` by destructuring it at module load time, so `dns.lookup` must be patched *before* those modules are required. Do not hoist the requires to the top of the file.
+Load order is a defensive ordering choice. Node's `dgram`, `net`, and `http` modules resolve `dns.lookup` at call time (verified on Node 22 and 24), so the wrappers are picked up regardless of require order. Still, patch `dns.lookup` early before requiring those modules.
 
 ```js
 'use strict';
@@ -147,9 +147,9 @@ Load order is load-bearing. Node's `dgram`, `net`, and `http` modules capture `d
 // Counts network and DNS API invocations for the perfTest harness. Attached
 // with `node --require`, so it runs before any application code.
 //
-// IMPORTANT: dns.lookup is patched before dgram/net/http are required. Those
-// modules destructure dns.lookup at load time, so patching afterwards would
-// leave their internal default lookup unwrapped.
+// IMPORTANT: dns.lookup is patched before dgram/net/http are required as a
+// defensive ordering choice. Node's net/dgram/http resolve dns.lookup at call
+// time (verified on Node 22 and 24), so the wrappers are picked up regardless.
 
 const dns = require('dns');
 const net = require('net');

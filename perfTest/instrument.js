@@ -3,9 +3,9 @@
 // Counts network and DNS API invocations for the perfTest harness. Attached
 // with `node --require`, so it runs before any application code.
 //
-// IMPORTANT: dns.lookup is patched before dgram/net/http are required. Those
-// modules destructure dns.lookup at load time, so patching afterwards would
-// leave their internal default lookup unwrapped.
+// IMPORTANT: dns.lookup is patched before dgram/net/http are required as a
+// defensive ordering choice. Node's net/dgram/http resolve dns.lookup at call
+// time (verified on Node 22 and 24), so the wrappers are picked up regardless.
 
 const dns = require('dns');
 const net = require('net');
