@@ -1,8 +1,7 @@
 # Networking in hot-shots
 
 How a metric leaves the process, and how that can fail, for each of the five transports
-(udp, tcp, uds, stream, mock). This is a map, not a walkthrough. The code in
-lib/statsd.js and lib/transport.js is the detail.
+(udp, tcp, uds, stream, mock).
 
 - [The shared pipeline](#the-shared-pipeline)
 - [Invariants](#invariants)
@@ -16,7 +15,7 @@ lib/statsd.js and lib/transport.js is the detail.
 
 ## The shared pipeline
 
-Everything above sendMessage is protocol-independent. All protocol differences live in
+Everything above sendMessage in the diagram below is protocol-independent. All protocol differences live in
 socket.send(), the transport object built by lib/transport.js.
 
 ```mermaid
@@ -75,7 +74,7 @@ The caps:
 | udp (cacheDns) | sends waiting on an in-flight lookup | DNS_MAX_PENDING = 1000, oldest dropped | HOTSHOTS_DNS_QUEUE_FULL |
 | tcp | socket.writableLength while connecting / peer not reading | MAX_PENDING_WRITE_BYTES = 1 MiB | HOTSHOTS_WRITE_QUEUE_FULL |
 | stream | stream.writableLength while the consumer is stalled | MAX_PENDING_WRITE_BYTES = 1 MiB | HOTSHOTS_WRITE_QUEUE_FULL |
-| uds | nothing queues; EAGAIN/congestion is retried with backoff | retries = 3 | the underlying error |
+| uds | nothing queues; EAGAIN/congestion is retried with backoff | udsRetryOptions.retries, default 3 | the underlying error |
 
 ## UDP
 
@@ -263,7 +262,7 @@ real transport would.
 | Default maxBufferSize | 0 | 0 | 8192 (hard cap) | 0 | 0 |
 | DNS | per-packet, or cached with cacheDns | at connect only | n/a | n/a | n/a |
 | Backpressure guard | cacheDns lookup queue (1000) | 1 MiB unflushed | retry/backoff | 1 MiB unflushed | none |
-| Retries | none | none | EAGAIN / congestion | none | none |
+| Retries | none | none | EAGAIN / congestion, tuned by udsRetryOptions | none | none |
 | Socket auto-replacement | no | yes | yes | no | no |
 | Recreated by sendMessage if missing | no | yes | yes | no | no |
 | unref() | works | works | throws | throws | no-op |
