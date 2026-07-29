@@ -183,7 +183,11 @@ function createServer(serverType, callback) {
       onListening(server.address());
     });
 
-    server.listen(0, 'localhost');
+    // Bind the IP literal rather than 'localhost', matching the UDP server
+    // above. On hosts where localhost resolves to ::1 first (Node defaults to
+    // verbatim DNS ordering), binding 'localhost' listens on IPv6 only while
+    // the client under test connects to 127.0.0.1, and every TCP test times out.
+    server.listen(0, '127.0.0.1');
   }
   else if (serverType === TCP_BROKEN) {
     server = net.createServer(socket => {
@@ -199,7 +203,8 @@ function createServer(serverType, callback) {
       onListening(server.address());
     });
 
-    server.listen(0, 'localhost');
+    // See the note on the TCP server above.
+    server.listen(0, '127.0.0.1');
   }
   else if (serverType === STREAM) {
     server = new EventEmitter();
