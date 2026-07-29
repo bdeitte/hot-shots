@@ -197,6 +197,7 @@ See `test/udpDnsCacheTransport.js` and `test/udpSocketOptions.js` for examples.
   ```
 - Updates should be noted in CHANGES.md using the format: `* [@username](https://github.com/username) Description`. For breaking changes, prefix with `Breaking:` (e.g., `* [@username](https://github.com/username) BREAKING: Description`). Do not use bold section headers. Always link `@username` mentions to their GitHub profiles and `#NNN` issue/PR references to `https://github.com/bdeitte/hot-shots/issues/NNN`.
 - API changes should be noted in README.md
+- If you are making a very large set of changes, use the manual performance tests in the perfTest directory to understand the before and after effects of the changes and report these out
 
 ## Follow for all code changes
 
