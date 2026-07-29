@@ -81,7 +81,7 @@ All initialization parameters are optional.
 Parameters (specified as one object passed into hot-shots):
 
 * `host`:        The host to send stats to, if not set, the constructor tries to
-  retrieve it from the `DD_AGENT_HOST` environment variable, `default: 'undefined'` which as per [UDP/datagram socket docs](https://nodejs.org/api/dgram.html#dgram_socket_send_msg_offset_length_port_address_callback) results in `127.0.0.1` or `::1` being used.
+  retrieve it from the `DD_AGENT_HOST` environment variable, `default: 'undefined'` which as per [UDP/datagram socket docs](https://nodejs.org/api/dgram.html#dgram_socket_send_msg_offset_length_port_address_callback) results in `127.0.0.1` or `::1` being used. With the `tcp` protocol an unset host means `127.0.0.1`; pass `host: '::1'` to reach an IPv6 agent.
 * `port`:        The port to send stats to, if not set, the constructor tries to retrieve it from the `DD_DOGSTATSD_PORT` environment variable, `default: 8125`
 * `prefix`:      What to prefix each stat name with `default: ''`. A period separator is automatically added if not present (e.g. `my_prefix` becomes `my_prefix.`).
 * `suffix`:      What to suffix each stat name with `default: ''`. A period separator is automatically added if not present (e.g. `my_suffix` becomes `.my_suffix`).

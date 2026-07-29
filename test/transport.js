@@ -1,4 +1,5 @@
 const assert = require('assert');
+const dnsCounter = require('./helpers/dnsCounter.js');
 const net = require('net');
 const { Writable } = require('stream');
 const StatsD = require('../lib/statsd.js');
@@ -243,6 +244,68 @@ describe('#transportExtended', () => {
         protocol: 'tcp',
         host: '127.0.0.1',
         port: addr.port,
+      });
+      client.increment('test.metric');
+    });
+  });
+
+  it('should perform no dns lookups for TCP when no host is given', done => {
+    // Defaulting to the IPv4 literal rather than 'localhost' means the loopback
+    // path costs no resolution at all, matching UDP's behavior (see #185).
+    let counter;
+    const tcpServer = net.createServer(socket => {
+      socket.setEncoding('ascii');
+      socket.on('data', () => {
+        const seen = counter.count;
+        const hostnames = JSON.stringify(counter.hostnames);
+        counter.restore();
+        // Tear down before asserting. An assertion thrown from this handler
+        // would otherwise leave tcpServer open, and the live handle stops
+        // mocha exiting at all rather than just failing the test.
+        client.close(() => {
+          tcpServer.close(() => {
+            assert.strictEqual(seen, 0, `expected no dns lookups, got ${seen} for ${hostnames}`);
+            done();
+          });
+        });
+      });
+    });
+
+    let client;
+    tcpServer.listen(0, '127.0.0.1', () => {
+      // Start counting only now: listen() resolves its own bind address, and
+      // that scaffolding lookup is not the client's.
+      counter = dnsCounter.startCounting();
+      client = new StatsD({
+        protocol: 'tcp',
+        port: tcpServer.address().port,
+      });
+      client.increment('test.metric');
+    });
+  });
+
+  it('should reach an IPv4-only agent over TCP when no host is given', done => {
+    // With no host, Node connects to 'localhost'. Where that resolves to ::1
+    // first, the connection must still fall back to the IPv4 agent rather than
+    // failing outright. Node 20+ does this by default; Node 18 needs it asked
+    // for explicitly, and Node 18 is still supported.
+    const tcpServer = net.createServer(socket => {
+      socket.setEncoding('ascii');
+      socket.on('data', data => {
+        assert.ok(data.includes('test.metric'), `unexpected payload: ${data}`);
+        client.close(() => {
+          tcpServer.close(() => {
+            done();
+          });
+        });
+      });
+    });
+
+    let client;
+    tcpServer.listen(0, '127.0.0.1', () => {
+      client = new StatsD({
+        protocol: 'tcp',
+        port: tcpServer.address().port,
       });
       client.increment('test.metric');
     });
