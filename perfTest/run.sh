@@ -35,6 +35,7 @@ else
 fi
 
 wall_strace=0
+strace_status=0
 if [ "$strace_ok" = "1" ]; then
   echo
   echo '==> Pass 2: test suite under strace (timing here is inflated)'
@@ -43,6 +44,7 @@ if [ "$strace_ok" = "1" ]; then
     strace -f -qq -o "$STRACE_LOG" \
       -e trace=socket,connect,sendto,sendmsg,sendmmsg \
       npm test --ignore-scripts
+  strace_status=$?
   end_ns=$(date +%s%N)
   wall_strace=$(( (end_ns - start_ns) / 1000000 ))
 else
@@ -54,4 +56,17 @@ fi
 node /app/perfTest/report.js \
   "$COUNTS_ROOT/pass1" "$STRACE_LOG" "$wall_main" "$wall_strace" "$strace_ok"
 
-exit $test_status
+# A failed pass 2 leaves the syscall tallies partial or empty. Say so loudly:
+# silently reporting low syscall counts as if they were real is worse than
+# reporting nothing, since the numbers look plausible.
+if [ "$strace_status" != "0" ]; then
+  echo
+  echo "  WARNING: pass 2 exited $strace_status. The syscall counts above are"
+  echo '  incomplete and must not be compared against another run.'
+fi
+
+# Either pass failing means the measurement is not trustworthy, so surface it.
+if [ "$test_status" != "0" ]; then
+  exit $test_status
+fi
+exit $strace_status
