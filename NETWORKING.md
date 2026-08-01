@@ -1,7 +1,8 @@
 # Networking in hot-shots
 
-How a metric leaves the process, and how that can fail, for each of the five transports
-(udp, tcp, uds, stream, mock).
+This is not a large project, but what happens with connections and DNS can be difficult to follow
+and has many ways it can fail. This document covers how a metric leaves the process,
+and how that can fail, for each of the five transports (udp, tcp, uds, stream, mock).
 
 - [The shared pipeline](#the-shared-pipeline)
 - [Invariants](#invariants)
@@ -15,8 +16,10 @@ How a metric leaves the process, and how that can fail, for each of the five tra
 
 ## The shared pipeline
 
-Everything above sendMessage in the diagram below is protocol-independent. All protocol differences live in
-socket.send(), the transport object built by lib/transport.js.
+Everything above sendMessage in the diagram below is protocol-independent. Below it, this.socket is
+not a Node socket but the transport object lib/transport.js builds: send, close, the EventEmitter
+passthroughs, and a few protocol-specific hooks the caller feature-checks. That object is where the
+protocol differences live.
 
 ```mermaid
 flowchart TD
