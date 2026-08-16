@@ -120,9 +120,9 @@ console.log('\n In-process counts (API invocations)');
 if (counts.error) {
   console.log(`  unavailable: ${counts.error}`);
 } else if (counts.processes === 0) {
-  // An all-zero table looks like a real result -- http requests are supposed to
-  // be 0 -- so someone comparing two runs would read it as a huge improvement.
-  // Refuse to print numbers rather than print believable fake ones.
+  // An all-zero table looks like a real result, because http requests are
+  // supposed to be 0. Someone comparing two runs would read it as a large
+  // improvement. Print no numbers rather than numbers that look correct.
   console.log('  WARNING: the instrumentation did not run. No counts were');
   console.log(`  written to ${countsDir}, so there is nothing to report here.`);
   console.log('  Check that NODE_OPTIONS carried --require perfTest/instrument.js.');

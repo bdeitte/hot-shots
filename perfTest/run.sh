@@ -59,9 +59,9 @@ fi
 node /app/perfTest/report.js \
   "$COUNTS_ROOT/pass1" "$STRACE_LOG" "$wall_main" "$wall_strace" "$strace_ok"
 
-# A failed pass 2 leaves the syscall tallies partial or empty. Say so loudly:
-# silently reporting low syscall counts as if they were real is worse than
-# reporting nothing, since the numbers look plausible.
+# A failed pass 2 leaves the syscall tallies partial or empty. Report it. Low
+# syscall counts reported as if they were real are worse than no counts at all,
+# because the numbers still look correct.
 if [ "$strace_status" != "0" ]; then
   echo
   echo "  WARNING: pass 2 exited $strace_status. The syscall counts above are"
