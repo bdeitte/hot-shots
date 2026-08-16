@@ -1,8 +1,8 @@
 # Networking in hot-shots
 
-This is not a large project, but what happens with connections and DNS can be difficult to follow
-and has many ways it can fail. This document covers how a metric leaves the process,
-and how that can fail, for each of the five transports (udp, tcp, uds, stream, mock).
+Connections and DNS in hot-shots are difficult to follow and have many failure modes.
+This document covers how a metric leaves the process, and how that can fail, for each
+of the five transports (udp, tcp, uds, stream, mock).
 
 - [The shared pipeline](#the-shared-pipeline)
 - [Invariants](#invariants)
@@ -17,9 +17,9 @@ and how that can fail, for each of the five transports (udp, tcp, uds, stream, m
 ## The shared pipeline
 
 Everything above sendMessage in the diagram below is protocol-independent. Below it, this.socket is
-not a Node socket but the transport object lib/transport.js builds: send, close, the EventEmitter
-passthroughs, and a few protocol-specific hooks the caller feature-checks. That object is where the
-protocol differences live.
+not a Node socket but the transport object lib/transport.js builds. That object holds send, close,
+the EventEmitter passthroughs, and a few protocol-specific hooks the caller feature-checks. It is
+where the protocol differences live.
 
 ```mermaid
 flowchart TD
@@ -44,9 +44,10 @@ flowchart TD
     T --> MOCK["mock"]
 ```
 
-sendMessage is the choke point. It recreates a missing socket (tcp/uds only), lets UDP
-refuse a send while DNS is unusable, tracks messagesInFlight so close() can drain,
-records telemetry bytes, triggers TCP/UDS socket replacement, and routes errors:
+sendMessage is where every send converges. It recreates a missing socket (tcp/uds only)
+and lets UDP refuse a send while DNS is unusable. It also tracks messagesInFlight so
+close() can drain, records telemetry bytes, triggers TCP/UDS socket replacement, and
+routes errors:
 
 ```mermaid
 flowchart LR
@@ -84,10 +85,10 @@ The caps:
 The default. Connectionless, so "sent" means "handed to the kernel".
 
 Two construction details. An IP-literal host picks the socket type: ::1 gives udp6,
-127.0.0.1 gives udp4. Everything else, a hostname included, gets udp4, and lookups are
-then pinned to family 4, so a resolver that answers localhost with ::1 on Node 17+ cannot
-hand the socket an address it will refuse. Separately, a custom lookup short-circuits IP
-literals so APM tools do not see a DNS span per packet.
+127.0.0.1 gives udp4. Everything else, a hostname included, gets udp4. hot-shots then
+pins lookups to family 4. A resolver that answers localhost with ::1 on Node 17+
+therefore cannot hand the socket an address it will refuse. Separately, a custom lookup
+short-circuits IP literals so APM tools do not see a DNS span per packet.
 
 Without cacheDns, a hostname means a dns.lookup for every packet. With cacheDns
 (cacheDnsTtl 60000 ms), a state machine sits in front of the socket:
@@ -130,18 +131,18 @@ stateDiagram-v2
     Cancelled --> [*]
 ```
 
-Behaviours worth knowing:
+Behaviors:
 
 - **Failure cooldown ramps.** DNS_COOLDOWN_BASE_MS (1 s), doubling per consecutive
   failure, capped at cacheDnsTtl. Success resets it. Without a cooldown a fast-failing
   resolver degrades back into one lookup per send. It ramps rather than sitting at a flat
-  TTL so a process that starts before its resolver is ready does not drop 60 s of metrics
-  over a one-second blip.
+  TTL for the cold start. A process that starts before its resolver is ready then loses
+  about a second of metrics rather than 60 s.
 - **hot-shots pins lookups to the socket's address family**, or getaddrinfo can hand a
   udp4 socket a ::1 that fails every send with EINVAL.
 - **A stale address keeps working while a refresh runs.** A background refresh has no send
-  callback to carry an error, so failures are emitted on the socket (and logged only if no
-  user 'error' listener exists), once per contiguous failure streak.
+  callback to carry an error. hot-shots emits the failure on the socket instead, once per
+  contiguous failure streak, and logs it only if no user 'error' listener exists.
 - **The cancelled latch is permanent.** After close(), later sends fail rather than
   re-queueing into a queue nothing will flush again.
 - **A background refresh cannot be cancelled.** getaddrinfo is neither unref-able nor
@@ -157,11 +158,11 @@ and written as ascii.
 
 With no `host`, the connection targets `127.0.0.1` rather than letting Node fall back to
 `localhost`. That skips a DNS lookup on the loopback path, matching what dgram already
-does for UDP, and it avoids resolving to `::1` first and missing an agent bound to IPv4
+does for UDP. It also avoids resolving to `::1` first and missing an agent bound to IPv4
 only. Reach an IPv6 agent by passing `host: '::1'`. When `host` is an explicit hostname,
 the connect tries every resolved address family rather than only the first. Node 20+ does
-that by default, but `autoSelectFamily` is set explicitly so it still holds when the
-default is turned off, such as under `--no-network-family-autoselection`.
+that by default. hot-shots sets `autoSelectFamily` explicitly, so the behavior still holds
+when the default is disabled, such as under `--no-network-family-autoselection`.
 
 ```mermaid
 flowchart TD
@@ -217,13 +218,13 @@ uds only.
 
 ## UDS
 
-Unix domain datagrams via the optional unix-dgram dependency; default path
+Unix domain datagrams, through the optional unix-dgram dependency. The default path is
 /var/run/datadog/dsd.socket. A construction failure leaves this.socket === null and
 reports through errorHandler or console.error.
 
-Two things are unique to UDS. **Buffering is on by default.** maxBufferSize defaults to
-8192 (Datadog's recommendation) and is hard-capped there, so a per-metric callback is a
-*queued* signal, not a delivery signal. And **sends retry with backoff**, because EAGAIN
+**Buffering is on by default.** maxBufferSize defaults to 8192 (Datadog's
+recommendation) and is hard-capped there. A per-metric callback is therefore a *queued*
+signal, not a delivery signal. And **sends retry with backoff**, because EAGAIN
 and unix-dgram's congestion sentinel mean a full receiver buffer, which is recoverable:
 
 ```mermaid
@@ -255,9 +256,12 @@ client does hold the process open.
 
 **Stream** is a caller-supplied writable: newline-terminated like TCP, same destroyed-check
 and 1 MiB guard. The differences are all about ownership. The stream belongs to the
-application, so the default 'error' listener is removable (and re-attached if destroy()
-throws), an already-destroyed stream is completed by Client._close rather than by
-re-emitting 'close' into the application's own listeners, and unref() throws.
+application, which gives it three properties no other transport has:
+
+- The default 'error' listener is removable, and is re-attached if destroy() throws.
+- Client._close completes an already-destroyed stream itself. It does not re-emit
+  'close' into the application's own listeners.
+- unref() throws.
 
 **Mock** builds no socket at all, just a plain object with its own listener map. _send
 routes into mockBuffer before reaching sendMessage, so the mock transport's send is not the
@@ -314,10 +318,10 @@ sequenceDiagram
     Client-->>App: cb()
 ```
 
-- The **5 s flush guard** covers the ways a transport can never call back: a cold-start DNS
-  lookup, a write behind a connect that never completes. It is much larger than the drain
-  budget on purpose, since a first DNS lookup or TCP connect taking a few hundred ms is
-  ordinary.
+- The **5 s flush guard** covers the two ways a transport can never call back: a cold-start
+  DNS lookup, and a write behind a connect that never completes. It is much larger than the
+  drain budget on purpose, since a first DNS lookup or TCP connect taking a few hundred ms
+  is ordinary.
 - **A flush error outside CLOSE_CONTINUE_CODES aborts the close.** _close() never runs and
   the socket stays open, so a caller must not assume a closed socket on error.
 - **DNS cancellation runs at finish()**, so sends whose lookup resolves within the budget
@@ -328,7 +332,7 @@ sequenceDiagram
 - **_close is always reached via setImmediate.** unix-dgram crashes if close() runs inside
   a send completion callback on the same tick.
 - The drain waits on **this client plus every client the aggregator routed a send
-  through**, which may be a child. Nothing else about a child is visible here: each client
+  through**, which can be a child. Nothing else about a child is visible here. Each client
   counts its own messagesInFlight, and a child's unaggregated in-flight sends do not hold
   up the parent's close.
 

@@ -43,9 +43,9 @@ Run it:
 docker run --rm --cap-add=SYS_PTRACE --security-opt seccomp=unconfined hot-shots-perf
 ```
 
-Those two flags let `strace` run inside the container. Drop them and the run
-still reports wall time and in-process counts, with the syscall section marked
-skipped.
+Those two flags let `strace` run inside the container. If you drop them, the run
+still reports wall time and in-process counts. The syscall section is then
+marked skipped.
 
 The suite runs twice. Pass 1 attaches a preload module that counts calls into
 `dns`, `dgram`, `net`, `http`, and `unix-dgram`, and its wall time is the
@@ -61,10 +61,10 @@ process to every count.
 DNS appears twice and the two figures will differ. `dns.lookup calls` counts
 API invocations. `resolver syscalls (port 53)` counts queries that reached the
 wire. Node answers an IP literal inside `dns.lookup` without touching the
-network, and `localhost` comes from `/etc/hosts`, so the syscall count sits
-near zero while the in-process count runs high. Never add the two together.
+network, and `localhost` comes from `/etc/hosts`. The syscall count therefore
+sits near zero while the in-process count runs high. Never add the two together.
 
-That split is the point of the harness. Changing how often hot-shots calls
+That split is why the harness exists. Changing how often hot-shots calls
 `dns.lookup` moves the in-process number and leaves the syscall number flat.
 Watch the `... for an IP literal` line for that kind of change.
 
@@ -93,10 +93,10 @@ Counts hold steady enough to compare. Wall time drifts, so take
 several runs before trusting a timing difference.
 
 Compare images built around the same time. The Dockerfile pulls
-`ubuntu:latest` and NodeSource's `setup_22.x`, both floating tags, so builds
-months apart can land on a different Ubuntu release or Node patch and shift
-the numbers for reasons unrelated to your code. Pin both in the Dockerfile if
-comparability over time matters more than tracking current versions.
+`ubuntu:latest` and NodeSource's `setup_22.x`, both floating tags. Builds months
+apart can therefore land on a different Ubuntu release or Node patch, and shift
+the numbers for reasons unrelated to your code. If comparability over time
+matters more than current versions, pin both in the Dockerfile.
 
 ## Micro-benchmark in the container
 
