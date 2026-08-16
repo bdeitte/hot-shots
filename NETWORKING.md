@@ -65,7 +65,7 @@ These hold for every transport and explain most of the non-obvious code.
 |---|---|
 | A send failure never calls back on the send's own stack frame (failLater / setImmediate) | The documented errorHandler pattern is "emit a metric when a send fails". An inline callback would recurse into the same failing path until RangeError |
 | Every queued send is called back exactly once | The drain in close() waits on messagesInFlight, and a swallowed callback hangs it |
-| A user callback that throws never escapes a fan-out (invokeCallback) | Batch flushes would otherwise strand the rest of the batch, or the close itself |
+| A user callback that throws never escapes a fan-out (invokeCallback) | Batch flushes would otherwise abandon the rest of the batch, or the close itself |
 | In-memory queueing is capped in every transport | Each transport can otherwise accumulate without bound when its peer is gone |
 | Every socket-backed transport attaches a default 'error' listener | An EventEmitter emitting 'error' with no listener crashes the process |
 | Telemetry splits drops by cause | REFUSED_CODES, meaning a client-side capacity or lifecycle refusal, count as bytes_dropped_queue / packets_dropped_queue. Every other resolve or write failure counts as the _writer pair |
@@ -137,8 +137,8 @@ Behaviours worth knowing:
   resolver degrades back into one lookup per send. It ramps rather than sitting at a flat
   TTL so a process that starts before its resolver is ready does not drop 60 s of metrics
   over a one-second blip.
-- **Lookups are pinned to the socket's address family**, or getaddrinfo can hand a udp4
-  socket a ::1 that fails every send with EINVAL.
+- **hot-shots pins lookups to the socket's address family**, or getaddrinfo can hand a
+  udp4 socket a ::1 that fails every send with EINVAL.
 - **A stale address keeps working while a refresh runs.** A background refresh has no send
   callback to carry an error, so failures are emitted on the socket (and logged only if no
   user 'error' listener exists), once per contiguous failure streak.
@@ -342,7 +342,7 @@ sequenceDiagram
 | HOTSHOTS_DNS_CLOSED | udp (cacheDns) | send arrived after close() latched the queue shut | queue |
 | HOTSHOTS_UDS_RETRY_CANCELLED | uds | a retry was waiting out its backoff when close() ran | queue |
 | HOTSHOTS_WRITE_QUEUE_FULL | tcp, stream | 1 MiB already unflushed in the socket | queue |
-| HOTSHOTS_CLOSE_FLUSH_TIMEOUT | any | close() gave up waiting on the final flush | n/a |
+| HOTSHOTS_CLOSE_FLUSH_TIMEOUT | any | close() stopped waiting on the final flush | n/a |
 | ERR_SOCKET_DESTROYED | tcp | write attempted on a destroyed socket | writer |
 | ERR_STREAM_DESTROYED | stream | write attempted on a destroyed stream | writer |
 | EAGAIN / congestion | uds | receiver buffer full; retried before surfacing | writer |
