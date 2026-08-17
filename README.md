@@ -546,7 +546,7 @@ The following metrics are sent every `telemetryFlushInterval` milliseconds (defa
 | `datadog.dogstatsd.client.packets_dropped_queue` | Packets dropped because the client refused the send outright |
 | `datadog.dogstatsd.client.packets_dropped_writer` | Packets dropped because a send was attempted and failed |
 
-The `_queue` and `_writer` pairs split the drop totals by cause. A queue drop means hot-shots refused the send and nothing reached the socket. The three causes are the `cacheDns` queue overflowing, a `tcp`/`stream` write refused for backpressure, and a send issued after `close()`. A writer drop means a write was attempted and failed. [NETWORKING.md](https://github.com/bdeitte/hot-shots/blob/main/NETWORKING.md) lists which error code falls into which bucket.
+The `_queue` and `_writer` pairs split the drop totals by cause. A queue drop means hot-shots refused the send and nothing reached the socket. The causes are the `cacheDns` queue overflowing, a `cacheDns` send refused during a failed-lookup cooldown, a `cacheDns` send whose lookup `close()` cancelled or that arrived after `close()`, a `uds` retry abandoned by `close()`, and a `tcp`/`stream` write refused for backpressure. A writer drop means a write was attempted and failed. A send issued after `close()` is therefore a queue drop only on a `cacheDns` client; on other transports the write reaches a destroyed socket and counts as a writer drop. [NETWORKING.md](https://github.com/bdeitte/hot-shots/blob/main/NETWORKING.md) lists which error code falls into which bucket.
 
 The `metric_dropped_on_receive` from the official Datadog clients is intentionally omitted. That metric tracks drops on an internal receive channel, which doesn't apply to hot-shots' architecture.
 

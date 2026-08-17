@@ -3,9 +3,9 @@
 // Counts network and DNS API invocations for the perfTest harness. Attached
 // with `node --require`, so it runs before any application code.
 //
-// IMPORTANT: dns.lookup is patched before dgram/net/http are required as a
-// defensive ordering choice. Node's net/dgram/http resolve dns.lookup at call
-// time (verified on Node 22 and 24), so the wrappers are picked up regardless.
+// Load order does not matter here. `net` is required below, ahead of the
+// dns.lookup patch, and net/dgram/http still pick the wrapper up because they
+// resolve dns.lookup at call time (verified on Node 22 and 24).
 
 const dns = require('dns');
 const net = require('net');
@@ -96,7 +96,7 @@ Module._load = function _load(request, ...rest) {
       const socket = originalCreateSocket.apply(this, args);
       if (socket && typeof socket.send === 'function') {
         const originalSocketSend = socket.send;
-        socket.send = function socketSend(...sendArgs) {
+        socket.send = function send(...sendArgs) {
           counts.udsSend += 1;
           return originalSocketSend.apply(this, sendArgs);
         };
