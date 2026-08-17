@@ -23,6 +23,11 @@ const COUNT_KEYS = [
 
 const SYSCALLS = ['socket', 'connect', 'sendto', 'sendmsg', 'sendmmsg'];
 
+/**
+ * Sums the per-process counter files one measurement pass wrote.
+ * @param {string} dir - directory holding the per-process JSON counter files
+ * @returns {Object} totals, per-host DNS counts, files read, and any read error
+ */
 function readCounts(dir) {
   const totals = {};
   for (const key of COUNT_KEYS) {
@@ -58,6 +63,11 @@ function readCounts(dir) {
   return { totals: totals, byHost: byHost, processes: processes };
 }
 
+/**
+ * Tallies the syscalls of interest in an strace log.
+ * @param {string} logPath - path to the strace output
+ * @returns {Object} per-syscall tallies and any read error
+ */
 function readStrace(logPath) {
   const tallies = { dnsPort53: 0 };
   for (const name of SYSCALLS) {
@@ -93,10 +103,21 @@ function readStrace(logPath) {
   return { tallies: tallies };
 }
 
+/**
+ * Formats a millisecond duration as seconds.
+ * @param {number|string} ms - duration in milliseconds
+ * @returns {string} the duration in seconds, to two decimal places
+ */
 function seconds(ms) {
   return `${(Number(ms) / 1000).toFixed(2)}s`;
 }
 
+/**
+ * Prints one aligned label/value line of the report.
+ * @param {string} label - the left-hand label
+ * @param {string|number} value - the right-hand value
+ * @returns {void}
+ */
 function row(label, value) {
   console.log(`  ${String(label).padEnd(42)} ${String(value).padStart(12)}`);
 }
@@ -120,9 +141,9 @@ console.log('\n In-process counts (API invocations)');
 if (counts.error) {
   console.log(`  unavailable: ${counts.error}`);
 } else if (counts.processes === 0) {
-  // An all-zero table looks like a real result -- http requests are supposed to
-  // be 0 -- so someone comparing two runs would read it as a huge improvement.
-  // Refuse to print numbers rather than print believable fake ones.
+  // An all-zero table looks like a real result, because http requests are
+  // supposed to be 0. Someone comparing two runs would read it as a large
+  // improvement. Print no numbers rather than numbers that look correct.
   console.log('  WARNING: the instrumentation did not run. No counts were');
   console.log(`  written to ${countsDir}, so there is nothing to report here.`);
   console.log('  Check that NODE_OPTIONS carried --require perfTest/instrument.js.');

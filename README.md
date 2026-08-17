@@ -90,15 +90,15 @@ Parameters (specified as one object passed into hot-shots):
 * `globalize`:   Expose this StatsD instance globally. `default: false`
 * `cacheDns`:    Caches dns lookup to *host* for *cacheDnsTtl*, only used
   when protocol is `udp`, `default: false`. Concurrent sends share a single
-  lookup, and a send after the TTL expires goes out immediately on the previous
-  address while one lookup refreshes it in the background. A failed lookup waits
+  lookup, and a send past the TTL goes out immediately on the stale address
+  while one refresh runs in the background. A failed lookup waits
   before the next attempt rather than retrying on every send: one second after the
   first failure, doubling with each consecutive failure, capped at *cacheDnsTtl*.
   During that wait a client with a cached address keeps using it, while one that
   has never resolved an address fails its sends with `HOTSHOTS_DNS_COOLDOWN`. A
   successful lookup resets the streak. A failed refresh is reported once per
   failure streak via `errorHandler`, or `console.error` if none is set.
-  Lookups are constrained to the socket's address family, so a `udp4` client
+  hot-shots pins lookups to the socket's address family, so a `udp4` client
   never resolves a hostname to an IPv6 address it cannot send to.
 * `cacheDnsTtl`: time-to-live of dns lookups in milliseconds, when *cacheDns* is enabled. `default: 60000`
 * `mock`:        Create a mock StatsD instance, using a mock transport that doesn't create real sockets.
@@ -122,8 +122,8 @@ Parameters (specified as one object passed into hot-shots):
 * `path`: Used only when the protocol is `uds`. Defaults to `/var/run/datadog/dsd.socket`.
 * `stream`: Reference to a stream instance. Used only when the protocol is `stream`. Destroying the stream yourself before calling `close()` is supported.
 
-For `tcp` and `stream` clients, sends are refused once 1 MB is waiting to flush,
-since Node otherwise queues writes in memory without limit while a socket is
+For `tcp` and `stream` clients, hot-shots refuses sends once 1 MiB is waiting to
+flush. Node otherwise queues writes in memory without limit while a socket is
 connecting or its peer has stopped reading. Refused sends fail with code
 `HOTSHOTS_WRITE_QUEUE_FULL` and, with `includeDatadogTelemetry` enabled, count as
 `packets_dropped_queue`. Writes to a healthy peer drain immediately, so this is
@@ -131,8 +131,9 @@ not reached in normal operation.
 
 For UDP clients, when *host* is an IP address or is left unset, hot-shots
 performs no DNS lookups regardless of *cacheDns*. Node otherwise routes every
-packet's destination through `dns.lookup`, which is a no-op for an IP address
-but still registers as an async operation that APM tools report as a span.
+packet's destination through `dns.lookup`. That call is a no-op for an IP
+address, but it still registers as an async operation that APM tools report as
+a span.
 
 If no transport options (`host`, `port`, `protocol`, `path`, `stream`) are passed, the transport can be configured from environment variables for parity with the official DogStatsD clients (these are Datadog-agent variables and are ignored for `telegraf` clients):
 * `DD_DOGSTATSD_URL`: A transport URL. `udp://host[:port]` configures UDP (port defaults to 8125), while `unix:///path/to/socket` or `unixgram:///path/to/socket` configures a Unix Domain Socket. The `unixstream://` scheme is not supported.
@@ -143,7 +144,7 @@ Precedence is: explicit transport options > `DD_DOGSTATSD_URL` > `DD_DOGSTATSD_S
 * `tcpGracefulRestartRateLimit`: Used only when the protocol is `tcp`. Time (ms) between re-creating the socket. Defaults to `1000`.
 * `udsGracefulErrorHandling`: Used only when the protocol is `uds`. Boolean indicating whether to handle socket errors gracefully. Defaults to true.
 * `udsGracefulRestartRateLimit`: Used only when the protocol is `uds`. Time (ms) between re-creating the socket. Defaults to `1000`.
-* `closingFlushInterval`: Before closing, StatsD will check for inflight messages. Time (ms) between each check. Defaults to `50`. Separately, `close()` waits up to 5 seconds for the final buffered flush, whatever is stalling it — an unresolved DNS lookup with *cacheDns*, or a `tcp`/`stream` connection that never completes. Past that the flush is dropped and reported via `errorHandler` (or the console), and `close()` closes the socket and invokes its callback rather than hanging.
+* `closingFlushInterval`: Before closing, StatsD will check for inflight messages. Time (ms) between each check. Defaults to `50`. Separately, `close()` waits up to 5 seconds for the final buffered flush, whatever is stalling it. Two examples are an unresolved DNS lookup with *cacheDns*, and a `tcp`/`stream` connection that never completes. Past that the flush is dropped and reported via `errorHandler` or the console. `close()` then closes the socket and invokes its callback rather than hanging.
 * `udsRetryOptions`: Used only when the protocol is `uds`. Retry/backoff options for UDS sends:
   * `retries`: Number of retry attempts for failed packet sends. Defaults to `3`.
   * `retryDelayMs`: Initial delay in milliseconds before retrying a failed packet send. Defaults to `100`.
@@ -152,6 +153,12 @@ Precedence is: explicit transport options > `DD_DOGSTATSD_URL` > `DD_DOGSTATSD_S
 
   A retry still waiting out its backoff when `close()` runs is abandoned rather than sent
   against a closing socket. Those sends fail with `HOTSHOTS_UDS_RETRY_CANCELLED`.
+
+  Sends waiting out a retry backoff are capped at 1000. `retries` caps the attempts for one
+  send, not how many sends are retrying at once, so a receiver stalled on `EAGAIN` would
+  otherwise hold every flush that arrived during the stall. Past the cap the oldest is
+  dropped, failing with `HOTSHOTS_UDS_RETRY_QUEUE_FULL` and, with `includeDatadogTelemetry`
+  enabled, counting as `packets_dropped_queue`.
 * `udpSocketOptions`: Used only when the protocol is `udp`. Specify the options passed into dgram.createSocket(). The socket type (`udp4` or `udp6`) is auto-detected based on the host: IPv6 addresses (e.g., `::1`) use `udp6`, IPv4 addresses use `udp4`, and hostnames default to `udp4`. You can override auto-detection by explicitly setting `type` (e.g., `{ type: 'udp6' }`).
 * `includeDatadogTelemetry`: Enable client-side telemetry to track metrics about the client itself. This helps diagnose high-throughput metric delivery issues. Telemetry metrics are prefixed with `datadog.dogstatsd.client.` and are not billed as custom metrics. `default: false`, except it defaults to `true` whenever Datadog mode is active (an explicit `datadog: true` or one of the Datadog signal env vars listed under the `datadog` option). An explicit value always wins. See [Client-Side Telemetry](#client-side-telemetry) for details.
 * `telemetryFlushInterval`: When telemetry is enabled, how often (in ms) to send telemetry metrics. `default: 10000`
@@ -392,9 +399,9 @@ If the optional callback is not given, an error is thrown in some cases and a co
 
 For broad error coverage, specify an `errorHandler` in your root client. It catches errors in socket setup, sending of messages, and closing of the socket.
 
-An `errorHandler` that unconditionally sends a metric on every call has no terminating condition: that send can itself fail, invoking the handler again. Send failures are always delivered on a later tick, so this will not grow the stack or wedge the process, but it will still loop indefinitely against a persistently failing transport — including after `close()`, where it keeps scheduling work on the event loop and so keeps a process alive that would otherwise exit. Guard such a handler with a re-entrancy flag or a counter.
+An `errorHandler` that unconditionally sends a metric on every call has no terminating condition: that send can itself fail, invoking the handler again. Send failures are always delivered on a later tick, so the stack does not grow and the process keeps responding. The loop still continues against a transport that always fails. After `close()` it keeps scheduling work on the event loop, which holds open a process that would otherwise exit. Guard such a handler with a re-entrancy flag or a counter.
 
-An `errorHandler` that throws is contained rather than propagated: the throw is reported with `console.error` and the remaining sends in the batch still get their callbacks, so one bad handler cannot strand a `close()` or leave sends uncalled.
+An `errorHandler` that throws is contained rather than propagated, on every path that reaches it, including the socket `error` event. hot-shots reports the throw with `console.error`, and the remaining sends in the batch still get their callbacks, so one bad handler cannot abandon a `close()` or leave sends uncalled.
 
 In unbuffered mode (`maxBufferSize === 0`), if you specify both an `errorHandler` and a per-metric callback, the callback takes precedence. In buffered mode (`maxBufferSize > 0`), per-metric callbacks do not receive send errors from periodic or overflow-driven flushes — those errors go to `errorHandler` (or are logged). See [Callback semantics](#callback-semantics) for details.
 
@@ -414,7 +421,7 @@ Buffered mode (`maxBufferSize > 0`, the default for UDS):
 
 `close`'s callback receives an error as its first parameter on failure. On the success path it fires after the socket close completes.
 
-A failure of the final flush is handled one of two ways. If the client refused the flush outright, or `close()` stopped waiting on it (any of the `HOTSHOTS_*` codes listed in [NETWORKING.md](https://github.com/bdeitte/hot-shots/blob/main/NETWORKING.md)), the error goes to `errorHandler` (or the console), the socket is still closed, and your callback fires with no error. For any other flush error the callback fires early with that error and the socket close is skipped — so your code should not assume the socket has been closed when the callback receives an error.
+A failure of the final flush is handled one of two ways. The first covers a flush the client refused outright, or one `close()` stopped waiting on. [NETWORKING.md](https://github.com/bdeitte/hot-shots/blob/main/NETWORKING.md) lists these `HOTSHOTS_*` codes. The error goes to `errorHandler` or to the console, the socket is still closed, and your callback fires with no error. For any other flush error the callback fires early with that error and the socket close is skipped. Your code must not assume the socket has been closed when the callback receives an error.
 
 ```javascript
 // Using errorHandler
@@ -545,7 +552,7 @@ The following metrics are sent every `telemetryFlushInterval` milliseconds (defa
 | `datadog.dogstatsd.client.packets_dropped_queue` | Packets dropped because the client refused the send outright |
 | `datadog.dogstatsd.client.packets_dropped_writer` | Packets dropped because a send was attempted and failed |
 
-The `_queue` and `_writer` pairs split the drop totals by cause. A queue drop means hot-shots refused the send and nothing reached the socket — the `cacheDns` queue overflowing, a `tcp`/`stream` write refused for backpressure, or a send issued after `close()`. A writer drop means a write was attempted and failed. [NETWORKING.md](https://github.com/bdeitte/hot-shots/blob/main/NETWORKING.md) lists which error code falls into which bucket.
+The `_queue` and `_writer` pairs split the drop totals by cause. A queue drop means hot-shots refused the send and nothing reached the socket. The causes are the `cacheDns` queue overflowing, a `cacheDns` send refused during a failed-lookup cooldown, a `cacheDns` send whose lookup `close()` cancelled or that arrived after `close()`, a `uds` retry abandoned by `close()` or evicted by the pending-retry cap, and a `tcp`/`stream` write refused for backpressure. A writer drop means a write was attempted and failed. A send issued after `close()` is therefore a queue drop only on a `cacheDns` client; on other transports the write reaches a destroyed socket and counts as a writer drop. [NETWORKING.md](https://github.com/bdeitte/hot-shots/blob/main/NETWORKING.md) lists which error code falls into which bucket.
 
 The `metric_dropped_on_receive` from the official Datadog clients is intentionally omitted. That metric tracks drops on an internal receive channel, which doesn't apply to hot-shots' architecture.
 

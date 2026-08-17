@@ -293,8 +293,9 @@ describe('#udpDnsCacheClose', () => {
             `every queued send should reach the handler, saw ${state.handlerCalls}`);
           assert.strictEqual(statsd.messagesInFlight, 0,
             `messagesInFlight should drain to 0, saw ${statsd.messagesInFlight}`);
-          const reported = logged.filter(msg => msg.includes('callback threw'));
-          assert.ok(reported.length > 0, 'the throws should be reported rather than swallowed');
+          const reported = logged.filter(msg => msg.includes('errorHandler threw'));
+          assert.strictEqual(reported.length, 5,
+            `every throw should be reported rather than swallowed, saw ${JSON.stringify(logged)}`);
           done();
         });
       });
