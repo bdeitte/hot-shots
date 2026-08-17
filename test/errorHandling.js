@@ -4,6 +4,7 @@ const process = require('process');
 const path = require('path');
 const helpers = require('./helpers/helpers.js');
 const { EventEmitter } = require('events');
+const net = require('net');
 
 /**
  * Create an internal error with a code and message.
@@ -61,6 +62,73 @@ describe('#errorHandling', () => {
       server.on('metrics', () => {
         assert.ok(false);
       });
+    });
+  });
+
+  it('should contain an errorHandler that throws on the socket error event', done => {
+    // hot-shots registers errorHandler as the socket's 'error' listener, so a
+    // throw there escapes through EventEmitter.emit and ends the process.
+    const originalConsoleError = console.error;
+    const logged = [];
+    console.error = msg => logged.push(String(msg));
+
+    statsd = createHotShotsClient({
+      host: '127.0.0.1',
+      port: 8125,
+      errorHandler() {
+        throw new Error('listener boom');
+      }
+    }, 'client');
+
+    statsd.socket.emit('error', new Error('socket blew up'));
+
+    setImmediate(() => {
+      console.error = originalConsoleError;
+      const contained = logged.filter(msg => msg.includes('listener boom'));
+      assert.strictEqual(contained.length, 1,
+        `the throw should be reported once with console.error, saw ${JSON.stringify(logged)}`);
+      done();
+    });
+  });
+
+  it('should contain an errorHandler that throws when socket replacement fails', done => {
+    // Two calls on this path, both previously bare: createTransport reports the
+    // creation failure, then protocolErrorHandler reports that it could not
+    // replace the socket. Both run inside a socket 'error' emit.
+    const originalConsoleError = console.error;
+    const originalConnect = net.connect;
+    const logged = [];
+    console.error = msg => logged.push(String(msg));
+
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, {
+        protocol: 'tcp',
+        errorHandler() {
+          throw new Error('replacement boom');
+        }
+      }), 'client');
+
+      setTimeout(() => {
+        // Make the replacement transport fail to build.
+        net.connect = () => {
+          throw new Error('connect refused');
+        };
+        // Old enough to clear the graceful-restart rate limit.
+        statsd.socket.createdAt = Date.now() - 60000;
+        statsd.socket.emit('error', internalError(badTCPConnectionCode(), 'bad connection'));
+
+        setTimeout(() => {
+          net.connect = originalConnect;
+          console.error = originalConsoleError;
+          // The replacement failed, so protocolErrorHandler returned with the
+          // original socket still in place and the client closes normally.
+          ignoreErrors = true;
+          const contained = logged.filter(msg => msg.includes('replacement boom'));
+          assert.ok(contained.length >= 1,
+            `the throws should be reported with console.error, saw ${JSON.stringify(logged)}`);
+          done();
+        }, 20);
+      }, 20);
     });
   });
 
