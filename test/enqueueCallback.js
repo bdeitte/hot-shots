@@ -43,6 +43,12 @@ describe('#enqueueCallback', () => {
     server = createServer('udp', opts => {
       statsd = createHotShotsClient(Object.assign(opts, {
         maxBufferSize: 8,
+        // Only the overflow-triggered flush is under test, and the assertion
+        // below counts sends. At the 1000ms default, an event-loop stall long
+        // enough to make this timer due lets it flush the buffered second
+        // metric in the timers phase, which runs before the check phase this
+        // assertion waits in. That is a second send and a spurious failure.
+        bufferFlushInterval: 60000,
         errorHandler: err => received.push(err),
       }), 'client');
 
@@ -57,8 +63,10 @@ describe('#enqueueCallback', () => {
       // errorHandler branch and the per-metric callback fires synchronously with no args.
       const originalSocketSend = statsd.socket.send.bind(statsd.socket);
       let socketSendCalls = 0;
+      const sendLog = [];
       statsd.socket.send = function (buf, cb) {
         socketSendCalls++;
+        sendLog.push({ n: socketSendCalls, buf: String(buf), stack: new Error('send').stack });
         if (socketSendCalls === 1) {
           // First send is the overflow-triggered flush — fail it via the real callback path.
           process.nextTick(() => cb(new Error('synthetic socket failure')));
@@ -79,7 +87,8 @@ describe('#enqueueCallback', () => {
       // with the async send error.
       setImmediate(() => {
         try {
-          assert.strictEqual(socketSendCalls, 1, 'overflow flush should have called socket.send once');
+          assert.strictEqual(socketSendCalls, 1,
+            `overflow flush should have called socket.send once; sends=${JSON.stringify(sendLog, null, 2)}`);
           assert.strictEqual(received.length, 1, 'errorHandler should receive the formatted send error');
           assert.ok(received[0].message.includes('synthetic socket failure'),
             `errorHandler message should include socket failure, got: ${received[0].message}`);
