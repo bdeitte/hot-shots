@@ -78,7 +78,7 @@ The caps:
 | udp (cacheDns) | sends waiting on an in-flight lookup | DNS_MAX_PENDING = 1000, oldest dropped | HOTSHOTS_DNS_QUEUE_FULL |
 | tcp | socket.writableLength while connecting / peer not reading | MAX_PENDING_WRITE_BYTES = 1 MiB | HOTSHOTS_WRITE_QUEUE_FULL |
 | stream | stream.writableLength while the consumer is stalled | MAX_PENDING_WRITE_BYTES = 1 MiB | HOTSHOTS_WRITE_QUEUE_FULL |
-| uds | nothing queues; EAGAIN/congestion is retried with backoff | udsRetryOptions.retries, default 3 | the underlying error |
+| uds | sends waiting out an EAGAIN/congestion retry backoff | UDS_MAX_PENDING_RETRIES = 1000, oldest dropped | HOTSHOTS_UDS_RETRY_QUEUE_FULL |
 
 ## UDP
 
@@ -244,6 +244,12 @@ backoffFactor 2. The backoff is real wall-clock time during which the send stays
 in messagesInFlight. A retry still waiting out its backoff when close() runs is abandoned
 with HOTSHOTS_UDS_RETRY_CANCELLED rather than fired at a closing socket.
 
+Those pending retries are capped at UDS_MAX_PENDING_RETRIES. Each one holds its buffer
+and a timer for up to retries * maxRetryDelayMs, so a receiver stalled on EAGAIN would
+otherwise retain every flush that arrived during the stall. retries caps attempts per
+send, not the number of sends retrying at once. Past the cap the oldest pending retry is
+dropped with HOTSHOTS_UDS_RETRY_QUEUE_FULL.
+
 Retrying and replacing are separate mechanisms with separate triggers. The retry above
 fires on EAGAIN and the congestion sentinel. Socket replacement fires on
 constants.udsErrors(), which is platform-specific and includes *negative numeric* errnos,
@@ -345,6 +351,7 @@ sequenceDiagram
 | HOTSHOTS_DNS_CANCELLED | udp (cacheDns) | queued mid-lookup, cancelled by close() | queue |
 | HOTSHOTS_DNS_CLOSED | udp (cacheDns) | send arrived after close() latched the queue shut | queue |
 | HOTSHOTS_UDS_RETRY_CANCELLED | uds | a retry was waiting out its backoff when close() ran | queue |
+| HOTSHOTS_UDS_RETRY_QUEUE_FULL | uds | 1000 sends already waiting out a retry backoff; oldest dropped | queue |
 | HOTSHOTS_WRITE_QUEUE_FULL | tcp, stream | 1 MiB already unflushed in the socket | queue |
 | HOTSHOTS_CLOSE_FLUSH_TIMEOUT | any | close() stopped waiting on the final flush | n/a |
 | ERR_SOCKET_DESTROYED | tcp | write attempted on a destroyed socket | writer |

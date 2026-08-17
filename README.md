@@ -153,6 +153,12 @@ Precedence is: explicit transport options > `DD_DOGSTATSD_URL` > `DD_DOGSTATSD_S
 
   A retry still waiting out its backoff when `close()` runs is abandoned rather than sent
   against a closing socket. Those sends fail with `HOTSHOTS_UDS_RETRY_CANCELLED`.
+
+  Sends waiting out a retry backoff are capped at 1000. `retries` caps the attempts for one
+  send, not how many sends are retrying at once, so a receiver stalled on `EAGAIN` would
+  otherwise hold every flush that arrived during the stall. Past the cap the oldest is
+  dropped, failing with `HOTSHOTS_UDS_RETRY_QUEUE_FULL` and, with `includeDatadogTelemetry`
+  enabled, counting as `packets_dropped_queue`.
 * `udpSocketOptions`: Used only when the protocol is `udp`. Specify the options passed into dgram.createSocket(). The socket type (`udp4` or `udp6`) is auto-detected based on the host: IPv6 addresses (e.g., `::1`) use `udp6`, IPv4 addresses use `udp4`, and hostnames default to `udp4`. You can override auto-detection by explicitly setting `type` (e.g., `{ type: 'udp6' }`).
 * `includeDatadogTelemetry`: Enable client-side telemetry to track metrics about the client itself. This helps diagnose high-throughput metric delivery issues. Telemetry metrics are prefixed with `datadog.dogstatsd.client.` and are not billed as custom metrics. `default: false`, except it defaults to `true` whenever Datadog mode is active (an explicit `datadog: true` or one of the Datadog signal env vars listed under the `datadog` option). An explicit value always wins. See [Client-Side Telemetry](#client-side-telemetry) for details.
 * `telemetryFlushInterval`: When telemetry is enabled, how often (in ms) to send telemetry metrics. `default: 10000`
@@ -546,7 +552,7 @@ The following metrics are sent every `telemetryFlushInterval` milliseconds (defa
 | `datadog.dogstatsd.client.packets_dropped_queue` | Packets dropped because the client refused the send outright |
 | `datadog.dogstatsd.client.packets_dropped_writer` | Packets dropped because a send was attempted and failed |
 
-The `_queue` and `_writer` pairs split the drop totals by cause. A queue drop means hot-shots refused the send and nothing reached the socket. The causes are the `cacheDns` queue overflowing, a `cacheDns` send refused during a failed-lookup cooldown, a `cacheDns` send whose lookup `close()` cancelled or that arrived after `close()`, a `uds` retry abandoned by `close()`, and a `tcp`/`stream` write refused for backpressure. A writer drop means a write was attempted and failed. A send issued after `close()` is therefore a queue drop only on a `cacheDns` client; on other transports the write reaches a destroyed socket and counts as a writer drop. [NETWORKING.md](https://github.com/bdeitte/hot-shots/blob/main/NETWORKING.md) lists which error code falls into which bucket.
+The `_queue` and `_writer` pairs split the drop totals by cause. A queue drop means hot-shots refused the send and nothing reached the socket. The causes are the `cacheDns` queue overflowing, a `cacheDns` send refused during a failed-lookup cooldown, a `cacheDns` send whose lookup `close()` cancelled or that arrived after `close()`, a `uds` retry abandoned by `close()` or evicted by the pending-retry cap, and a `tcp`/`stream` write refused for backpressure. A writer drop means a write was attempted and failed. A send issued after `close()` is therefore a queue drop only on a `cacheDns` client; on other transports the write reaches a destroyed socket and counts as a writer drop. [NETWORKING.md](https://github.com/bdeitte/hot-shots/blob/main/NETWORKING.md) lists which error code falls into which bucket.
 
 The `metric_dropped_on_receive` from the official Datadog clients is intentionally omitted. That metric tracks drops on an internal receive channel, which doesn't apply to hot-shots' architecture.
 
