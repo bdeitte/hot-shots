@@ -304,7 +304,9 @@ describe('#udpDnsCacheCoalescing', () => {
 
   it('sends on the resolved address with the correct family', done => {
     server = createServer(udpServerType, opts => {
+      let seenOptions = null;
       dns.lookup = (host, options, callback) => {
+        seenOptions = options;
         // Resolve to an address that differs from args.host, which is the case
         // the old fixed-ipVersion bypass got wrong.
         callback(null, '127.0.0.1');
@@ -317,12 +319,42 @@ describe('#udpDnsCacheCoalescing', () => {
 
       server.on('metrics', metrics => {
         assert.strictEqual(metrics, 'resolved.metric');
+        // Pinned to the udp4 socket's family. Unpinned, getaddrinfo can answer
+        // a udp4 socket with an AAAA record and every send fails with EINVAL.
+        assert.ok(seenOptions, 'the lookup should receive an options argument');
+        assert.strictEqual(seenOptions.family, 4,
+          `a udp4 client must pin the lookup to family 4, saw ${JSON.stringify(seenOptions)}`);
         done();
       });
 
       statsd.send('resolved.metric', {}, error => {
         assert.strictEqual(error, null);
       });
+    });
+  });
+
+  it('pins the lookup to family 6 for a udp6 socket', done => {
+    // No server: the lookup argument is what is under test, and afterEach would
+    // otherwise try to close the previous test's already-closed server.
+    server = null;
+    let seenOptions = null;
+    dns.lookup = (host, options, callback) => {
+      seenOptions = options;
+      callback(null, '::1');
+    };
+
+    statsd = createHotShotsClient({
+      host: 'localhost',
+      port: 8125,
+      cacheDns: true,
+      udpSocketOptions: { type: 'udp6' }
+    }, 'client');
+
+    statsd.send('resolved.metric', {}, () => {
+      assert.ok(seenOptions, 'the lookup should receive an options argument');
+      assert.strictEqual(seenOptions.family, 6,
+        `a udp6 client must pin the lookup to family 6, saw ${JSON.stringify(seenOptions)}`);
+      done();
     });
   });
 

@@ -3,6 +3,7 @@ const constants = require('../lib/constants');
 const process = require('process');
 const path = require('path');
 const helpers = require('./helpers/helpers.js');
+const { EventEmitter } = require('events');
 
 /**
  * Create an internal error with a code and message.
@@ -61,6 +62,48 @@ describe('#errorHandling', () => {
         assert.ok(false);
       });
     });
+  });
+
+  it('should contain an errorHandler that throws on the send-failure path', done => {
+    // README documents that a throwing errorHandler is contained rather than
+    // propagated. This is the single-send failure path, where hot-shots calls
+    // errorHandler itself from inside the transport's write callback. Without
+    // containment the throw escapes as an uncaught exception and ends the
+    // process. The stream here reports a write failure without emitting
+    // 'error', so only that path is under test.
+    const originalConsoleError = console.error;
+    const logged = [];
+    console.error = msg => logged.push(String(msg));
+
+    const stream = new EventEmitter();
+    stream.destroyed = false;
+    stream.writableLength = 0;
+    stream.write = (chunk, writeCallback) => {
+      setImmediate(() => writeCallback(new Error('write failed')));
+      return true;
+    };
+    stream.destroy = () => {
+      stream.destroyed = true;
+      setImmediate(() => stream.emit('close'));
+    };
+
+    statsd = createHotShotsClient({
+      protocol: 'stream',
+      stream: stream,
+      errorHandler() {
+        throw new Error('handler boom');
+      }
+    }, 'client');
+
+    statsd.increment('a');
+
+    setTimeout(() => {
+      console.error = originalConsoleError;
+      const contained = logged.filter(msg => msg.includes('handler boom'));
+      assert.strictEqual(contained.length, 1,
+        `the throw should be reported once with console.error, saw ${JSON.stringify(logged)}`);
+      done();
+    }, 50);
   });
 
   testTypes().forEach(([description, serverType, clientType]) => {
