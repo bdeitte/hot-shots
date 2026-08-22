@@ -358,7 +358,7 @@ sequenceDiagram
 | ERR_STREAM_DESTROYED | stream | write attempted on a destroyed stream | writer |
 | EAGAIN / congestion | uds | receiver buffer full; retried before surfacing | writer |
 
-The six queue-bucket codes are REFUSED_CODES: the client turned the send away, or, for the
+The seven queue-bucket codes are REFUSED_CODES: the client turned the send away, or, for the
 abandoned uds retry, stopped retrying it. Everything else falls into the writer bucket,
 including a DNS lookup that failed before any packet was written. CLOSE_CONTINUE_CODES
 adds the flush timeout, giving the set of errors that must not abort close().
