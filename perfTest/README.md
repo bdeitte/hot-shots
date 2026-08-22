@@ -98,6 +98,54 @@ apart can therefore land on a different Ubuntu release or Node patch, and shift
 the numbers for reasons unrelated to your code. If comparability over time
 matters more than current versions, pin both in the Dockerfile.
 
+Use the same `test/` tree on both sides. A branch that adds tests otherwise
+measures its own new tests as well as its code change. Copy one checkout's
+`test/` over the other's and confirm both still report the same test count
+before you compare anything.
+
+## A worked comparison
+
+Measured 2026-08-22, `main` at 798f1cc against `fix/dns-lookup-per-packet` at
+a145310. Three runs each, alternating between the two images. Both images ran
+an identical `test/` tree, `perfTest/`, `package.json`, and lockfile, so `lib/`
+was the only difference. Every run reported 1963 passing and 0 failing.
+
+Every count below was identical across all three runs of each image. Only wall
+time moved.
+
+| | main | branch |
+|---|---|---|
+| wall time, mean of 3 | 137.04s | 137.05s |
+| dns.lookup calls | 1922 | 915 |
+| ... for an IP literal | 1893 | 905 |
+| ... for a hostname | 29 | 10 |
+| dgram sends (UDP) | 1027 | 524 |
+| net connects (TCP) | 316 | 316 |
+| net writes (TCP) | 2660 | 2661 |
+| unix-dgram sends (UDS) | 290 | 290 |
+| resolver syscalls (port 53) | 1 | 1 |
+| socket() | 2364 | 2364 |
+| connect() | 648 | 648 |
+| sendmsg() | 806 | 806 |
+
+The `dns.lookup` drop is the change under test. It is entirely in the
+by-hostname table: `0.0.0.0` falls from 475 to 0, `127.0.0.1` from 1418 to 905,
+and `undefined` from 19 to 0. The 905 that remain are test scaffolding, which
+the section above explains.
+
+The `dgram sends` drop is not fewer packets. `sendmsg()` is unchanged at 806,
+so the same datagrams reached the kernel. Node re-enters `Socket.send` when the
+socket has not finished binding: it queues a bound copy of the call and replays
+it after `listening`. The instrument counts both. Binding resolves its own
+address, so a socket without the IP-bypass `lookup` waits on a thread-pool
+`dns.lookup` and every early send doubles. With the bypass the bind resolves
+in line and each send counts once. Confirm this with a two-line probe rather
+than reading the number as saved packets.
+
+Wall time did not move. The removed lookups short-circuit inside Node, so they
+cost a small amount of CPU rather than any network wait. The gain is fewer APM
+spans, not a faster test suite.
+
 ## Micro-benchmark in the container
 
 ```bash
