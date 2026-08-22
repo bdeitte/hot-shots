@@ -24,6 +24,7 @@ CHANGELOG
      * Add `bytes_dropped_queue` to the Datadog telemetry, alongside the existing `packets_dropped_queue` and the `_writer` pair
 * [@bdeitte](https://github.com/bdeitte) Add NETWORKING.md, which documents the send path and failure modes of each transport with diagrams, and link it from README.md
 * [@bdeitte](https://github.com/bdeitte) Add a perfTest Docker harness that runs the full suite on Ubuntu and reports suite wall time, network and DNS call counts, and syscall counts (see `perfTest/README.md`)
+* [@bdeitte](https://github.com/bdeitte) Update the locked `nan` to 2.28.0 so the optional `unix-dgram` dependency builds on Node.js 26. The locked 2.23.0 predates Node 26 and uses V8 APIs it removed, so `node-gyp rebuild` failed. npm treats that as an optional dependency failure and installs without it, which left every `uds` test failing on `unixDgram.createSocket`
 
 ## 17.1.0 (2026-7-25)
 
