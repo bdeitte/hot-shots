@@ -98,6 +98,11 @@ apart can therefore land on a different Ubuntu release or Node patch, and shift
 the numbers for reasons unrelated to your code. If comparability over time
 matters more than current versions, pin both in the Dockerfile.
 
+Use the same `test/` tree on both sides. A branch that adds tests otherwise
+measures its own new tests as well as its code change. Copy one checkout's
+`test/` over the other's and confirm both still report the same test count
+before you compare anything.
+
 ## Micro-benchmark in the container
 
 ```bash
