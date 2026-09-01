@@ -3,6 +3,9 @@ CHANGELOG
 
 ## Unreleased
 
+* [@dylanpulver](https://github.com/dylanpulver) Fix the DogStatsD event length header to count utf-8 bytes, not characters: a non-ascii title or text made `_e{TITLE_UTF8_LENGTH,TEXT_UTF8_LENGTH}` disagree with the payload and the event unparseable. Matches `datadogpy` and `datadog-go`.
+* [@dylanpulver](https://github.com/dylanpulver) Fix the TCP transport writing with node's `ascii` encoding, which keeps only the low byte of each utf-16 code unit and so corrupted any non-ascii metric name, tag or event field on the wire. The udp, uds and stream transports were already utf-8.
+
 ## 17.1.1 (2026-9-13)
 
 * [@erulabs](https://github.com/erulabs) Reuse formatted tag strings in `overrideTags` to avoid splitting and reconstructing values, while preserving tag sanitization, overrides, and duplicate-key ordering.
