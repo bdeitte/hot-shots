@@ -172,7 +172,9 @@ function createServer(serverType, callback) {
   }
   else if (serverType === TCP) {
     server = net.createServer(socket => {
-      socket.setEncoding('ascii');
+      // utf-8, not ascii: an ascii decode strips the high bit off every byte, so
+      // any non-ascii metric or event would arrive at the assertion mangled.
+      socket.setEncoding('utf8');
       socket.on('data', data => {
         if (data) {
           server.emit('metrics', data);

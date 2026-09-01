@@ -244,6 +244,35 @@ describe('#transportExtended', () => {
     });
   });
 
+  it('should write TCP messages as utf-8', done => {
+    // No setEncoding here on purpose: the assertion is on the bytes that reach
+    // the socket, which an ascii/latin1 decode on this side would hide.
+    const tcpServer = net.createServer(socket => {
+      socket.on('data', data => {
+        assert.strictEqual(
+          data.toString('hex'),
+          Buffer.from('café.orders:1|c|#city:東京\n', 'utf8').toString('hex')
+        );
+        client.close(() => {
+          tcpServer.close(() => {
+            done();
+          });
+        });
+      });
+    });
+
+    let client;
+    tcpServer.listen(0, 'localhost', () => {
+      const addr = tcpServer.address();
+      client = new StatsD({
+        protocol: 'tcp',
+        host: 'localhost',
+        port: addr.port,
+      });
+      client.increment('café.orders', 1, { city: '東京' });
+    });
+  });
+
   it('should add newline to stream messages', done => {
     class TestStream extends Writable {
       _write(chunk, encoding, callback) { // eslint-disable-line class-methods-use-this
