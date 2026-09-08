@@ -244,6 +244,43 @@ describe('#transportExtended', () => {
     });
   });
 
+  // No setEncoding on these servers on purpose: the assertion is on the bytes that
+  // reach the socket, which a decode on this side would hide.
+  const tcpEncodingCase = (clientOptions, expectedEncoding, done) => {
+    const line = 'café.orders:1|c|#city:東京\n';
+    const tcpServer = net.createServer(socket => {
+      socket.on('data', data => {
+        assert.strictEqual(
+          data.toString('hex'),
+          Buffer.from(line, expectedEncoding).toString('hex')
+        );
+        client.close(() => {
+          tcpServer.close(() => {
+            done();
+          });
+        });
+      });
+    });
+
+    let client;
+    tcpServer.listen(0, 'localhost', () => {
+      client = new StatsD(Object.assign({
+        protocol: 'tcp',
+        host: 'localhost',
+        port: tcpServer.address().port,
+      }, clientOptions));
+      client.increment('café.orders', 1, { city: '東京' });
+    });
+  };
+
+  it('should write TCP messages as ascii by default', done => {
+    tcpEncodingCase({}, 'ascii', done);
+  });
+
+  it('should write TCP messages as utf-8 when tcpEncoding is set', done => {
+    tcpEncodingCase({ tcpEncoding: 'utf8' }, 'utf8', done);
+  });
+
   it('should add newline to stream messages', done => {
     class TestStream extends Writable {
       _write(chunk, encoding, callback) { // eslint-disable-line class-methods-use-this
