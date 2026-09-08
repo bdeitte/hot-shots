@@ -1,0 +1,748 @@
+const assert = require('assert');
+const dns = require('dns');
+const helpers = require('./helpers/helpers.js');
+const sinon = require('sinon');
+
+const closeAll = helpers.closeAll;
+const createHotShotsClient = helpers.createHotShotsClient;
+const createServer = helpers.createServer;
+
+describe('#udpDnsCacheCoalescing', () => {
+  const udpServerType = 'udp';
+  const originalDnsLookup = dns.lookup;
+  let server;
+  let statsd;
+  let clock;
+
+  afterEach(done => {
+    if (clock) {
+      clock.restore();
+      clock = null;
+    }
+    dns.lookup = originalDnsLookup;
+    closeAll(server, statsd, false, done);
+  });
+
+  it('coalesces concurrent cold-start sends into one lookup', done => {
+    server = createServer(udpServerType, opts => {
+      let lookupCount = 0;
+      let release;
+      dns.lookup = (host, options, callback) => {
+        lookupCount++;
+        release = () => callback(null, '127.0.0.1');
+      };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true
+      }), 'client');
+
+      const state = { completed: 0 };
+      /**
+       * Callback shared by every coalesced send, tracking completion count via
+       * the closed-over state object rather than a per-iteration function.
+       * @param {Error|null} error - send error, expected null
+       * @returns {void}
+       */
+      const onSendComplete = error => {
+        assert.strictEqual(error, null);
+        state.completed++;
+        if (state.completed === 50) {
+          assert.strictEqual(lookupCount, 1, 'concurrent cold-start sends must share one lookup');
+          done();
+        }
+      };
+      for (let i = 0; i < 50; i++) {
+        statsd.send(`test.${i}`, {}, onSendComplete);
+      }
+
+      assert.strictEqual(lookupCount, 1, 'only one lookup should be in flight');
+      release();
+    });
+  });
+
+  it('serves the stale address and refreshes once in the background', done => {
+    server = createServer(udpServerType, opts => {
+      clock = sinon.useFakeTimers();
+      const cacheDnsTtl = 100;
+      let lookupCount = 0;
+      let release;
+      dns.lookup = (host, options, callback) => {
+        lookupCount++;
+        if (lookupCount === 1) {
+          // Warm-up lookup resolves immediately.
+          callback(null, '127.0.0.1');
+          return;
+        }
+        // The refresh lookup is held open so three concurrent stale sends can
+        // be issued while it is still in flight, proving they share it rather
+        // than each completing before the next is issued.
+        release = () => callback(null, '127.0.0.1');
+      };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        cacheDnsTtl: cacheDnsTtl
+      }), 'client');
+
+      statsd.send('first', {}, error => assert.strictEqual(error, null));
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 1);
+
+      clock.tick(cacheDnsTtl + 50);
+
+      // Three concurrent stale sends must trigger exactly one refresh, not three.
+      statsd.send('a', {}, error => assert.strictEqual(error, null));
+      statsd.send('b', {}, error => assert.strictEqual(error, null));
+      statsd.send('c', {}, error => assert.strictEqual(error, null));
+
+      assert.strictEqual(lookupCount, 2, 'concurrent stale sends must share one in-flight refresh');
+      release();
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 2, 'concurrent stale sends must share one refresh');
+      done();
+    });
+  });
+
+  it('keeps serving the stale address when a refresh fails', done => {
+    server = createServer(udpServerType, opts => {
+      clock = sinon.useFakeTimers();
+      const cacheDnsTtl = 100;
+      let lookupCount = 0;
+      dns.lookup = (host, options, callback) => {
+        lookupCount++;
+        if (lookupCount === 1) {
+          callback(null, '1.1.1.1');
+          return;
+        }
+        callback(new Error('refresh boom'));
+      };
+
+      const errors = [];
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        cacheDnsTtl: cacheDnsTtl,
+        errorHandler: err => errors.push(err)
+      }), 'client');
+
+      statsd.send('first', {}, error => assert.strictEqual(error, null));
+      clock.tick(1);
+
+      clock.tick(cacheDnsTtl + 50);
+      statsd.send('second', {}, error => {
+        // The send itself succeeds on the stale address.
+        assert.strictEqual(error, null);
+      });
+      clock.tick(1);
+
+      assert.strictEqual(errors.length, 1, 'refresh failure should reach errorHandler once');
+      assert.ok(errors[0].message.includes('refresh boom'));
+      done();
+    });
+  });
+
+  // The TTL here is below DNS_COOLDOWN_BASE_MS, so the ramp is capped at it and
+  // the cooldown is exactly one TTL. See the ramp tests below for the general rule.
+  it('backs off for a full TTL after a failed refresh instead of retrying every send', done => {
+    server = createServer(udpServerType, opts => {
+      clock = sinon.useFakeTimers();
+      const cacheDnsTtl = 100;
+      let lookupCount = 0;
+      dns.lookup = (host, options, callback) => {
+        lookupCount++;
+        if (lookupCount === 1) {
+          // Warm the cache with one successful lookup.
+          callback(null, '1.1.1.1');
+          return;
+        }
+        // Every refresh after that fails, like a fast-failing resolver
+        // (cached NXDOMAIN, SERVFAIL).
+        callback(new Error('always fails'));
+      };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        cacheDnsTtl: cacheDnsTtl,
+        // eslint-disable-next-line no-empty-function
+        errorHandler: () => {}
+      }), 'client');
+
+      statsd.send('warm', {}, error => assert.strictEqual(error, null));
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 1);
+
+      clock.tick(cacheDnsTtl + 50);
+
+      // Several sends immediately after the TTL expires must share the one
+      // failed refresh, not each trigger their own lookup.
+      // eslint-disable-next-line no-empty-function
+      statsd.send('a', {}, () => {});
+      // eslint-disable-next-line no-empty-function
+      statsd.send('b', {}, () => {});
+      // eslint-disable-next-line no-empty-function
+      statsd.send('c', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 2, 'failed refresh should cool down, not retry per send');
+
+      // Still within the cooldown TTL: no further lookups.
+      clock.tick(cacheDnsTtl / 2);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('d', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 2, 'no additional lookup before the cooldown TTL elapses');
+
+      // Past the cooldown TTL: exactly one more attempt.
+      clock.tick(cacheDnsTtl + 50);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('e', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 3, 'cooldown should allow exactly one more attempt per TTL');
+      done();
+    });
+  });
+
+  it('reports a refresh failure once per streak and re-arms after a success', done => {
+    server = createServer(udpServerType, opts => {
+      clock = sinon.useFakeTimers();
+      const cacheDnsTtl = 100;
+      let lookupCount = 0;
+      let failing = true;
+      dns.lookup = (host, options, callback) => {
+        lookupCount++;
+        if (lookupCount === 1) {
+          callback(null, '1.1.1.1');
+          return;
+        }
+        if (failing) {
+          callback(new Error('still down'));
+          return;
+        }
+        callback(null, '1.1.1.1');
+      };
+
+      const errors = [];
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        cacheDnsTtl: cacheDnsTtl,
+        errorHandler: err => errors.push(err)
+      }), 'client');
+
+      // eslint-disable-next-line no-empty-function
+      statsd.send('warm', {}, () => {});
+      clock.tick(1);
+
+      // Three consecutive failed refreshes should report only once.
+      for (let i = 0; i < 3; i++) {
+        clock.tick(cacheDnsTtl + 50);
+        // eslint-disable-next-line no-empty-function
+        statsd.send(`fail.${i}`, {}, () => {});
+        clock.tick(1);
+      }
+      assert.strictEqual(errors.length, 1, 'streak should report once');
+
+      // A success clears the streak.
+      failing = false;
+      clock.tick(cacheDnsTtl + 50);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('recover', {}, () => {});
+      clock.tick(1);
+
+      // The next failure streak reports again.
+      failing = true;
+      clock.tick(cacheDnsTtl + 50);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('fail-again', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(errors.length, 2, 'streak should re-arm after a success');
+      done();
+    });
+  });
+
+  it('falls back to console.error when no error listener is attached', done => {
+    server = createServer(udpServerType, opts => {
+      clock = sinon.useFakeTimers();
+      const cacheDnsTtl = 100;
+      let lookupCount = 0;
+      dns.lookup = (host, options, callback) => {
+        lookupCount++;
+        if (lookupCount === 1) {
+          callback(null, '1.1.1.1');
+          return;
+        }
+        callback(new Error('refresh boom'));
+      };
+
+      const logged = [];
+      const originalConsoleError = console.error;
+      console.error = msg => logged.push(msg);
+
+      // No errorHandler, so the only 'error' listener is the transport default.
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        cacheDnsTtl: cacheDnsTtl
+      }), 'client');
+
+      // eslint-disable-next-line no-empty-function
+      statsd.send('warm', {}, () => {});
+      clock.tick(1);
+      clock.tick(cacheDnsTtl + 50);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('second', {}, () => {});
+      clock.tick(1);
+
+      console.error = originalConsoleError;
+      assert.strictEqual(logged.length, 1, `expected one console.error, saw ${logged.length}`);
+      assert.ok(logged[0].includes('DNS refresh for localhost failed'));
+      done();
+    });
+  });
+
+  it('sends on the resolved address with the correct family', done => {
+    server = createServer(udpServerType, opts => {
+      let seenOptions = null;
+      dns.lookup = (host, options, callback) => {
+        seenOptions = options;
+        // Resolve to an address that differs from args.host, which is the case
+        // the old fixed-ipVersion bypass got wrong.
+        callback(null, '127.0.0.1');
+      };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true
+      }), 'client');
+
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'resolved.metric');
+        // Pinned to the udp4 socket's family. Unpinned, getaddrinfo can answer
+        // a udp4 socket with an AAAA record and every send fails with EINVAL.
+        assert.ok(seenOptions, 'the lookup should receive an options argument');
+        assert.strictEqual(seenOptions.family, 4,
+          `a udp4 client must pin the lookup to family 4, saw ${JSON.stringify(seenOptions)}`);
+        done();
+      });
+
+      statsd.send('resolved.metric', {}, error => {
+        assert.strictEqual(error, null);
+      });
+    });
+  });
+
+  it('pins the lookup to family 6 for a udp6 socket', done => {
+    // No server: the lookup argument is what is under test, and afterEach would
+    // otherwise try to close the previous test's already-closed server.
+    server = null;
+    let seenOptions = null;
+    dns.lookup = (host, options, callback) => {
+      seenOptions = options;
+      callback(null, '::1');
+    };
+
+    statsd = createHotShotsClient({
+      host: 'localhost',
+      port: 8125,
+      cacheDns: true,
+      udpSocketOptions: { type: 'udp6' }
+    }, 'client');
+
+    statsd.send('resolved.metric', {}, () => {
+      assert.ok(seenOptions, 'the lookup should receive an options argument');
+      assert.strictEqual(seenOptions.family, 6,
+        `a udp6 client must pin the lookup to family 6, saw ${JSON.stringify(seenOptions)}`);
+      done();
+    });
+  });
+
+  it('fails every queued send when the cold-start lookup fails', done => {
+    server = createServer(udpServerType, opts => {
+      let release;
+      dns.lookup = (host, options, callback) => {
+        release = () => callback(new Error('cold boom'));
+      };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true
+      }), 'client');
+
+      const state = { failed: 0 };
+      /**
+       * Callback shared by every queued send, tracking failure count via the
+       * closed-over state object rather than a per-iteration function.
+       * @param {Error|null} error - the lookup error propagated to the send
+       * @returns {void}
+       */
+      const onSendFailed = error => {
+        assert.ok(error, 'queued send should receive the lookup error');
+        state.failed++;
+        if (state.failed === 10) {
+          done();
+        }
+      };
+      for (let i = 0; i < 10; i++) {
+        statsd.send(`test.${i}`, {}, onSendFailed);
+      }
+      release();
+    });
+  });
+
+  // TTL below DNS_COOLDOWN_BASE_MS again, so the capped cooldown is one TTL.
+  it('backs off for a full TTL after a synchronous-throw refresh, on a warm cache', done => {
+    server = createServer(udpServerType, opts => {
+      clock = sinon.useFakeTimers();
+      const cacheDnsTtl = 100;
+      let lookupCount = 0;
+      dns.lookup = (host, options, callback) => {
+        lookupCount++;
+        if (lookupCount === 1) {
+          // Warm the cache with one successful lookup.
+          callback(null, '1.1.1.1');
+          return;
+        }
+        if (lookupCount === 2) {
+          // The refresh triggered once the cache goes stale throws
+          // synchronously instead of calling back, like an invalid-argument
+          // dns.lookup failure.
+          throw new Error('ERR_INVALID_ARG_TYPE: host must be a string');
+        }
+        callback(null, '1.1.1.1');
+      };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        cacheDnsTtl: cacheDnsTtl,
+        // eslint-disable-next-line no-empty-function
+        errorHandler: () => {}
+      }), 'client');
+
+      // eslint-disable-next-line no-empty-function
+      statsd.send('warm', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 1);
+
+      // Past the TTL: the send goes out on the stale address and triggers a
+      // background refresh, which throws synchronously.
+      clock.tick(cacheDnsTtl + 50);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('a', {}, () => {});
+      assert.strictEqual(lookupCount, 2, 'stale send should trigger exactly one refresh attempt');
+
+      // Still within the cooldown TTL earned by the synchronous-throw catch
+      // block: no further lookups.
+      clock.tick(cacheDnsTtl / 2);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('b', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 2,
+        'no additional lookup before the cooldown TTL elapses after a synchronous throw');
+
+      // Past the cooldown TTL: exactly one more attempt.
+      clock.tick(cacheDnsTtl + 50);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('c', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 3, 'cooldown should allow exactly one more attempt per TTL');
+      done();
+    });
+  });
+
+  it('calls back every queued send exactly once when dns.lookup throws synchronously', done => {
+    server = createServer(udpServerType, opts => {
+      dns.lookup = () => {
+        // Some inputs (e.g. a non-string host) make dns.lookup throw synchronously
+        // instead of invoking its callback.
+        throw new Error('ERR_INVALID_ARG_TYPE: host must be a string');
+      };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true
+      }), 'client');
+
+      const state = { failed: 0 };
+      /**
+       * Callback shared by every queued send, tracking failure count via the
+       * closed-over state object rather than a per-iteration function.
+       * @param {Error|null} error - the lookup error propagated to the send
+       * @returns {void}
+       */
+      const onSendFailed = error => {
+        assert.ok(error, 'queued send should receive the lookup error');
+        state.failed++;
+        if (state.failed === 10) {
+          assert.strictEqual(statsd.messagesInFlight, 0,
+            'messagesInFlight should drain back to 0 after every queued send is called back');
+          done();
+        }
+      };
+      for (let i = 0; i < 10; i++) {
+        statsd.send(`test.${i}`, {}, onSendFailed);
+      }
+    });
+  });
+
+  // TTL below DNS_COOLDOWN_BASE_MS again, so the capped cooldown is one TTL.
+  it('backs off for a full TTL after a failed cold-start lookup, with no cache to fall back on', done => {
+    server = createServer(udpServerType, opts => {
+      clock = sinon.useFakeTimers();
+      const cacheDnsTtl = 100;
+      let lookupCount = 0;
+      // Never resolves, like a host whose name does not exist. There is no
+      // cached address to fall back on, so the cooldown is the only thing
+      // standing between this and a lookup per send.
+      dns.lookup = (host, options, callback) => {
+        lookupCount++;
+        callback(new Error('ENOTFOUND'));
+      };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        cacheDnsTtl: cacheDnsTtl,
+        // eslint-disable-next-line no-empty-function
+        errorHandler: () => {}
+      }), 'client');
+
+      // eslint-disable-next-line no-empty-function
+      statsd.send('a', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 1, 'the first cold-start send should attempt one lookup');
+
+      // Still inside the cooldown: these sends must fail without attempting
+      // another lookup, rather than each starting their own.
+      for (let i = 0; i < 10; i++) {
+        // eslint-disable-next-line no-empty-function
+        statsd.send(`b.${i}`, {}, () => {});
+      }
+      clock.tick(cacheDnsTtl / 2);
+      assert.strictEqual(lookupCount, 1, 'cold-start failure should cool down, not retry per send');
+
+      // Past the cooldown: exactly one more attempt.
+      clock.tick(cacheDnsTtl + 50);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('c', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 2, 'cooldown should allow exactly one more attempt per TTL');
+      done();
+    });
+  });
+
+  it('fails a send issued during the cold-start cooldown instead of queueing it forever', done => {
+    server = createServer(udpServerType, opts => {
+      dns.lookup = (host, options, callback) => callback(new Error('ENOTFOUND'));
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        cacheDnsTtl: 60000
+      }), 'client');
+
+      statsd.send('first', {}, firstError => {
+        assert.ok(firstError, 'the send that triggered the lookup should get the lookup error');
+        // This one arrives while the cooldown is in effect, so there is no
+        // lookup in flight for it to wait behind. It must call back rather than
+        // sit in the pending queue until close().
+        statsd.send('during-cooldown', {}, error => {
+          assert.ok(error, 'a send during the cooldown should fail rather than queue');
+          assert.ok(error.message.includes('recently failed'),
+            `expected a cooldown message, got: ${error.message}`);
+          assert.strictEqual(statsd.socket.getDnsPendingCount(), 0,
+            'nothing should be left queued behind a lookup that is not running');
+          assert.strictEqual(statsd.messagesInFlight, 0,
+            'messagesInFlight should drain back to 0');
+          done();
+        });
+      });
+    });
+  });
+
+  it('ramps the cooldown from one second rather than blocking for a whole TTL', done => {
+    server = createServer(udpServerType, opts => {
+      clock = sinon.useFakeTimers();
+      // Far larger than DNS_COOLDOWN_BASE_MS, so the ramp is visible instead of
+      // being flattened by the cap the way a short test TTL would flatten it.
+      const cacheDnsTtl = 60000;
+      let lookupCount = 0;
+      dns.lookup = (host, options, callback) => {
+        lookupCount++;
+        callback(new Error('EAI_AGAIN'));
+      };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        cacheDnsTtl: cacheDnsTtl,
+        // eslint-disable-next-line no-empty-function
+        errorHandler: () => {}
+      }), 'client');
+
+      // eslint-disable-next-line no-empty-function
+      statsd.send('cold', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 1);
+
+      // First failure: one second, not one TTL.
+      clock.tick(500);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('during-first-cooldown', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 1, 'no retry within the first cooldown');
+
+      clock.tick(600);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('after-first-cooldown', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 2, 'a retry should be due about a second after the first failure');
+
+      // Second failure doubles it to two seconds.
+      clock.tick(1500);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('during-second-cooldown', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 2, 'the second cooldown should be longer than the first');
+
+      clock.tick(600);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('after-second-cooldown', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 3, 'a retry should be due about two seconds after the second failure');
+      done();
+    });
+  });
+
+  it('caps the ramping cooldown at the TTL and resets it after a success', done => {
+    server = createServer(udpServerType, opts => {
+      clock = sinon.useFakeTimers();
+      const cacheDnsTtl = 10000;
+      let lookupCount = 0;
+      let failing = true;
+      dns.lookup = (host, options, callback) => {
+        lookupCount++;
+        if (failing) {
+          callback(new Error('EAI_AGAIN'));
+          return;
+        }
+        callback(null, '127.0.0.1');
+      };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        cacheDnsTtl: cacheDnsTtl,
+        // eslint-disable-next-line no-empty-function
+        errorHandler: () => {}
+      }), 'client');
+
+      // Doubling from 1s would pass the 10s TTL by the fifth failure, so drive
+      // the streak well past that and confirm the wait never exceeds the TTL.
+      for (let i = 0; i < 10; i++) {
+        // eslint-disable-next-line no-empty-function
+        statsd.send(`fail.${i}`, {}, () => {});
+        clock.tick(cacheDnsTtl + 1);
+      }
+      assert.strictEqual(lookupCount, 10, 'each attempt past the capped cooldown should be allowed exactly once');
+
+      // A success clears the streak, so the next failure starts back at one second.
+      failing = false;
+      statsd.send('recovers', {}, error => assert.strictEqual(error, null));
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 11);
+
+      failing = true;
+      clock.tick(cacheDnsTtl + 1);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('fails-again', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 12, 'a stale send after the success should refresh');
+
+      clock.tick(1100);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('after-reset-cooldown', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, 13, 'the streak should have reset, so the wait is a second again');
+      done();
+    });
+  });
+
+  it('keeps flushing the queue when a queued send callback throws', done => {
+    server = createServer(udpServerType, opts => {
+      let release;
+      dns.lookup = (host, options, callback) => {
+        release = () => callback(new Error('ENOTFOUND'));
+      };
+
+      const originalConsoleError = console.error;
+      const state = { called: 0, logged: 0 };
+      // eslint-disable-next-line no-empty-function
+      console.error = () => { state.logged++; };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true
+      }), 'client');
+
+      // The first callback throws. Every later entry has already been spliced
+      // out of the pending queue by the time it runs, so if the throw escaped
+      // the flush loop nothing would ever call them back.
+      for (let i = 0; i < 5; i++) {
+        statsd.send(`test.${i}`, {}, () => {
+          state.called++;
+          if (state.called === 1) {
+            throw new Error('callback blew up');
+          }
+        });
+      }
+
+      release();
+      setImmediate(() => {
+        console.error = originalConsoleError;
+        assert.strictEqual(state.called, 5, 'every queued send should be called back despite the throw');
+        assert.ok(state.logged > 0, 'the throw should be reported rather than swallowed');
+        assert.strictEqual(statsd.messagesInFlight, 0, 'messagesInFlight should still drain to 0');
+        done();
+      });
+    });
+  });
+
+  it('does not recurse without bound when a resending errorHandler meets a throwing lookup', done => {
+    server = createServer(udpServerType, opts => {
+      dns.lookup = () => {
+        throw new Error('ERR_INVALID_ARG_TYPE: host must be a string');
+      };
+
+      // Raised so the depth measurements below are not truncated at the default
+      // limit of 10 frames, which would hide the recursion this guards against.
+      const originalStackLimit = Error.stackTraceLimit;
+      Error.stackTraceLimit = Infinity;
+
+      const state = { calls: 0, maxDepth: 0 };
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        // The documented "emit a metric on send failure" pattern. Before the
+        // failure paths were deferred, this re-entered the throwing lookup on
+        // the same stack frame and grew the stack until the process wedged.
+        errorHandler: () => {
+          state.calls++;
+          state.maxDepth = Math.max(state.maxDepth, new Error().stack.split('\n').length);
+          if (state.calls < 200) {
+            statsd.increment('resend');
+            return;
+          }
+          Error.stackTraceLimit = originalStackLimit;
+          assert.ok(state.maxDepth < 100,
+            `each failure should land on a fresh tick, but the stack grew to ${state.maxDepth} frames`);
+          done();
+        }
+      }), 'client');
+
+      statsd.increment('first');
+    });
+  });
+});

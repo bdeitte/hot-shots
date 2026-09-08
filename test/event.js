@@ -157,6 +157,38 @@ describe('#event', () => {
         });
       });
 
+      it('should contain an errorHandler that throws on the unsupported path', done => {
+        const originalConsoleError = console.error;
+        const logged = [];
+        console.error = msg => logged.push(String(msg));
+
+        server = createServer(serverType, opts => {
+          statsd = createHotShotsClient(Object.assign(opts, {
+            telegraf: true,
+            errorHandler() {
+              throw new Error('event handler boom');
+            }
+          }), clientType);
+
+          try {
+            // The handler already received the unsupported-feature error. Its
+            // own throw must not then surface at this unrelated call site.
+            assert.doesNotThrow(() => {
+              statsd.event('test title', 'another desc');
+            });
+
+            const contained = logged.filter(msg => msg.includes('event handler boom'));
+            assert.strictEqual(contained.length, 1,
+              `the throw should be reported once with console.error, saw ${JSON.stringify(logged)}`);
+          } finally {
+            // Restored here too: leaving console.error stubbed swallows mocha's
+            // own failure output and the run looks like a hang.
+            console.error = originalConsoleError;
+          }
+          done();
+        });
+      });
+
       it('should send event with empty options object', done => {
         server = createServer(serverType, opts => {
           statsd = createHotShotsClient(opts, clientType);

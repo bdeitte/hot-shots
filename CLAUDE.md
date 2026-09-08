@@ -27,6 +27,8 @@ The library supports multiple transport protocols:
 - **UDS**: Unix Domain Sockets (requires unix-dgram optional dependency)
 - **Stream**: Raw stream protocol for custom transports
 
+If you are in any DNS, retry, or other protocol code, read through NETWORKING.md
+
 ### Client Architecture
 - Main Client class handles initialization and configuration
 - Transport layer abstracts protocol differences
@@ -177,7 +179,7 @@ See `test/udpDnsCacheTransport.js` and `test/udpSocketOptions.js` for examples.
 
 ## Important Notes
 
-- Node.js >= 18.0.0 required (see `engines` in package.json)
+- Node.js >= 20.0.0 required (see `engines` in package.json)
 - TypeScript definitions in types.d.ts must be updated for API changes
 - Constructor parameter expansion is deprecated - use options object
 - Mock mode available for testing (prevents actual metric sending)
@@ -193,8 +195,10 @@ See `test/udpDnsCacheTransport.js` and `test/udpSocketOptions.js` for examples.
     }
   }
   ```
-- Updates should be noted in CHANGES.md using the format: `* [@username](https://github.com/username) Description`. For breaking changes, prefix with `Breaking:` (e.g., `* [@username](https://github.com/username) BREAKING: Description`). Do not use bold section headers. Always link `@username` mentions to their GitHub profiles and `#NNN` issue/PR references to `https://github.com/bdeitte/hot-shots/issues/NNN`.
+- Updates that are new for a release should be noted in CHANGES.md using the format: `* [@username](https://github.com/username) Description`. For breaking changes, prefix with `Breaking:` (e.g., `* [@username](https://github.com/username) BREAKING: Description`). Do not use bold section headers. Always link `@username` mentions to their GitHub profiles and `#NNN` issue/PR references to `https://github.com/bdeitte/hot-shots/issues/NNN`.
+- CHANGES.md should be concise and does not need to go into every detail. The updates should also not be mentioning updates to existing updates inside of a specific release- it should just change how these unreleased changes are written about to only be discussing what is new for the release overall.
 - API changes should be noted in README.md
+- If you are making a very large set of changes, use the manual performance tests in the perfTest directory to understand the before and after effects of the changes and report these out
 
 ## Follow for all code changes
 
