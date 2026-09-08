@@ -4,7 +4,7 @@ CHANGELOG
 ## Unreleased
 
 * [@dylanpulver](https://github.com/dylanpulver) Fix the DogStatsD event length header to count utf-8 bytes: `_e{...}` carries `TITLE_UTF8_LENGTH` and `TEXT_UTF8_LENGTH`, so a non-ascii title or text made the header disagree with the payload and the event unparseable. Matches `datadogpy` and `datadog-go`.
-* [@dylanpulver](https://github.com/dylanpulver) Fix the TCP transport writing with node's `ascii` encoding, which keeps only the low byte of each utf-16 code unit and so corrupted any non-ascii metric name, tag or event field on the wire. The udp, uds and stream transports were already utf-8.
+* [@dylanpulver](https://github.com/dylanpulver) Add a `tcpEncoding` option. The TCP transport writes with node's `ascii` encoding, which keeps only the low byte of each utf-16 code unit and so corrupts any non-ascii metric name, tag or event field on the wire. That stays the default; set `tcpEncoding: 'utf8'` to send non-ascii intact, as the udp, uds and stream transports already do.
 
 ## 17.1.0 (2026-7-25)
 
