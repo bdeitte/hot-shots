@@ -44,6 +44,14 @@ bench('increment, per-metric tags (no overlap)',
 bench('increment, per-metric + global tags (overlap)',
   () => globalTagClient.increment('hot.shots.perf.metric', 1, { env: 'staging', version: 'v2' }));
 
+bench('increment, per-metric array tags',
+  () => noTagClient.increment('hot.shots.perf.metric', 1,
+    ['app:api', 'env:prod', 'queryName:Teacher.findOne']));
+
+bench('increment, interleaved duplicate array tags',
+  () => globalTagClient.increment('hot.shots.perf.metric', 1,
+    ['env:staging', 'url:https://example.com:8443', 'env:canary']));
+
 bench('timing',
   () => noTagClient.timing('hot.shots.perf.metric', 250));
 
