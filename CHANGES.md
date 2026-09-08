@@ -1,6 +1,10 @@
 CHANGELOG
 =========
 
+## Unreleased
+
+* [@erulabs](https://github.com/erulabs) Reuse formatted tag strings in `overrideTags` to avoid splitting and reconstructing values, while preserving tag sanitization, overrides, and duplicate-key ordering.
+
 ## 17.1.0 (2026-7-25)
 
 * [@bdeitte](https://github.com/bdeitte) Parse whitespace-delimited `DD_TAGS` / `DATADOG_TAGS` values: when the value contains no comma, whitespace is used as the separator, matching `dd-trace-js` and the Datadog Agent. See [#325](https://github.com/bdeitte/hot-shots/issues/325)
