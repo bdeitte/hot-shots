@@ -3,6 +3,8 @@ CHANGELOG
 
 ## Unreleased
 
+## 17.1.1 (2026-9-13)
+
 * [@erulabs](https://github.com/erulabs) Reuse formatted tag strings in `overrideTags` to avoid splitting and reconstructing values, while preserving tag sanitization, overrides, and duplicate-key ordering.
 
 ## 17.1.0 (2026-7-25)
