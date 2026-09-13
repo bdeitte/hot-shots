@@ -505,6 +505,42 @@ describe('#helpersExtended', () => {
       });
     });
 
+    [false, true].forEach(telegraf => {
+      describe(telegraf ? 'Telegraf tag grouping' : 'StatsD tag grouping', () => {
+        it('preserves grouped order for interleaved duplicates, bare tags and colon-containing values', () => {
+          const parent = Object.freeze(['url:old', 'env:prod', 'service:api', 'url:older']);
+          const child = Object.freeze([
+            'url:https://example.com:8443/a', 'bare', 'env:dev',
+            'url:', 'env:staging', 'url:https://example.com:443/b', ':leading'
+          ]);
+
+          const result = helpers.overrideTags(parent, child, telegraf);
+
+          assert.deepStrictEqual(result, [
+            'service:api',
+            'url:https://example.com:8443/a', 'url:', 'url:https://example.com:443/b',
+            'env:dev', 'env:staging', 'bare', '_leading'
+          ]);
+        });
+
+        it('groups object keys that collide after sanitization without losing values', () => {
+          const parent = Object.freeze(['key_:old', 'service:api']);
+          const child = Object.freeze({
+            'key|': 'https://example.com:8443/a|b',
+            env: 'dev',
+            'key,': '',
+            'key_': 'second:value'
+          });
+
+          const result = helpers.overrideTags(parent, child, telegraf);
+
+          assert.deepStrictEqual(result, [
+            'service:api', 'key_:https://example.com:8443/a_b', 'key_:', 'key_:second:value', 'env:dev'
+          ]);
+        });
+      });
+    });
+
     describe('Mixed scenarios and edge cases', () => {
       it('should handle empty parent with array child', () => {
         const parent = [];
