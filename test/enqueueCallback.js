@@ -103,4 +103,26 @@ describe('#enqueueCallback', () => {
       });
     });
   });
+
+  it('delivers a send failure on a later tick, not the calling frame', done => {
+    // A failure reported on the caller's own frame lets an errorHandler that
+    // resends grow the stack without bound against an always-failing
+    // transport, so every failure path hands off to a later tick.
+    server = createServer('udp', opts => {
+      const client = createHotShotsClient(opts, 'client');
+      client.close(() => {
+        // Already closed, so afterEach must not close it a second time.
+        statsd = null;
+        let onCallingFrame = true;
+        // The client is closed, so this send fails inside the transport.
+        client.increment('after.close', err => {
+          assert.ok(err, 'a send after close should fail');
+          assert.strictEqual(onCallingFrame, false,
+            'the failure callback must not run on the calling frame');
+          done();
+        });
+        onCallingFrame = false;
+      });
+    });
+  });
 });

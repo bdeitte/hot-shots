@@ -1,4 +1,5 @@
 const assert = require('assert');
+const constants = require('../lib/constants');
 const dns = require('dns');
 const helpers = require('./helpers/helpers.js');
 const sinon = require('sinon');
@@ -145,7 +146,7 @@ describe('#udpDnsCacheCoalescing', () => {
 
   // The TTL here is below DNS_COOLDOWN_BASE_MS, so the ramp is capped at it and
   // the cooldown is exactly one TTL. See the ramp tests below for the general rule.
-  it('backs off for a full TTL after a failed refresh instead of retrying every send', done => {
+  it('backs off after a failed refresh instead of retrying every send', done => {
     server = createServer(udpServerType, opts => {
       clock = sinon.useFakeTimers();
       const cacheDnsTtl = 100;
@@ -187,19 +188,20 @@ describe('#udpDnsCacheCoalescing', () => {
       clock.tick(1);
       assert.strictEqual(lookupCount, 2, 'failed refresh should cool down, not retry per send');
 
-      // Still within the cooldown TTL: no further lookups.
-      clock.tick(cacheDnsTtl / 2);
+      // Still within the cooldown: no further lookups. The wait after a first
+      // failure is DNS_COOLDOWN_BASE_MS, independent of the TTL.
+      clock.tick(constants.DNS_COOLDOWN_BASE_MS / 2);
       // eslint-disable-next-line no-empty-function
       statsd.send('d', {}, () => {});
       clock.tick(1);
-      assert.strictEqual(lookupCount, 2, 'no additional lookup before the cooldown TTL elapses');
+      assert.strictEqual(lookupCount, 2, 'no additional lookup before the cooldown elapses');
 
-      // Past the cooldown TTL: exactly one more attempt.
-      clock.tick(cacheDnsTtl + 50);
+      // Past the cooldown: exactly one more attempt.
+      clock.tick(constants.DNS_COOLDOWN_BASE_MS + 50);
       // eslint-disable-next-line no-empty-function
       statsd.send('e', {}, () => {});
       clock.tick(1);
-      assert.strictEqual(lookupCount, 3, 'cooldown should allow exactly one more attempt per TTL');
+      assert.strictEqual(lookupCount, 3, 'cooldown should allow exactly one more attempt');
       done();
     });
   });
@@ -235,9 +237,13 @@ describe('#udpDnsCacheCoalescing', () => {
       statsd.send('warm', {}, () => {});
       clock.tick(1);
 
+      // Past both the TTL and any cooldown the streak has earned, so each
+      // iteration gets a fresh attempt however far the backoff has ramped.
+      const pastCooldown = constants.DNS_COOLDOWN_MAX_MS + 50;
+
       // Three consecutive failed refreshes should report only once.
       for (let i = 0; i < 3; i++) {
-        clock.tick(cacheDnsTtl + 50);
+        clock.tick(pastCooldown);
         // eslint-disable-next-line no-empty-function
         statsd.send(`fail.${i}`, {}, () => {});
         clock.tick(1);
@@ -246,14 +252,14 @@ describe('#udpDnsCacheCoalescing', () => {
 
       // A success clears the streak.
       failing = false;
-      clock.tick(cacheDnsTtl + 50);
+      clock.tick(pastCooldown);
       // eslint-disable-next-line no-empty-function
       statsd.send('recover', {}, () => {});
       clock.tick(1);
 
       // The next failure streak reports again.
       failing = true;
-      clock.tick(cacheDnsTtl + 50);
+      clock.tick(pastCooldown);
       // eslint-disable-next-line no-empty-function
       statsd.send('fail-again', {}, () => {});
       clock.tick(1);
@@ -358,6 +364,112 @@ describe('#udpDnsCacheCoalescing', () => {
     });
   });
 
+  it('still delivers to a udp4 agent when the resolver answers IPv6 first', done => {
+    // The end-to-end half of the two pinning tests above. An unpinned lookup
+    // gets ::1 here, which a udp4 socket cannot send to, so this fails with
+    // EINVAL and delivers nothing unless the family pin is applied.
+    server = createServer(udpServerType, opts => {
+      dns.lookup = (host, options, callback) => {
+        const family = options && typeof options === 'object' ? options.family : 0;
+        if (family === 4) {
+          return callback(null, '127.0.0.1', 4);
+        }
+        return callback(null, '::1', 6);
+      };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true
+      }), 'client');
+
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'ipv6first.metric');
+        done();
+      });
+
+      statsd.send('ipv6first.metric', {}, error => {
+        assert.strictEqual(error, null,
+          `the send should reach the udp4 agent, got ${error && error.message}`);
+      });
+    });
+  });
+
+  it('retries within seconds of a long failure streak, not a whole TTL', done => {
+    // Only an incoming send retries the lookup, so capping the cooldown at
+    // cacheDnsTtl leaves a client refusing sends for up to a full TTL after the
+    // resolver is healthy again. The ceiling must be seconds instead.
+    server = createServer(udpServerType, opts => {
+      clock = sinon.useFakeTimers();
+      const cacheDnsTtl = 60000;
+      let lookupCount = 0;
+      dns.lookup = (host, options, callback) => {
+        lookupCount++;
+        callback(new Error('EAI_AGAIN'));
+      };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true,
+        cacheDnsTtl: cacheDnsTtl,
+        // eslint-disable-next-line no-empty-function
+        errorHandler: () => {}
+      }), 'client');
+
+      // Drive a streak long enough that uncapped doubling would exceed the TTL.
+      for (let i = 0; i < 10; i++) {
+        // eslint-disable-next-line no-empty-function
+        statsd.send(`fail.${i}`, {}, () => {});
+        clock.tick(cacheDnsTtl + 1);
+      }
+      const afterStreak = lookupCount;
+
+      // One ceiling's worth of time must be enough to earn another attempt.
+      clock.tick(constants.DNS_COOLDOWN_MAX_MS + 1);
+      // eslint-disable-next-line no-empty-function
+      statsd.send('after.cooldown', {}, () => {});
+      clock.tick(1);
+      assert.strictEqual(lookupCount, afterStreak + 1,
+        'a send one cooldown ceiling after the last failure should retry the lookup');
+
+      // And the ceiling itself must be far below a default TTL.
+      assert.ok(constants.DNS_COOLDOWN_MAX_MS <= 10000,
+        `the cooldown ceiling should be seconds, saw ${constants.DNS_COOLDOWN_MAX_MS}`);
+      done();
+    });
+  });
+
+  it('keeps the resolver error code on a send refused during the cooldown', done => {
+    // An errorHandler matching err.code === 'ENOTFOUND' must keep matching
+    // while the cooldown is in effect, so the resolver's own code stays on the
+    // error and the cooldown marker travels alongside it.
+    server = null;
+    dns.lookup = (host, options, callback) => {
+      const error = new Error('getaddrinfo ENOTFOUND localhost');
+      error.code = 'ENOTFOUND';
+      callback(error);
+    };
+
+    statsd = createHotShotsClient({
+      host: 'localhost',
+      port: 8125,
+      cacheDns: true
+    }, 'client');
+
+    statsd.send('first.metric', {}, firstError => {
+      assert.strictEqual(firstError.code, 'ENOTFOUND',
+        'the first failure should carry the resolver code');
+      // This second send lands inside the cooldown.
+      statsd.send('second.metric', {}, secondError => {
+        assert.ok(secondError, 'a send during the cooldown should fail');
+        assert.strictEqual(secondError.code, 'ENOTFOUND',
+          `the cooldown rejection must keep the resolver code, saw ${secondError.code}`);
+        assert.strictEqual(secondError.hotShotsCode, constants.DNS_COOLDOWN_CODE,
+          `the cooldown marker should travel alongside, saw ${secondError.hotShotsCode}`);
+        done();
+      });
+    });
+  });
+
   it('fails every queued send when the cold-start lookup fails', done => {
     server = createServer(udpServerType, opts => {
       let release;
@@ -392,7 +504,7 @@ describe('#udpDnsCacheCoalescing', () => {
   });
 
   // TTL below DNS_COOLDOWN_BASE_MS again, so the capped cooldown is one TTL.
-  it('backs off for a full TTL after a synchronous-throw refresh, on a warm cache', done => {
+  it('backs off after a synchronous-throw refresh, on a warm cache', done => {
     server = createServer(udpServerType, opts => {
       clock = sinon.useFakeTimers();
       const cacheDnsTtl = 100;
@@ -433,21 +545,21 @@ describe('#udpDnsCacheCoalescing', () => {
       statsd.send('a', {}, () => {});
       assert.strictEqual(lookupCount, 2, 'stale send should trigger exactly one refresh attempt');
 
-      // Still within the cooldown TTL earned by the synchronous-throw catch
-      // block: no further lookups.
-      clock.tick(cacheDnsTtl / 2);
+      // Still within the cooldown earned by the synchronous-throw catch block:
+      // no further lookups.
+      clock.tick(constants.DNS_COOLDOWN_BASE_MS / 2);
       // eslint-disable-next-line no-empty-function
       statsd.send('b', {}, () => {});
       clock.tick(1);
       assert.strictEqual(lookupCount, 2,
-        'no additional lookup before the cooldown TTL elapses after a synchronous throw');
+        'no additional lookup before the cooldown elapses after a synchronous throw');
 
-      // Past the cooldown TTL: exactly one more attempt.
-      clock.tick(cacheDnsTtl + 50);
+      // Past the cooldown: exactly one more attempt.
+      clock.tick(constants.DNS_COOLDOWN_BASE_MS + 50);
       // eslint-disable-next-line no-empty-function
       statsd.send('c', {}, () => {});
       clock.tick(1);
-      assert.strictEqual(lookupCount, 3, 'cooldown should allow exactly one more attempt per TTL');
+      assert.strictEqual(lookupCount, 3, 'cooldown should allow exactly one more attempt');
       done();
     });
   });
@@ -488,7 +600,7 @@ describe('#udpDnsCacheCoalescing', () => {
   });
 
   // TTL below DNS_COOLDOWN_BASE_MS again, so the capped cooldown is one TTL.
-  it('backs off for a full TTL after a failed cold-start lookup, with no cache to fall back on', done => {
+  it('backs off after a failed cold-start lookup, with no cache to fall back on', done => {
     server = createServer(udpServerType, opts => {
       clock = sinon.useFakeTimers();
       const cacheDnsTtl = 100;
@@ -520,15 +632,15 @@ describe('#udpDnsCacheCoalescing', () => {
         // eslint-disable-next-line no-empty-function
         statsd.send(`b.${i}`, {}, () => {});
       }
-      clock.tick(cacheDnsTtl / 2);
+      clock.tick(constants.DNS_COOLDOWN_BASE_MS / 2);
       assert.strictEqual(lookupCount, 1, 'cold-start failure should cool down, not retry per send');
 
       // Past the cooldown: exactly one more attempt.
-      clock.tick(cacheDnsTtl + 50);
+      clock.tick(constants.DNS_COOLDOWN_BASE_MS + 50);
       // eslint-disable-next-line no-empty-function
       statsd.send('c', {}, () => {});
       clock.tick(1);
-      assert.strictEqual(lookupCount, 2, 'cooldown should allow exactly one more attempt per TTL');
+      assert.strictEqual(lookupCount, 2, 'cooldown should allow exactly one more attempt');
       done();
     });
   });

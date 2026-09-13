@@ -538,6 +538,38 @@ describe('#udpDnsCacheClose', () => {
     });
   });
 
+  it('wraps a post-close send error with the same prefix every other send error has', done => {
+    // Every send failure reaches the caller as `Error sending hot-shots
+    // message: ...`, built in handleCallback. This rejection is raised before
+    // the transport is reached, so it has to apply the same wrapping itself or
+    // it becomes the one send error that does not match a caller's prefix check.
+    server = createServer(udpServerType, opts => {
+      dns.lookup = (host, options, callback) => callback(null, '127.0.0.1');
+
+      const statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true
+      }), 'client');
+
+      // Warm the cache so close() latches a resolved queue rather than
+      // cancelling a lookup in flight.
+      statsd.send('warm', {}, () => {
+        statsd.close(() => {
+          statsd.send('after-close', {}, closedError => {
+            assert.ok(closedError, 'the post-close send should fail');
+            assert.ok(closedError.message.startsWith('Error sending hot-shots message: '),
+              `expected the standard send-error prefix, got ${JSON.stringify(closedError.message)}`);
+            assert.ok(closedError.message.includes('no longer accepted'),
+              `the original reason should survive the wrapping, got ${JSON.stringify(closedError.message)}`);
+            assert.strictEqual(closedError.code, constants.DNS_CLOSED_CODE,
+              `the code must survive the wrapping, got ${closedError.code}`);
+            done();
+          });
+        });
+      });
+    });
+  });
+
   it('completes a second close() on an already-closed cacheDns client (regression, close() must accept DNS_CLOSED_CODE too)', done => {
     server = createServer(udpServerType, opts => {
       // Resolves successfully right away, so the first close() latches the

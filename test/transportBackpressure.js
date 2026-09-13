@@ -46,21 +46,182 @@ describe('#transportBackpressure', () => {
       }, 'client');
       net.connect = realConnect;
 
-      // Far more than the cap, all in one tick, so nothing can drain in between.
-      for (let i = 0; i < 40000; i++) {
-        statsd.increment(`metric.with.a.reasonably.long.name.${i}`);
+      /**
+       * Sends far more than the cap in one tick, so nothing can drain between
+       * the writes.
+       * @returns {void}
+       */
+      const burst = () => {
+        for (let i = 0; i < 40000; i++) {
+          statsd.increment(`metric.with.a.reasonably.long.name.${i}`);
+        }
+      };
+
+      // The first burst is not refused: it is one synchronous pass, which the
+      // gate deliberately does not treat as a stalled peer. It is what puts the
+      // socket over the cap.
+      burst();
+
+      // A turn later the connect still has not completed and nothing has
+      // drained, so the gate settles and this burst is refused. Without that,
+      // every further metric would be retained in the socket forever.
+      setImmediate(() => {
+        const afterFirstBurst = socket.writableLength;
+        burst();
+
+        setTimeout(() => {
+          assert.ok(socket.connecting, 'the connect should still be pending for this test to mean anything');
+          assert.ok(state.dropped > 0, 'refused sends should be reported');
+          // The second burst added nothing, so memory stops growing rather than
+          // scaling with how long the peer stays unreachable.
+          assert.strictEqual(socket.writableLength, afterFirstBurst,
+            `socket grew from ${afterFirstBurst} to ${socket.writableLength} bytes after the cap engaged`);
+          done();
+        }, 200);
+      });
+    });
+
+    it('does not refuse a synchronous burst at a peer that is reading normally', done => {
+      // writableLength only falls when control returns to the event loop, so a
+      // synchronous emit loop piles up the whole burst before a single byte is
+      // flushed - however fast the peer is reading. Refusing on the raw byte
+      // count therefore drops metrics an entirely healthy agent would have taken.
+      let received = 0;
+      let buffered = '';
+      const peer = net.createServer(connection => {
+        connection.on('data', chunk => {
+          buffered += chunk.toString();
+          const lines = buffered.split('\n');
+          buffered = lines.pop();
+          received += lines.filter(line => line.indexOf('sync.burst') === 0).length;
+        });
+      });
+
+      peer.listen(0, '127.0.0.1', () => {
+        const refused = [];
+        const client = createHotShotsClient({
+          protocol: 'tcp',
+          host: '127.0.0.1',
+          port: peer.address().port,
+          maxBufferSize: 1432,
+          errorHandler: err => refused.push(err.code || err.message)
+        }, 'client');
+        statsd = client;
+
+        // Measured: 60000 of these overflow the 1 MiB cap in one pass.
+        const count = 60000;
+        setTimeout(() => {
+          for (let i = 0; i < count; i++) {
+            client.increment('sync.burst.metric.name');
+          }
+          setTimeout(() => {
+            statsd = null;
+            client.close(() => peer.close(() => {
+              assert.deepStrictEqual(refused, [],
+                `a burst at a reading peer must not be refused, saw ${refused.length}: ` +
+                `${JSON.stringify(refused.slice(0, 3))}`);
+              assert.strictEqual(received, count,
+                `the peer should receive every metric, saw ${received}`);
+              done();
+            }));
+          }, 6000);
+        }, 800);
+      });
+    }).timeout(25000);
+
+    it('lets a burst that stays under the cap through to a slow peer', done => {
+      // The cap must not fire on traffic a healthy-but-briefly-slow agent can
+      // still absorb, or it turns a recoverable stall into lost metrics.
+      let received = 0;
+      let buffered = '';
+      const peer = net.createServer(connection => {
+        connection.pause();
+        setTimeout(() => {
+          connection.on('data', chunk => {
+            buffered += chunk.toString();
+            const lines = buffered.split('\n');
+            buffered = lines.pop();
+            received += lines.filter(line => line.indexOf('under.cap') === 0).length;
+          });
+          connection.resume();
+        }, 500);
+      });
+
+      peer.listen(0, '127.0.0.1', () => {
+        const refused = [];
+        const client = createHotShotsClient({
+          protocol: 'tcp',
+          host: '127.0.0.1',
+          port: peer.address().port,
+          errorHandler: err => refused.push(err.code || err.message)
+        }, 'client');
+        statsd = client;
+
+        // Roughly 500 KB, comfortably under MAX_PENDING_WRITE_BYTES.
+        const padding = 'x'.repeat(1000);
+        setTimeout(() => {
+          for (let i = 0; i < 500; i++) {
+            client.increment(`under.cap.${padding}`);
+          }
+          setTimeout(() => {
+            statsd = null;
+            client.close(() => peer.close(() => {
+              assert.deepStrictEqual(refused, [],
+                `a burst under the cap must not be refused, saw ${JSON.stringify(refused)}`);
+              assert.strictEqual(received, 500,
+                `the slow peer should still receive every metric, saw ${received}`);
+              done();
+            }));
+          }, 5500);
+        }, 300);
+      });
+    }).timeout(20000);
+
+    /**
+     * Writes roughly 320 KB into an unread stream, yields so the gate can
+     * settle, then reports whether one further send is refused.
+     * @param {Object} opts - extra client options
+     * @param {Function} callback - called with the refusal error, or null
+     * @returns {void}
+     */
+    function burstThenProbe(opts, callback) {
+      const stream = new PassThrough();
+      // Nothing reads from the stream, so writes accumulate in it.
+      statsd = createHotShotsClient(Object.assign({
+        protocol: 'stream',
+        stream: stream
+      }, opts), 'client');
+
+      const big = 'x'.repeat(64 * 1024);
+      for (let i = 0; i < 5; i++) {
+        statsd.increment(`${big}.${i}`);
       }
 
-      setTimeout(() => {
-        assert.ok(socket.connecting, 'the connect should still be pending for this test to mean anything');
-        // One write is allowed through while at or under the cap, so the socket
-        // can sit at most one message past it.
-        assert.ok(socket.writableLength <= constants.MAX_PENDING_WRITE_BYTES + 1024,
-          `socket buffered ${socket.writableLength} bytes, expected it capped near ` +
-          `${constants.MAX_PENDING_WRITE_BYTES}`);
-        assert.ok(state.dropped > 0, 'refused sends should be reported');
+      setImmediate(() => {
+        statsd.increment('one.more', 1, err => callback(err || null));
+        // The refuse-or-write decision was made synchronously above. Start
+        // reading only now, so a write that was accepted can actually complete
+        // and call back; nothing reads a PassThrough on its own.
+        stream.resume();
+      });
+    }
+
+    it('refuses past a lowered maxPendingWriteBytes', done => {
+      burstThenProbe({ maxPendingWriteBytes: 64 * 1024 }, err => {
+        assert.ok(err, 'the send should be refused past the configured cap');
+        assert.strictEqual(err.code, constants.WRITE_QUEUE_FULL_CODE);
         done();
-      }, 200);
+      });
+    });
+
+    it('accepts the same burst under the default maxPendingWriteBytes', done => {
+      // The same 320 KB is well under the 1 MiB default, so this pair shows the
+      // refusal above came from the option rather than from the burst size.
+      burstThenProbe({}, err => {
+        assert.strictEqual(err, null,
+          `the burst is under the default cap and must not be refused, saw ${err && err.code}`);
+        done();
+      });
     });
 
     it('reports a refused write as a queue drop, not a writer error', done => {
@@ -77,19 +238,24 @@ describe('#transportBackpressure', () => {
         statsd.increment(`${big}.${i}`);
       }
 
-      statsd.increment('one.past.the.cap', 1, err => {
-        assert.ok(err, 'the send past the cap should fail');
-        assert.strictEqual(err.code, constants.WRITE_QUEUE_FULL_CODE);
-        // Observe the routing itself, not just that the code is listed in
-        // REFUSED_CODES: handleCallback picks the counter, so asserting on the
-        // constants alone would still pass if it picked the writer one.
-        assert.ok(statsd.telemetry.packetsDroppedQueue > 0,
-          'a refused write should count as a queue drop');
-        assert.strictEqual(statsd.telemetry.packetsDroppedWriter, 0,
-          'a refused write should not count as a writer error');
-        assert.ok(statsd.telemetry.bytesDroppedQueue > 0,
-          'the refused bytes should land in the queue-drop byte counter');
-        done();
+      // Refusals only begin once the socket has been over the cap across an
+      // event-loop turn without draining, so that nothing refuses a synchronous
+      // burst at a healthy peer. Yield before the send that must be refused.
+      setImmediate(() => {
+        statsd.increment('one.past.the.cap', 1, err => {
+          assert.ok(err, 'the send past the cap should fail');
+          assert.strictEqual(err.code, constants.WRITE_QUEUE_FULL_CODE);
+          // Observe the routing itself, not just that the code is listed in
+          // REFUSED_CODES: handleCallback picks the counter, so asserting on the
+          // constants alone would still pass if it picked the writer one.
+          assert.ok(statsd.telemetry.packetsDroppedQueue > 0,
+            'a refused write should count as a queue drop');
+          assert.strictEqual(statsd.telemetry.packetsDroppedWriter, 0,
+            'a refused write should not count as a writer error');
+          assert.ok(statsd.telemetry.bytesDroppedQueue > 0,
+            'the refused bytes should land in the queue-drop byte counter');
+          done();
+        });
       });
     });
 
@@ -98,29 +264,47 @@ describe('#transportBackpressure', () => {
       statsd = createHotShotsClient({ protocol: 'stream', stream: stream }, 'client');
 
       const big = 'x'.repeat(64 * 1024);
-      const state = { refused: 0, sent: 200 };
-      // Well past the cap, so most of these are refused rather than written. The
-      // refusal path increments the counter in sendMessage and decrements it only
-      // when failLater's deferred batch runs, which is where a drift would live.
-      for (let i = 0; i < state.sent; i++) {
-        statsd.increment(`${big}.${i}`, 1, err => {
-          if (err && err.code === constants.WRITE_QUEUE_FULL_CODE) {
-            state.refused++;
-          }
-        });
-      }
+      const state = { refused: 0 };
+      /**
+       * Sends a burst of oversized metrics, counting the refusals.
+       * @param {number} count - how many to send
+       * @returns {void}
+       */
+      const burst = count => {
+        for (let i = 0; i < count; i++) {
+          statsd.increment(`${big}.${i}`, 1, err => {
+            if (err && err.code === constants.WRITE_QUEUE_FULL_CODE) {
+              state.refused++;
+            }
+          });
+        }
+      };
 
-      // Start reading so the writes that did fit under the cap can flush and call
-      // back too. Without this the counter stays pinned at however many the stream
-      // is holding, and the assertion below could not tell that from a real leak.
-      stream.resume();
+      // The first burst puts the stream well past the cap. None of it is refused:
+      // a synchronous burst has not had a chance to drain yet, so the gate does
+      // not treat it as a stalled peer.
+      burst(200);
 
-      setTimeout(() => {
-        assert.ok(state.refused > 0, 'the burst should have been refused past the cap');
-        assert.strictEqual(statsd.messagesInFlight, 0,
-          `every send should have called back exactly once, but ${statsd.messagesInFlight} are still counted in flight`);
-        done();
-      }, 200);
+      // After a turn with nothing read from the stream, the gate settles and the
+      // second burst is refused. The refusal path increments messagesInFlight in
+      // sendMessage and decrements it only when failLater's deferred batch runs,
+      // which is where a drift would live.
+      setImmediate(() => {
+        burst(200);
+
+        // Start reading so the writes that did fit under the cap can flush and
+        // call back too. Without this the counter stays pinned at however many
+        // the stream is holding, and the assertion below could not tell that
+        // from a real leak.
+        stream.resume();
+
+        setTimeout(() => {
+          assert.ok(state.refused > 0, 'the second burst should have been refused past the cap');
+          assert.strictEqual(statsd.messagesInFlight, 0,
+            `every send should have called back exactly once, but ${statsd.messagesInFlight} are still counted in flight`);
+          done();
+        }, 200);
+      });
     });
   });
 

@@ -325,6 +325,42 @@ describe('#transportExtended', () => {
     });
   });
 
+  it('should reach an IPv6-only agent over TCP when the host is given explicitly', function (done) {
+    // The no-host default is 127.0.0.1, so an agent bound only to ::1 is
+    // reached by naming it. This is the documented migration for that default.
+    const tcpServer = net.createServer(socket => {
+      socket.setEncoding('ascii');
+      socket.on('data', data => {
+        // Tear down before asserting, per the note on the tests above.
+        const payload = data;
+        client.close(() => {
+          tcpServer.close(() => {
+            assert.ok(payload.includes('test.metric'), `unexpected payload: ${payload}`);
+            done();
+          });
+        });
+      });
+    });
+
+    let client;
+    tcpServer.once('error', err => {
+      // Only a host without IPv6 loopback is a legitimate skip. Anything else
+      // is a real failure and must not be swallowed.
+      if (err.code === 'EADDRNOTAVAIL' || err.code === 'EAFNOSUPPORT') {
+        return this.skip();
+      }
+      return done(err);
+    });
+    tcpServer.listen(0, '::1', () => {
+      client = new StatsD({
+        protocol: 'tcp',
+        host: '::1',
+        port: tcpServer.address().port,
+      });
+      client.increment('test.metric');
+    });
+  });
+
   it('should add newline to stream messages', done => {
     class TestStream extends Writable {
       _write(chunk, encoding, callback) { // eslint-disable-line class-methods-use-this

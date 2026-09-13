@@ -76,8 +76,8 @@ The caps:
 | Transport | What accumulates | Cap | Code on drop |
 |---|---|---|---|
 | udp (cacheDns) | sends waiting on an in-flight lookup | DNS_MAX_PENDING = 1000, oldest dropped | HOTSHOTS_DNS_QUEUE_FULL |
-| tcp | socket.writableLength while connecting / peer not reading | MAX_PENDING_WRITE_BYTES = 1 MiB | HOTSHOTS_WRITE_QUEUE_FULL |
-| stream | stream.writableLength while the consumer is stalled | MAX_PENDING_WRITE_BYTES = 1 MiB | HOTSHOTS_WRITE_QUEUE_FULL |
+| tcp | socket.writableLength while connecting / peer not reading, held across an event-loop turn | maxPendingWriteBytes, default 1 MiB | HOTSHOTS_WRITE_QUEUE_FULL |
+| stream | stream.writableLength while the consumer is stalled, held across an event-loop turn | maxPendingWriteBytes, default 1 MiB | HOTSHOTS_WRITE_QUEUE_FULL |
 | uds | sends waiting out an EAGAIN/congestion retry backoff | UDS_MAX_PENDING_RETRIES = 1000, oldest dropped | HOTSHOTS_UDS_RETRY_QUEUE_FULL |
 
 ## UDP
@@ -134,7 +134,11 @@ stateDiagram-v2
 Behaviors:
 
 - **Failure cooldown ramps.** DNS_COOLDOWN_BASE_MS (1 s), doubling per consecutive
-  failure, capped at cacheDnsTtl. Success resets it. Without a cooldown a fast-failing
+  failure, capped at DNS_COOLDOWN_MAX_MS (5 s). Only an incoming send retries the
+  lookup, so the cooldown is also the time a client keeps refusing after the
+  resolver recovers; the ceiling is seconds for that reason rather than a TTL.
+  A refusal keeps the resolver's own code and carries HOTSHOTS_DNS_COOLDOWN on
+  hotShotsCode. Success resets it. Without a cooldown a fast-failing
   resolver degrades back into one lookup per send. It ramps rather than sitting at a flat
   TTL for the cold start. A process that starts before its resolver is ready then loses
   about a second of metrics rather than 60 s.
@@ -168,7 +172,7 @@ when the default is disabled, such as under `--no-network-family-autoselection`.
 flowchart TD
     S["send(buf, cb)"] --> D{"socket.destroyed?"}
     D -->|yes| E1["failLater → ERR_SOCKET_DESTROYED"]
-    D -->|no| W{"writableLength > 1 MiB?"}
+    D -->|no| W{"over cap for a full turn?"}
     W -->|yes| E2["failLater → HOTSHOTS_WRITE_QUEUE_FULL"]
     W -->|no| WR["socket.write(msg + '\\n', 'ascii', cb)"]
     WR --> OK["cb(null)"]
@@ -261,7 +265,7 @@ client does hold the process open.
 ## Stream and mock
 
 **Stream** is a caller-supplied writable: newline-terminated like TCP, same destroyed-check
-and 1 MiB guard. The differences are all about ownership. The stream belongs to the
+and pending-write guard. The differences are all about ownership. The stream belongs to the
 application, which gives it three properties no other transport has:
 
 - The default 'error' listener is removable, and is re-attached if destroy() throws.
@@ -282,7 +286,7 @@ real transport would.
 | Newline-terminated | no | yes | no | yes | n/a |
 | Default maxBufferSize | 0 | 0 | 8192 (hard cap) | 0 | 0 |
 | DNS | per-packet, or cached with cacheDns | at connect only, and none at all without a host | n/a | n/a | n/a |
-| Backpressure guard | cacheDns lookup queue (1000) | 1 MiB unflushed | retry/backoff | 1 MiB unflushed | none |
+| Backpressure guard | cacheDns lookup queue (1000) | maxPendingWriteBytes unflushed for a turn | retry/backoff | maxPendingWriteBytes unflushed for a turn | none |
 | Retries | none | none | EAGAIN / congestion, tuned by udsRetryOptions | none | none |
 | Socket auto-replacement | no | yes | yes | no | no |
 | Recreated by sendMessage if missing | no | yes | yes | no | no |
@@ -347,12 +351,12 @@ sequenceDiagram
 | Code | Transport | Meaning | Telemetry bucket |
 |---|---|---|---|
 | HOTSHOTS_DNS_QUEUE_FULL | udp (cacheDns) | 1000 sends already queued behind a lookup; oldest dropped | queue |
-| HOTSHOTS_DNS_COOLDOWN | udp (cacheDns) | a recent lookup failed and the next attempt is not due yet | queue |
+| HOTSHOTS_DNS_COOLDOWN (on hotShotsCode; code stays the resolver's) | udp (cacheDns) | a recent lookup failed and the next attempt is not due yet | queue |
 | HOTSHOTS_DNS_CANCELLED | udp (cacheDns) | queued mid-lookup, cancelled by close() | queue |
 | HOTSHOTS_DNS_CLOSED | udp (cacheDns) | send arrived after close() latched the queue shut | queue |
 | HOTSHOTS_UDS_RETRY_CANCELLED | uds | a retry was waiting out its backoff when close() ran | queue |
 | HOTSHOTS_UDS_RETRY_QUEUE_FULL | uds | 1000 sends already waiting out a retry backoff; oldest dropped | queue |
-| HOTSHOTS_WRITE_QUEUE_FULL | tcp, stream | 1 MiB already unflushed in the socket | queue |
+| HOTSHOTS_WRITE_QUEUE_FULL | tcp, stream | over maxPendingWriteBytes unflushed across an event-loop turn without draining | queue |
 | HOTSHOTS_CLOSE_FLUSH_TIMEOUT | any | close() stopped waiting on the final flush | n/a |
 | ERR_SOCKET_DESTROYED | tcp | write attempted on a destroyed socket | writer |
 | ERR_STREAM_DESTROYED | stream | write attempted on a destroyed stream | writer |
