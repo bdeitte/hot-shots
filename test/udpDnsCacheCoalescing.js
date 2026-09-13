@@ -358,6 +358,36 @@ describe('#udpDnsCacheCoalescing', () => {
     });
   });
 
+  it('still delivers to a udp4 agent when the resolver answers IPv6 first', done => {
+    // The end-to-end half of the two pinning tests above. An unpinned lookup
+    // gets ::1 here, which a udp4 socket cannot send to, so this fails with
+    // EINVAL and delivers nothing unless the family pin is applied.
+    server = createServer(udpServerType, opts => {
+      dns.lookup = (host, options, callback) => {
+        const family = options && typeof options === 'object' ? options.family : 0;
+        if (family === 4) {
+          return callback(null, '127.0.0.1', 4);
+        }
+        return callback(null, '::1', 6);
+      };
+
+      statsd = createHotShotsClient(Object.assign(opts, {
+        host: 'localhost',
+        cacheDns: true
+      }), 'client');
+
+      server.on('metrics', metrics => {
+        assert.strictEqual(metrics, 'ipv6first.metric');
+        done();
+      });
+
+      statsd.send('ipv6first.metric', {}, error => {
+        assert.strictEqual(error, null,
+          `the send should reach the udp4 agent, got ${error && error.message}`);
+      });
+    });
+  });
+
   it('fails every queued send when the cold-start lookup fails', done => {
     server = createServer(udpServerType, opts => {
       let release;

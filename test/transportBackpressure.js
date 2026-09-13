@@ -63,6 +63,54 @@ describe('#transportBackpressure', () => {
       }, 200);
     });
 
+    it('lets a burst that stays under the cap through to a slow peer', done => {
+      // The cap must not fire on traffic a healthy-but-briefly-slow agent can
+      // still absorb, or it turns a recoverable stall into lost metrics.
+      let received = 0;
+      let buffered = '';
+      const peer = net.createServer(connection => {
+        connection.pause();
+        setTimeout(() => {
+          connection.on('data', chunk => {
+            buffered += chunk.toString();
+            const lines = buffered.split('\n');
+            buffered = lines.pop();
+            received += lines.filter(line => line.indexOf('under.cap') === 0).length;
+          });
+          connection.resume();
+        }, 500);
+      });
+
+      peer.listen(0, '127.0.0.1', () => {
+        const refused = [];
+        const client = createHotShotsClient({
+          protocol: 'tcp',
+          host: '127.0.0.1',
+          port: peer.address().port,
+          errorHandler: err => refused.push(err.code || err.message)
+        }, 'client');
+        statsd = client;
+
+        // Roughly 500 KB, comfortably under MAX_PENDING_WRITE_BYTES.
+        const padding = 'x'.repeat(1000);
+        setTimeout(() => {
+          for (let i = 0; i < 500; i++) {
+            client.increment(`under.cap.${padding}`);
+          }
+          setTimeout(() => {
+            statsd = null;
+            client.close(() => peer.close(() => {
+              assert.deepStrictEqual(refused, [],
+                `a burst under the cap must not be refused, saw ${JSON.stringify(refused)}`);
+              assert.strictEqual(received, 500,
+                `the slow peer should still receive every metric, saw ${received}`);
+              done();
+            }));
+          }, 5500);
+        }, 300);
+      });
+    }).timeout(20000);
+
     it('reports a refused write as a queue drop, not a writer error', done => {
       const stream = new PassThrough();
       // Nothing reads from the stream, so writes accumulate in it.

@@ -132,6 +132,36 @@ describe('#errorHandling', () => {
     });
   });
 
+  it('should contain an errorHandler that throws while the constructor reports a bad protocol', () => {
+    // The constructor reports an unsupported protocol through errorHandler
+    // rather than throwing. A handler that throws from there must not turn a
+    // misconfiguration into an exception out of `new StatsD(...)`.
+    const originalConsoleError = console.error;
+    const logged = [];
+    console.error = msg => logged.push(String(msg));
+
+    let client;
+    try {
+      assert.doesNotThrow(() => {
+        client = createHotShotsClient({
+          protocol: 'invalid-protocol',
+          errorHandler() {
+            throw new Error('handler boom');
+          }
+        }, 'client');
+      });
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    const contained = logged.filter(msg => msg.includes('handler boom'));
+    assert.strictEqual(contained.length, 1,
+      `the throw should be reported once with console.error, saw ${JSON.stringify(logged)}`);
+    if (client) {
+      client.close(() => { /* no socket was ever created */ });
+    }
+  });
+
   it('should contain an errorHandler that throws on the send-failure path', done => {
     // README documents that a throwing errorHandler is contained rather than
     // propagated. This is the single-send failure path, where hot-shots calls
