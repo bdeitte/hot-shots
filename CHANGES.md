@@ -19,6 +19,10 @@ CHANGELOG
 * [@bdeitte](https://github.com/bdeitte) Add NETWORKING.md, which documents the send path and failure modes of each transport with diagrams, and link it from README.md
 * [@bdeitte](https://github.com/bdeitte) Add a Docker perfTest harness that reports suite wall time and network, DNS and syscall counts (see `perfTest/README.md`), test Node.js 26 in CI, and refresh the lockfile for Node.js 26 and open dev-dependency advisories
 
+## 17.1.1 (2026-9-13)
+
+* [@erulabs](https://github.com/erulabs) Reuse formatted tag strings in `overrideTags` to avoid splitting and reconstructing values, while preserving tag sanitization, overrides, and duplicate-key ordering.
+
 ## 17.1.0 (2026-7-25)
 
 * [@bdeitte](https://github.com/bdeitte) Parse whitespace-delimited `DD_TAGS` / `DATADOG_TAGS` values: when the value contains no comma, whitespace is used as the separator, matching `dd-trace-js` and the Datadog Agent. See [#325](https://github.com/bdeitte/hot-shots/issues/325)
