@@ -27,6 +27,7 @@ export interface ClientOptions {
   host?: string;
   isChild?: boolean;
   maxBufferSize?: number;
+  maxPendingWriteBytes?: number;
   mock?: boolean;
   path?: string;
   port?: number;

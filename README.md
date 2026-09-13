@@ -93,9 +93,15 @@ Parameters (specified as one object passed into hot-shots):
   lookup, and a send past the TTL goes out immediately on the stale address
   while one refresh runs in the background. A failed lookup waits
   before the next attempt rather than retrying on every send: one second after the
-  first failure, doubling with each consecutive failure, capped at *cacheDnsTtl*.
+  first failure, doubling with each consecutive failure, capped at five seconds.
+  Only an incoming send retries the lookup, so the wait is also how long the
+  client keeps refusing after the resolver recovers, which is why the ceiling is
+  seconds rather than a full TTL.
   During that wait a client with a cached address keeps using it, while one that
-  has never resolved an address fails its sends with `HOTSHOTS_DNS_COOLDOWN`. A
+  has never resolved an address fails its sends. Those failures keep the
+  resolver's own error code, such as `ENOTFOUND`, so an existing `errorHandler`
+  keeps matching through a failure streak; the refusal is marked with
+  `hotShotsCode` set to `HOTSHOTS_DNS_COOLDOWN`. A
   successful lookup resets the streak. A failed refresh is reported once per
   failure streak via `errorHandler`, or `console.error` if none is set.
   hot-shots pins lookups to the socket's address family, so a `udp4` client
@@ -113,6 +119,7 @@ Parameters (specified as one object passed into hot-shots):
 
   In addition, tags from the `DD_TAGS` environment variable (or its legacy alias `DATADOG_TAGS`) are added to `globalTags`. For example `DD_TAGS=rack:1,team:core` adds `rack:1` and `team:core`. If the value contains no comma, whitespace is used as the separator instead, matching `dd-trace-js` and the Datadog Agent, so `DD_TAGS="env:staging service:my-service"` adds `env:staging` and `service:my-service`. These are applied before the `DD_ENV`/`DD_SERVICE`/`DD_VERSION` mapping above.
 * `maxBufferSize`: If larger than 0,  metrics will be buffered and only sent when the string length is greater than the size. `default: 0` for udp and tcp.  `default: 8192` for uds.
+* `maxPendingWriteBytes`: For `tcp` and `stream` clients, how many bytes may sit unflushed in the socket before further sends are refused. `default: 1048576` (1 MiB). See the note below on when the cap engages.
 * `bufferFlushInterval`: If buffering is in use, this is the time in ms to always flush any buffered metrics. `default: 1000`
 * `telegraf`:    Use Telegraf's StatsD line protocol, which is slightly different than the rest `default: false`
 * `sampleRate`:    Sends only a sample of data to StatsD for all StatsD methods.  Can be overridden at the method level. `default: 1`
@@ -122,12 +129,19 @@ Parameters (specified as one object passed into hot-shots):
 * `path`: Used only when the protocol is `uds`. Defaults to `/var/run/datadog/dsd.socket`.
 * `stream`: Reference to a stream instance. Used only when the protocol is `stream`. Destroying the stream yourself before calling `close()` is supported.
 
-For `tcp` and `stream` clients, hot-shots refuses sends once 1 MiB is waiting to
-flush. Node otherwise queues writes in memory without limit while a socket is
-connecting or its peer has stopped reading. Refused sends fail with code
-`HOTSHOTS_WRITE_QUEUE_FULL` and, with `includeDatadogTelemetry` enabled, count as
-`packets_dropped_queue`. Writes to a healthy peer drain immediately, so this is
-not reached in normal operation.
+For `tcp` and `stream` clients, hot-shots refuses sends once more than
+*maxPendingWriteBytes* has been waiting to flush across an event-loop turn
+without draining. Node otherwise queues writes in memory without limit while a
+socket is connecting or its peer has stopped reading. Refused sends fail with
+code `HOTSHOTS_WRITE_QUEUE_FULL` and, with `includeDatadogTelemetry` enabled,
+count as `packets_dropped_queue`.
+
+A socket's pending bytes only fall when control returns to the event loop, so a
+synchronous loop of metrics accumulates its whole burst before any of it is
+flushed, however fast the agent is reading. Requiring a turn to pass is what
+keeps such a burst from being refused. The consequence is that one synchronous
+burst is bounded by the application rather than by the cap; sustained traffic at
+a peer that has stopped reading is bounded by the cap as normal.
 
 For UDP clients, when *host* is an IP address or is left unset, hot-shots
 performs no DNS lookups regardless of *cacheDns*. Node otherwise routes every
