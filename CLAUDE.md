@@ -27,6 +27,8 @@ The library supports multiple transport protocols:
 - **UDS**: Unix Domain Sockets (requires unix-dgram optional dependency)
 - **Stream**: Raw stream protocol for custom transports
 
+If you are in any DNS, retry, or other protocol code, read through NETWORKING.md
+
 ### Client Architecture
 - Main Client class handles initialization and configuration
 - Transport layer abstracts protocol differences
@@ -126,6 +128,45 @@ The project uses Mocha with 5-second timeouts. Tests are organized by feature:
 - Buffering and performance tests
 - Telemetry tests
 
+### Where New Tests Go
+
+Search for existing coverage before writing a test, and put the test in the file
+that owns its subject. Do not create a new cross-cutting file (a
+"regressions" or "guards" file collecting unrelated cases) - every test file
+here is named for what it tests, and a new test almost always belongs in one
+that already exists. Useful starting points: `udpDnsLookupCount.js` and
+`udpDnsCache*.js` for resolution, `transportBackpressure.js` for the write caps
+and bounded close, `close.js` for close semantics, `errorHandling.js` for
+errorHandler routing and containment, `telemetry.js` and `udpDnsCacheDrops.js`
+for counter buckets, `enqueueCallback.js` for callback timing.
+
+### Test Isolation
+
+Tests must not depend on ambient state:
+- Clear the `DD_*` environment variables that change transport or host
+  selection. `DD_AGENT_HOST` is read at `lib/statsd.js` regardless of whether a
+  port was passed, so it silently redirects any client built without an explicit
+  host. `test/init.js` shows the convention of deleting them in `afterEach`.
+- Do not rely on how the machine resolves `localhost`. To test address-family
+  behavior, stub `dns.lookup` so an unpinned lookup answers `::1` and a
+  `family: 4` lookup answers `127.0.0.1`. The stub must handle dgram's numeric
+  family form (`lookup(host, 4, cb)`) as well as the options-object form the
+  `cacheDns` path uses.
+- Close the client and any server before asserting, then assert inside the close
+  callback. An assertion that throws first leaves the socket open and can hang
+  the run. See the TCP tests in `test/transport.js` for the pattern.
+- When a test needs an optional platform feature, such as binding to `::1`, skip
+  only on the specific errors that mean it is unavailable (`EADDRNOTAVAIL`,
+  `EAFNOSUPPORT`) and fail on anything else. A blanket `on('error', () => done())`
+  turns every real failure into a pass.
+
+### Comparing Behavior Against a Released Version
+
+To check whether a change alters existing behavior, check the released tag out
+into a git worktree, symlink `node_modules` into it, and run the same
+self-contained test file in both trees. Tests written for this must not use
+branch-only helpers, or they cannot run against the older tree.
+
 ### Test Helpers
 Tests use helpers from `test/helpers/helpers.js`:
 - `createServer(serverType, callback)` - Creates a test server for the given protocol
@@ -177,7 +218,7 @@ See `test/udpDnsCacheTransport.js` and `test/udpSocketOptions.js` for examples.
 
 ## Important Notes
 
-- Node.js >= 18.0.0 required (see `engines` in package.json)
+- Node.js >= 20.0.0 required (see `engines` in package.json)
 - TypeScript definitions in types.d.ts must be updated for API changes
 - Constructor parameter expansion is deprecated - use options object
 - Mock mode available for testing (prevents actual metric sending)
@@ -193,8 +234,10 @@ See `test/udpDnsCacheTransport.js` and `test/udpSocketOptions.js` for examples.
     }
   }
   ```
-- Updates should be noted in CHANGES.md using the format: `* [@username](https://github.com/username) Description`. For breaking changes, prefix with `Breaking:` (e.g., `* [@username](https://github.com/username) BREAKING: Description`). Do not use bold section headers. Always link `@username` mentions to their GitHub profiles and `#NNN` issue/PR references to `https://github.com/bdeitte/hot-shots/issues/NNN`.
+- Updates that are new for a release should be noted in CHANGES.md using the format: `* [@username](https://github.com/username) Description`. For breaking changes, prefix with `Breaking:` (e.g., `* [@username](https://github.com/username) BREAKING: Description`). Do not use bold section headers. Always link `@username` mentions to their GitHub profiles and `#NNN` issue/PR references to `https://github.com/bdeitte/hot-shots/issues/NNN`.
+- CHANGES.md should be concise and does not need to go into every detail. The updates should also not be mentioning updates to existing updates inside of a specific release- it should just change how these unreleased changes are written about to only be discussing what is new for the release overall.
 - API changes should be noted in README.md
+- If you are making a very large set of changes, use the manual performance tests in the perfTest directory to understand the before and after effects of the changes and report these out
 
 ## Follow for all code changes
 

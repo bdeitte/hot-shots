@@ -10,6 +10,16 @@ module.exports = {
     },
     "overrides": [
         {
+            // Standalone measurement scripts, not library code. They run to
+            // completion as CLI steps, so synchronous fs is the right call and
+            // `continue` keeps the report parsers flat.
+            "files": ["perfTest/**/*.js"],
+            "rules": {
+                "no-continue": "off",
+                "no-sync": "off"
+            }
+        },
+        {
             "files": ["**/*.mjs"],
             "parserOptions": {
                 "ecmaVersion": 2022,

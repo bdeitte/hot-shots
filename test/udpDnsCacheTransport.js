@@ -68,12 +68,13 @@ describe('#udpDnsCacheTransport', () => {
         const socketMock = mockDgramSocket();
 
         statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
           cacheDns: true
         }), 'client');
 
         const resolvedHostAddress = '1.1.1.1';
         let dnsLookupCount = 0;
-        dns.lookup = (host, callback) => {
+        dns.lookup = (host, options, callback) => {
           dnsLookupCount++;
           callback(undefined, resolvedHostAddress);
         };
@@ -99,12 +100,13 @@ describe('#udpDnsCacheTransport', () => {
         const socketMock = mockDgramSocket();
 
         statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
           cacheDns: true
         }), 'client');
 
         const resolvedHostAddress = '1.1.1.1';
         let dnsLookupCount = 0;
-        dns.lookup = (host, callback) => {
+        dns.lookup = (host, options, callback) => {
           callback(undefined, resolvedHostAddress);
           dnsLookupCount++;
         };
@@ -134,13 +136,14 @@ describe('#udpDnsCacheTransport', () => {
 
         const cacheDnsTtl = 100;
         statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
           cacheDns: true,
           cacheDnsTtl: cacheDnsTtl
         }), 'client');
 
         const resolvedHostAddress = '1.1.1.1';
         let dnsLookupCount = 0;
-        dns.lookup = (host, callback) => {
+        dns.lookup = (host, options, callback) => {
           callback(undefined, resolvedHostAddress);
           dnsLookupCount++;
         };
@@ -175,12 +178,13 @@ describe('#udpDnsCacheTransport', () => {
         mockDgramSocket();
 
         statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
           cacheDns: true,
         }), 'client');
 
         const dnsError = new Error('DNS lookup failed');
         dnsError.code = 'ENOTFOUND';
-        dns.lookup = (host, callback) => {
+        dns.lookup = (host, options, callback) => {
           callback(dnsError);
         };
 
@@ -260,12 +264,13 @@ describe('#udpDnsCacheTransport', () => {
 
         const cacheDnsTtl = 100;
         statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
           cacheDns: true,
           cacheDnsTtl: cacheDnsTtl
         }), 'client');
 
         let resolvedAddress = '1.1.1.1';
-        dns.lookup = (host, callback) => {
+        dns.lookup = (host, options, callback) => {
           callback(undefined, resolvedAddress);
         };
 
@@ -282,7 +287,17 @@ describe('#udpDnsCacheTransport', () => {
         // Advance past TTL
         clock.tick(cacheDnsTtl + 50);
 
+        // Stale-while-revalidate: this send goes out on the previous address
+        // while the refresh runs in the background.
         statsd.send('second', {}, (error) => {
+          assert.strictEqual(error, null);
+        });
+
+        clock.tick(1);
+        assert.strictEqual(socketMock.host, '1.1.1.1');
+
+        // The next send picks up the refreshed address.
+        statsd.send('third', {}, (error) => {
           assert.strictEqual(error, null);
         });
 
