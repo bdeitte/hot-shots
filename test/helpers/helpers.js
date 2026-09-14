@@ -172,7 +172,8 @@ function createServer(serverType, callback) {
   }
   else if (serverType === TCP) {
     server = net.createServer(socket => {
-      socket.setEncoding('ascii');
+      // an ascii decode strips the high bit off every byte, mangling non-ascii.
+      socket.setEncoding('utf8');
       socket.on('data', data => {
         if (data) {
           server.emit('metrics', data);
@@ -180,7 +181,7 @@ function createServer(serverType, callback) {
       });
     });
     server.on('listening', () => {
-      onListening(server.address());
+      onListening(Object.assign(server.address(), { tcpEncoding: 'utf8' }));
     });
 
     server.listen(0, 'localhost');
