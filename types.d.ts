@@ -4,6 +4,21 @@ import stream = require("stream");
 export type Tags = { [key: string]: string } | string[];
 export type Cardinality = 'none' | 'low' | 'orchestrator' | 'high';
 
+/**
+ * An Error reported to an errorHandler or a send callback.
+ *
+ * `code` carries the underlying transport or resolver code, such as `ENOTFOUND`
+ * or `ERR_SOCKET_DESTROYED`, and for most refusals holds the `HOTSHOTS_*` code
+ * directly. `hotShotsCode` marks a send that hot-shots refused itself, and is
+ * set only where `code` had to stay the resolver's own value: a `cacheDns`
+ * cooldown refusal keeps `ENOTFOUND` or `EAI_AGAIN` on `code` so existing
+ * handlers keep matching, and carries `HOTSHOTS_DNS_COOLDOWN` here.
+ */
+export interface SendError extends Error {
+  code?: string;
+  hotShotsCode?: string;
+}
+
 export interface AggregationOptions {
   /** Interval in milliseconds between aggregation flushes. Default: 2000. */
   flushInterval?: number;
@@ -16,7 +31,7 @@ export interface ClientOptions {
   bufferHolder?: { buffer: string };
   cacheDns?: boolean;
   cacheDnsTtl?: number;
-  errorHandler?: (err: Error) => void;
+  errorHandler?: (err: SendError) => void;
   globalTags?: Tags;
   includeDataDogTags?: boolean;
   datadog?: boolean;
@@ -62,7 +77,7 @@ export interface ChildClientOptions {
   globalTags?: Tags;
   prefix?: string;
   suffix?: string;
-  errorHandler?: (err: Error) => void;
+  errorHandler?: (err: SendError) => void;
   cardinality?: Cardinality;
 }
 
@@ -122,7 +137,7 @@ export interface TimerContext {
   addTags(tags: Tags): void;
 }
 
-export type StatsCb = (error?: Error, bytes?: number) => void;
+export type StatsCb = (error?: SendError, bytes?: number) => void;
 
 export class StatsD {
   constructor(options?: ClientOptions);

@@ -291,7 +291,7 @@ real transport would.
 | Socket auto-replacement | no | yes | yes | no | no |
 | Recreated by sendMessage if missing | no | yes | yes | no | no |
 | unref() | works | works | throws | throws | no-op |
-| Emits 'close' on close | yes | yes | synthesized | yes (unless already destroyed) | synthesized |
+| Emits 'close' on close | yes | yes (unless already destroyed) | synthesized | yes (unless already destroyed) | synthesized |
 | Delivery guarantee | none | TCP-level only | none | stream-dependent | n/a |
 
 ## Closing

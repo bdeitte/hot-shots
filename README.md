@@ -417,6 +417,8 @@ An `errorHandler` that unconditionally sends a metric on every call has no termi
 
 An `errorHandler` that throws is contained rather than propagated, on every path that reaches it, including the socket `error` event. hot-shots reports the throw with `console.error`, and the remaining sends in the batch still get their callbacks, so one bad handler cannot abandon a `close()` or leave sends uncalled.
 
+In TypeScript, the error given to an `errorHandler` or a send callback is typed as `SendError`, an `Error` carrying the optional `code` and `hotShotsCode` properties, so both can be read without a cast.
+
 In unbuffered mode (`maxBufferSize === 0`), if you specify both an `errorHandler` and a per-metric callback, the callback takes precedence. In buffered mode (`maxBufferSize > 0`), per-metric callbacks do not receive send errors from periodic or overflow-driven flushes — those errors go to `errorHandler` (or are logged). See [Callback semantics](#callback-semantics) for details.
 
 ### Callback semantics
