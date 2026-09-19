@@ -16,6 +16,9 @@ jobs:
   build:
 
     strategy:
+      # Report every OS/Node combination on a failing run, instead of cancelling
+      # the siblings the moment one job fails.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
         node-version: [20.x, 22.x, 24.x, 26.x]
