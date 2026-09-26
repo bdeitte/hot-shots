@@ -132,6 +132,155 @@ describe('#errorHandling', () => {
     });
   });
 
+  it('should close cleanly when errorHandler is assigned after construction', done => {
+    const client = createHotShotsClient({ host: '127.0.0.1', port: 8125 }, 'client');
+    // eslint-disable-next-line no-empty-function
+    client.errorHandler = () => {};
+    // This test closes the client itself.
+    statsd = null;
+    client.close(err => {
+      assert.ok(!err, `close should not fail, got ${err && err.message}`);
+      done();
+    });
+  });
+
+  it('should replace a tcp socket when errorHandler is assigned after construction', done => {
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp' }), 'client');
+      const seen = [];
+      statsd.errorHandler = err => seen.push(err.message);
+      setTimeout(() => {
+        const initialSocket = statsd.socket;
+        // Old enough to clear the graceful-restart rate limit.
+        initialSocket.createdAt = Date.now() - 60000;
+        // ECONNRESET is a replaceable tcp error on every platform, including
+        // Windows, where badTCPConnectionCode() has no mapping.
+        initialSocket.emit('error', internalError('ECONNRESET', 'bad connection'));
+        statsd.socket.emit('error', new Error('after replacement'));
+        ignoreErrors = true;
+        assert.notStrictEqual(statsd.socket, initialSocket, 'the socket should have been replaced');
+        assert.ok(seen.includes('after replacement'),
+          `errorHandler should see errors on the new socket, saw ${JSON.stringify(seen)}`);
+        done();
+      }, 20);
+    });
+  });
+
+  it('should route socket errors to an errorHandler assigned after construction', done => {
+    statsd = createHotShotsClient({ host: '127.0.0.1', port: 8125 }, 'client');
+    const seen = [];
+    statsd.errorHandler = err => seen.push(err.message);
+    statsd.socket.emit('error', new Error('late handler'));
+    assert.deepStrictEqual(seen, ['late handler']);
+    done();
+  });
+
+  it('should detach the socket listener when a late errorHandler is removed', done => {
+    const originalConsoleError = console.error;
+    const logged = [];
+    statsd = createHotShotsClient({ host: '127.0.0.1', port: 8125 }, 'client');
+    const seen = [];
+    statsd.errorHandler = err => seen.push(err.message);
+    statsd.errorHandler = undefined;
+    console.error = msg => logged.push(String(msg));
+    try {
+      statsd.socket.emit('error', new Error('handler gone'));
+    } finally {
+      console.error = originalConsoleError;
+    }
+    // Back to the state of a client built without an errorHandler: only the
+    // transport's default debug listener remains.
+    assert.deepStrictEqual(seen, [], 'the removed handler must not be called');
+    assert.deepStrictEqual(logged, [], `nothing should be logged, saw ${JSON.stringify(logged)}`);
+    done();
+  });
+
+  it('should attach a late errorHandler to a socket that sendMessage recreates', done => {
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp' }), 'client');
+      statsd.socket.close();
+      statsd.socket = null;
+      const seen = [];
+      // Assigned while there is no socket, so the setter has nothing to attach to.
+      statsd.errorHandler = err => seen.push(err.message);
+      // This send finds the socket missing: it recreates it, and still fails.
+      statsd.increment('recreate.socket');
+      assert.ok(statsd.socket, 'sendMessage should have recreated the socket');
+      statsd.socket.emit('error', new Error('on the recreated socket'));
+      ignoreErrors = true;
+      assert.ok(seen.includes('on the recreated socket'),
+        `errorHandler should see errors on the recreated socket, saw ${JSON.stringify(seen)}`);
+      done();
+    });
+  });
+
+  it('should detach a child listener from its replacement socket when the child clears errorHandler', done => {
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp' }), 'client');
+      let childCalls = 0;
+      const child = statsd.childClient({ errorHandler: () => { childCalls++; } });
+      setTimeout(() => {
+        const sharedSocket = statsd.socket;
+        sharedSocket.createdAt = Date.now() - 60000;
+        sharedSocket.send = (buf, callback) => setImmediate(() => callback({ code: 'ECONNRESET' }));
+        child.increment('replace.me', () => {
+          const childSocket = child.socket;
+          assert.notStrictEqual(childSocket, sharedSocket, 'the child should have replaced its socket');
+          childCalls = 0;
+          child.errorHandler = undefined;
+          const originalConsoleError = console.error;
+          const logged = [];
+          console.error = msg => logged.push(String(msg));
+          try {
+            childSocket.emit('error', new Error('after clearing'));
+          } finally {
+            console.error = originalConsoleError;
+          }
+          ignoreErrors = true;
+          child.close();
+          assert.strictEqual(childCalls, 0, 'the cleared handler must not be called');
+          assert.ok(!logged.some(msg => msg.includes('hot-shots: socket error')),
+            `the child's listener should be detached, saw ${JSON.stringify(logged)}`);
+          done();
+        });
+      }, 20);
+    });
+  });
+
+  it('should keep errorHandler on the old socket when socket replacement fails', done => {
+    const originalConnect = net.connect;
+    const seen = [];
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, {
+        protocol: 'tcp',
+        errorHandler(err) {
+          seen.push(err.message);
+        }
+      }), 'client');
+      setTimeout(() => {
+        const initialSocket = statsd.socket;
+        net.connect = () => {
+          throw new Error('connect refused');
+        };
+        // Old enough to clear the graceful-restart rate limit.
+        initialSocket.createdAt = Date.now() - 60000;
+        try {
+          // ECONNRESET is replaceable on every platform, so the failed
+          // replacement is really attempted on Windows too.
+          initialSocket.emit('error', internalError('ECONNRESET', 'bad connection'));
+        } finally {
+          net.connect = originalConnect;
+        }
+        initialSocket.emit('error', new Error('later socket error'));
+        ignoreErrors = true;
+        assert.strictEqual(statsd.socket, initialSocket, 'the failed replacement should leave the old socket in place');
+        assert.ok(seen.includes('later socket error'),
+          `errorHandler should still see errors on the old socket, saw ${JSON.stringify(seen)}`);
+        done();
+      }, 20);
+    });
+  });
+
   it('should contain an errorHandler that throws while the constructor reports a bad protocol', () => {
     // The constructor reports an unsupported protocol through errorHandler
     // rather than throwing. A handler that throws from there must not turn a
@@ -538,6 +687,28 @@ describe('#errorHandling', () => {
               }, 5);
             });
           });
+
+          it('should not re-create the socket from a failed send with tcpGracefulErrorHandling set to false', (done) => {
+            const code = badTCPConnectionCode();
+            server = createServer('tcp', opts => {
+              const client = statsd = createHotShotsClient(Object.assign(opts, {
+                protocol: 'tcp',
+                tcpGracefulErrorHandling: false,
+                // eslint-disable-next-line no-empty-function
+                errorHandler() {}
+              }), 'client');
+              setTimeout(() => {
+                const initialSocket = client.socket;
+                // Old enough to clear the graceful-restart rate limit.
+                initialSocket.createdAt = Date.now() - 60000;
+                initialSocket.send = (buf, callback) => setImmediate(() => callback(internalError(code, 'bad connection')));
+                client.increment('metric.name', () => {
+                  assert.strictEqual(client.socket, initialSocket, 'the socket must not be replaced');
+                  done();
+                });
+              }, 5);
+            });
+          });
         });
       }
 
@@ -788,6 +959,29 @@ describe('#errorHandling', () => {
             });
           });
 
+          it('should not re-create the socket from a failed send with udsGracefulErrorHandling set to false', (done) => {
+            const code = badUDSConnectionCode();
+            server = createServer('uds_broken', opts => {
+              const client = statsd = createHotShotsClient(Object.assign(opts, {
+                protocol: 'uds',
+                udsGracefulErrorHandling: false,
+                maxBufferSize: 0,
+                // eslint-disable-next-line no-empty-function
+                errorHandler() {}
+              }), 'client');
+              setTimeout(() => {
+                const initialSocket = client.socket;
+                // Old enough to clear the graceful-restart rate limit.
+                initialSocket.createdAt = Date.now() - 60000;
+                initialSocket.send = (buf, callback) => setImmediate(() => callback(internalError(code, 'bad connection')));
+                client.increment('metric.name', () => {
+                  assert.strictEqual(client.socket, initialSocket, 'the socket must not be replaced');
+                  done();
+                });
+              }, 5);
+            });
+          });
+
           describe('#udsRetry', () => {
             /**
              * Create UDS test server
@@ -933,6 +1127,128 @@ describe('#errorHandling', () => {
                     done();
                   });
                 });
+              }, 50);
+            });
+
+            it('should not call back a non-retryable uds failure on the calling frame', (done) => {
+              const socketPath = path.join(__dirname, 'test-sync-fail.sock');
+              const udsServer = createUdsTestServer(socketPath);
+              if (!udsServer) {
+                return done();
+              }
+
+              // unix-dgram calls its send callback synchronously. Mirror that
+              // with an error that is not retried.
+              const unixDgramModule = require('unix-dgram'); // eslint-disable-line global-require
+              const realCreateSocket = unixDgramModule.createSocket;
+              unixDgramModule.createSocket = function(type) {
+                const realSocket = realCreateSocket(type);
+                realSocket.send = function(buffer, callback) {
+                  callback(internalError('EBADF', 'send EBADF'));
+                };
+                return realSocket;
+              };
+              const client = createHotShotsClient({ protocol: 'uds', path: socketPath, maxBufferSize: 0 }, 'client');
+              unixDgramModule.createSocket = realCreateSocket;
+
+              const state = { onCallingFrame: true, ranOnCallingFrame: null, error: null };
+              client.increment('sync.fail', err => {
+                state.error = err;
+                state.ranOnCallingFrame = state.onCallingFrame;
+              });
+              state.onCallingFrame = false;
+
+              setImmediate(() => {
+                // The uds transport emits 'close' synchronously inside close(),
+                // so assert on a later tick: a throw here would escape into
+                // _close() and call this callback a second time.
+                client.close(() => setImmediate(() => {
+                  udsServer.cleanup();
+                  assert.ok(state.error, 'the send should fail');
+                  assert.strictEqual(state.ranOnCallingFrame, false,
+                    'the failure callback must not run on the calling frame');
+                  done();
+                }));
+              });
+            });
+
+            it('should call a uds send callback once when it throws on success', (done) => {
+              const socketPath = path.join(__dirname, 'test-sync-throw.sock');
+              const udsServer = createUdsTestServer(socketPath);
+              if (!udsServer) {
+                return done();
+              }
+
+              const unixDgramModule = require('unix-dgram'); // eslint-disable-line global-require
+              const realCreateSocket = unixDgramModule.createSocket;
+              unixDgramModule.createSocket = function(type) {
+                const realSocket = realCreateSocket(type);
+                realSocket.send = function(buffer, callback) {
+                  callback();
+                };
+                return realSocket;
+              };
+              const client = createHotShotsClient({ protocol: 'uds', path: socketPath, maxBufferSize: 0 }, 'client');
+              unixDgramModule.createSocket = realCreateSocket;
+
+              const originalConsoleError = console.error;
+              const logged = [];
+              console.error = msg => logged.push(String(msg));
+              let calls = 0;
+              client.increment('throws', () => {
+                calls++;
+                throw new Error('callback boom');
+              });
+
+              setImmediate(() => {
+                console.error = originalConsoleError;
+                // Asserted on a later tick; see the calling-frame test above.
+                client.close(() => setImmediate(() => {
+                  udsServer.cleanup();
+                  assert.strictEqual(calls, 1, `the callback should run once, ran ${calls} times`);
+                  assert.ok(logged.some(msg => msg.includes('callback boom')),
+                    `the throw should be reported, saw ${JSON.stringify(logged)}`);
+                  done();
+                }));
+              });
+            });
+
+            it('should call back once when uds retries are exhausted', (done) => {
+              const socketPath = path.join(__dirname, 'test-retry-exhaust.sock');
+              const udsServer = createUdsTestServer(socketPath);
+              if (!udsServer) {
+                return done();
+              }
+
+              const unixDgramModule = require('unix-dgram'); // eslint-disable-line global-require
+              const realCreateSocket = unixDgramModule.createSocket;
+              unixDgramModule.createSocket = function(type) {
+                const realSocket = realCreateSocket(type);
+                realSocket.send = function(buffer, callback) {
+                  callback(internalError('CONGESTION', 'congestion'));
+                };
+                return realSocket;
+              };
+              const client = createHotShotsClient({
+                protocol: 'uds',
+                path: socketPath,
+                maxBufferSize: 0,
+                udsRetryOptions: { retries: 1, retryDelayMs: 1, maxRetryDelayMs: 1 }
+              }, 'client');
+              unixDgramModule.createSocket = realCreateSocket;
+
+              const errors = [];
+              client.increment('exhausted', err => errors.push(err));
+
+              setTimeout(() => {
+                // Asserted on a later tick; see the calling-frame test above.
+                client.close(() => setImmediate(() => {
+                  udsServer.cleanup();
+                  assert.strictEqual(errors.length, 1, `expected one callback, saw ${errors.length}`);
+                  assert.ok(errors[0] && errors[0].message.includes('congestion'),
+                    `expected the congestion error, saw ${errors[0] && errors[0].message}`);
+                  done();
+                }));
               }, 50);
             });
 

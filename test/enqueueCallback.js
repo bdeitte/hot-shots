@@ -125,4 +125,108 @@ describe('#enqueueCallback', () => {
       });
     });
   });
+
+  it('delivers a missing-socket failure on a later tick', done => {
+    server = createServer('udp', opts => {
+      const client = createHotShotsClient(opts, 'client');
+      client.socket.close();
+      client.socket = null;
+      // This test closes the client itself.
+      statsd = null;
+      const state = { onCallingFrame: true, ranOnCallingFrame: null, error: null };
+      client.increment('no.socket', err => {
+        state.error = err;
+        state.ranOnCallingFrame = state.onCallingFrame;
+      });
+      state.onCallingFrame = false;
+      setImmediate(() => {
+        client.close(() => {
+          assert.ok(state.error && state.error.message.includes('Socket not created properly'),
+            `expected the missing-socket error, saw ${state.error && state.error.message}`);
+          assert.strictEqual(state.ranOnCallingFrame, false,
+            'the failure callback must not run on the calling frame');
+          done();
+        });
+      });
+    });
+  });
+
+  it('delivers a dnsError on a later tick', done => {
+    server = createServer('udp', opts => {
+      const client = createHotShotsClient(opts, 'client');
+      // This test closes the client itself.
+      statsd = null;
+      const dnsError = new Error('dns boom');
+      client.dnsError = dnsError;
+      const state = { onCallingFrame: true, ranOnCallingFrame: null, error: null };
+      client.increment('dns.error', err => {
+        state.error = err;
+        state.ranOnCallingFrame = state.onCallingFrame;
+      });
+      state.onCallingFrame = false;
+      setImmediate(() => {
+        client.dnsError = null;
+        client.close(() => {
+          assert.strictEqual(state.error, dnsError);
+          assert.strictEqual(state.ranOnCallingFrame, false,
+            'the dnsError callback must not run on the calling frame');
+          done();
+        });
+      });
+    });
+  });
+
+  it('falls back to console.error when errorHandler is cleared before a deferred missing-socket failure', done => {
+    server = createServer('udp', opts => {
+      const calls = [];
+      const client = createHotShotsClient(Object.assign(opts, { errorHandler: err => calls.push(err) }), 'client');
+      // This test closes the client itself.
+      statsd = null;
+      client.socket.close();
+      client.socket = null;
+      const originalConsoleError = console.error;
+      const logged = [];
+      console.error = msg => logged.push(String(msg));
+      client.increment('no.socket');
+      client.errorHandler = undefined;
+      setImmediate(() => {
+        console.error = originalConsoleError;
+        client.close(() => {
+          assert.deepStrictEqual(calls, [], 'the cleared handler must not be called');
+          assert.ok(logged.some(msg => msg.includes('Socket not created properly')),
+            `the failure should reach console.error, saw ${JSON.stringify(logged)}`);
+          assert.ok(!logged.some(msg => msg.includes('errorHandler threw')),
+            `no handler threw, saw ${JSON.stringify(logged)}`);
+          done();
+        });
+      });
+    });
+  });
+
+  it('falls back to console.error when errorHandler is cleared before a deferred dnsError', done => {
+    server = createServer('udp', opts => {
+      const calls = [];
+      const client = createHotShotsClient(Object.assign(opts, { errorHandler: err => calls.push(err) }), 'client');
+      // This test closes the client itself.
+      statsd = null;
+      client.dnsError = new Error('dns boom');
+      const originalConsoleError = console.error;
+      const logged = [];
+      console.error = msg => logged.push(String(msg));
+      client.increment('dns.error');
+      client.errorHandler = undefined;
+      setImmediate(() => {
+        console.error = originalConsoleError;
+        client.dnsError = null;
+        client.close(() => {
+          assert.deepStrictEqual(calls, [], 'the cleared handler must not be called');
+          assert.ok(logged.some(msg => msg.includes('dns boom')),
+            `the failure should reach console.error, saw ${JSON.stringify(logged)}`);
+          assert.ok(!logged.some(msg => msg.includes('errorHandler threw')),
+            `no handler threw, saw ${JSON.stringify(logged)}`);
+          done();
+        });
+      });
+    });
+  });
 });

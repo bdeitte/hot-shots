@@ -29,7 +29,7 @@ flowchart TD
     AGG -.->|"flush interval"| E
     C --> D["send<br/>merge tags, append datadog<br/>container/external/cardinality fields"]
     D --> E["_send"]
-    E -->|"this.dnsError"| ERR1["callback / errorHandler / throw"]
+    E -->|"this.dnsError<br/>(set only by callers)"| ERR1["later tick: callback / errorHandler<br/>else throw"]
     E -->|"mock client"| MB["mockBuffer.push"]
     E -->|"maxBufferSize === 0"| SM["sendMessage"]
     E -->|"maxBufferSize > 0"| Q["enqueue → bufferHolder.buffer<br/>callback fires synchronously ('queued')"]
@@ -44,10 +44,11 @@ flowchart TD
     T --> MOCK["mock"]
 ```
 
-sendMessage is where every send converges. It recreates a missing socket (tcp/uds only)
-and lets UDP refuse a send while DNS is unusable. It also tracks messagesInFlight so
-close() can drain, records telemetry bytes, triggers TCP/UDS socket replacement, and
-routes errors:
+sendMessage is where every send converges. It recreates a missing socket (tcp/uds only),
+though the send that found it missing still fails. It refuses a cacheDns hostname send
+once close() has latched the DNS queue shut, before counting it in flight. It also tracks
+messagesInFlight so close() can drain, records telemetry bytes, triggers TCP/UDS socket
+replacement, and routes errors:
 
 ```mermaid
 flowchart LR
@@ -64,7 +65,7 @@ These hold for every transport and explain most of the non-obvious code.
 
 | Invariant | Why |
 |---|---|
-| A send failure never calls back on the send's own stack frame (failLater / setImmediate) | The documented errorHandler pattern is "emit a metric when a send fails". An inline callback would recurse into the same failing path until RangeError |
+| A send failure never calls back on the send's own stack frame (failLater / setImmediate) | The documented errorHandler pattern is "emit a metric when a send fails". An inline callback would recurse into the same failing path until RangeError. unix-dgram calls its send callback synchronously, so the uds transport routes its failures through failLater too |
 | Every queued send is called back exactly once | The drain in close() waits on messagesInFlight, and a swallowed callback hangs it |
 | A user callback that throws never escapes a fan-out (invokeCallback) | Batch flushes would otherwise abandon the rest of the batch, or the close itself |
 | In-memory queueing is capped in every transport | Each transport can otherwise accumulate without bound when its peer is gone |
@@ -125,9 +126,11 @@ stateDiagram-v2
     Warm --> Refreshing: a send past the TTL (sent on the stale address)
     Refreshing --> Warm: success, new address
     Refreshing --> WarmCooldown: failure, keep stale address and report once per streak
-    WarmCooldown --> Refreshing: cooldown elapsed
+    WarmCooldown --> Refreshing: cooldown elapsed, a send arrives
     Warm --> Cancelled: close() / transport close
     Resolving --> Cancelled: close() cancels the queue
+    Cooldown --> Cancelled: close()
+    WarmCooldown --> Cancelled: close()
     Cancelled --> [*]
 ```
 
@@ -148,7 +151,9 @@ Behaviors:
   callback to carry an error. hot-shots emits the failure on the socket instead, once per
   contiguous failure streak, and logs it only if no user 'error' listener exists.
 - **The cancelled latch is permanent.** After close(), later sends fail rather than
-  re-queueing into a queue nothing will flush again.
+  re-queueing into a queue nothing will flush again. That includes a warm client with a
+  cached address: sendMessage checks isDnsSendBlocked() and refuses every hostname send
+  with HOTSHOTS_DNS_CLOSED. IP-literal hosts and non-cacheDns clients are not latched.
 - **A background refresh cannot be cancelled.** getaddrinfo is neither unref-able nor
   abortable, so a refresh started just before close() delays process exit.
 
@@ -208,14 +213,15 @@ sequenceDiagram
 ```
 
 At most one replacement per second. If the new transport cannot be created, the old socket
-is left intact and the error is reported.
+is left in place with its errorHandler listener, and the error is reported. Setting
+tcpGracefulErrorHandling or udsGracefulErrorHandling to false turns off both paths below.
 
 Two paths reach protocolErrorHandler, and they differ on child clients:
 
 | Path | Runs for children? |
 |---|---|
 | The socket's own 'error' listener, installed by maybeAddProtocolErrorHandler | No. A child shares a socket it did not create, so it never installs one |
-| The send callback in sendMessage, for any tcp/uds client with a callback or an errorHandler | Yes. A child that replaces the socket updates only its own this.socket, leaving the parent pointed at the old one |
+| The send callback in sendMessage, for any tcp/uds client with a callback or an errorHandler | Yes. A child that replaces the socket updates only its own this.socket, leaving the parent pointed at the old one, which the replacement has just closed |
 
 Separately, a missing this.socket is recreated inline by sendMessage, again for tcp and
 uds only.
@@ -229,7 +235,12 @@ reports through errorHandler or console.error.
 **Buffering is on by default.** maxBufferSize defaults to 8192 (Datadog's
 recommendation) and is hard-capped there. A per-metric callback is therefore a *queued*
 signal, not a delivery signal. And **sends retry with backoff**, because EAGAIN
-and unix-dgram's congestion sentinel mean a full receiver buffer, which is recoverable:
+and unix-dgram's congestion sentinel mean a full receiver buffer, which is recoverable.
+unix-dgram's native send turns EAGAIN, EWOULDBLOCK and ENOBUFS into that sentinel
+(err.code === 1, message 'congestion'), so in practice the congestion check is what
+triggers a retry. unix-dgram calls the send callback synchronously, inside send(), so a
+final failure goes through failLater rather than calling back on the send's own stack
+frame:
 
 ```mermaid
 flowchart TD
@@ -238,7 +249,7 @@ flowchart TD
     W -->|"EAGAIN / congestion"| R{"attempt < retries (3)?"}
     R -->|yes| B["setTimeout(min(100 * 2^attempt, 1000))<br/>→ retry"]
     B --> W
-    R -->|no| F["cb(err)"]
+    R -->|no| F["failLater → cb(err)"]
     W -->|"other error"| F
     W -.->|"throws synchronously"| FL["failLater → cb(err)"]
 ```
@@ -285,8 +296,8 @@ real transport would.
 | Connection | none | persistent | connected datagram | caller's stream | none |
 | Newline-terminated | no | yes | no | yes | n/a |
 | Default maxBufferSize | 0 | 0 | 8192 (hard cap) | 0 | 0 |
-| DNS | per-packet, or cached with cacheDns | at connect only, and none at all without a host | n/a | n/a | n/a |
-| Backpressure guard | cacheDns lookup queue (1000) | maxPendingWriteBytes unflushed for a turn | retry/backoff | maxPendingWriteBytes unflushed for a turn | none |
+| DNS | per-packet, or cached with cacheDns | at each connect (including a replacement), none for an IP literal or no host | n/a | n/a | n/a |
+| Backpressure guard | cacheDns lookup queue (1000) | maxPendingWriteBytes unflushed for a turn | pending retry queue (1000) | maxPendingWriteBytes unflushed for a turn | none |
 | Retries | none | none | EAGAIN / congestion, tuned by udsRetryOptions | none | none |
 | Socket auto-replacement | no | yes | yes | no | no |
 | Recreated by sendMessage if missing | no | yes | yes | no | no |
@@ -332,8 +343,12 @@ sequenceDiagram
   DNS lookup, and a write behind a connect that never completes. It is much larger than the
   drain budget on purpose, since a first DNS lookup or TCP connect taking a few hundred ms
   is ordinary.
-- **A flush error outside CLOSE_CONTINUE_CODES aborts the close.** _close() never runs and
-  the socket stays open, so a caller must not assume a closed socket on error.
+- A flush error outside CLOSE_CONTINUE_CODES aborts the close. _close() never runs and
+  the socket stays open, so a caller must not assume a closed socket on error. A failed
+  DNS lookup is not such an error. It carries hotShotsCode HOTSHOTS_DNS_LOOKUP_FAILED,
+  which is in CLOSE_CONTINUE_CODES, so a resolver outage during the final flush still
+  closes the socket. That holds for a caller-supplied udpSocketOptions.lookup too,
+  whose failures hot-shots tags on the way through.
 - **DNS cancellation runs at finish()**, so sends whose lookup resolves within the budget
   are preserved and their callbacks cannot drive messagesInFlight negative afterwards. The
   flush guard is the one exception: it cancels early, because the flush is already stuck.
@@ -352,6 +367,7 @@ sequenceDiagram
 |---|---|---|---|
 | HOTSHOTS_DNS_QUEUE_FULL | udp (cacheDns) | 1000 sends already queued behind a lookup; oldest dropped | queue |
 | HOTSHOTS_DNS_COOLDOWN (on hotShotsCode; code stays the resolver's) | udp (cacheDns) | a recent lookup failed and the next attempt is not due yet | queue |
+| HOTSHOTS_DNS_LOOKUP_FAILED (on hotShotsCode; code stays the resolver's) | udp | the lookup itself failed, cold cacheDns or per-packet | writer |
 | HOTSHOTS_DNS_CANCELLED | udp (cacheDns) | queued mid-lookup, cancelled by close() | queue |
 | HOTSHOTS_DNS_CLOSED | udp (cacheDns) | send arrived after close() latched the queue shut | queue |
 | HOTSHOTS_UDS_RETRY_CANCELLED | uds | a retry was waiting out its backoff when close() ran | queue |
@@ -365,4 +381,5 @@ sequenceDiagram
 The seven queue-bucket codes are REFUSED_CODES: the client turned the send away, or, for the
 abandoned uds retry, stopped retrying it. Everything else falls into the writer bucket,
 including a DNS lookup that failed before any packet was written. CLOSE_CONTINUE_CODES
-adds the flush timeout, giving the set of errors that must not abort close().
+adds the flush timeout and HOTSHOTS_DNS_LOOKUP_FAILED, giving the set of errors that must
+not abort close().

@@ -284,4 +284,26 @@ describe('#typescript', function () {
       ].join('\n')
     );
   });
+
+  it('should compile assigning and clearing errorHandler after construction', () => {
+    fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ type: 'module' }));
+    compileTs(
+      {
+        compilerOptions: {
+          target: 'esnext',
+          module: 'NodeNext',
+          moduleResolution: 'NodeNext',
+          strict: true,
+          noEmit: true,
+        },
+      },
+      [
+        'import { StatsD, SendError } from \'hot-shots\';',
+        'const client = new StatsD({ mock: true });',
+        'client.errorHandler = (err: SendError): void => { console.error(err.hotShotsCode); };',
+        'client.errorHandler = undefined;',
+        'client.close();',
+      ].join('\n')
+    );
+  });
 });

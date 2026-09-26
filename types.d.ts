@@ -9,10 +9,10 @@ export type Cardinality = 'none' | 'low' | 'orchestrator' | 'high';
  *
  * `code` carries the underlying transport or resolver code, such as `ENOTFOUND`
  * or `ERR_SOCKET_DESTROYED`, and for most refusals holds the `HOTSHOTS_*` code
- * directly. `hotShotsCode` marks a send that hot-shots refused itself, and is
- * set only where `code` had to stay the resolver's own value: a `cacheDns`
- * cooldown refusal keeps `ENOTFOUND` or `EAI_AGAIN` on `code` so existing
- * handlers keep matching, and carries `HOTSHOTS_DNS_COOLDOWN` here.
+ * directly. `hotShotsCode` is set only where `code` has to stay the resolver's
+ * own value, so existing handlers keep matching: `HOTSHOTS_DNS_COOLDOWN` on a
+ * send refused during a `cacheDns` cooldown, and `HOTSHOTS_DNS_LOOKUP_FAILED`
+ * on a send whose DNS lookup failed.
  */
 export interface SendError extends Error {
   code?: string;
@@ -239,6 +239,8 @@ export class StatsD {
   check(name: string, status: DatadogChecksValues, options?: CheckOptions, tags?: Tags, callback?: StatsCb): void;
 
   public CHECKS: DatadogChecks;
+  /** Can be assigned or cleared after construction; the socket listener follows it. */
+  public errorHandler?: (err: SendError) => void;
   public mockBuffer?: string[];
   public socket: dgram.Socket;
 }

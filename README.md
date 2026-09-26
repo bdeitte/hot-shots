@@ -101,7 +101,9 @@ Parameters (specified as one object passed into hot-shots):
   has never resolved an address fails its sends. Those failures keep the
   resolver's own error code, such as `ENOTFOUND`, so an existing `errorHandler`
   keeps matching through a failure streak; the refusal is marked with
-  `hotShotsCode` set to `HOTSHOTS_DNS_COOLDOWN`. A
+  `hotShotsCode` set to `HOTSHOTS_DNS_COOLDOWN`. A send whose lookup actually
+  failed also keeps the resolver's code and carries `hotShotsCode` set to
+  `HOTSHOTS_DNS_LOOKUP_FAILED`. Neither stops `close()` from closing the socket. A
   successful lookup resets the streak. A failed refresh is reported once per
   failure streak via `errorHandler`, or `console.error` if none is set.
   hot-shots pins lookups to the socket's address family, so a `udp4` client
@@ -123,7 +125,7 @@ Parameters (specified as one object passed into hot-shots):
 * `bufferFlushInterval`: If buffering is in use, this is the time in ms to always flush any buffered metrics. `default: 1000`
 * `telegraf`:    Use Telegraf's StatsD line protocol, which is slightly different than the rest `default: false`
 * `sampleRate`:    Sends only a sample of data to StatsD for all StatsD methods.  Can be overridden at the method level. `default: 1`
-* `errorHandler`: A function with one argument. It is called to handle various errors. `default: none`, errors are thrown/logger to console
+* `errorHandler`: A function with one argument. It is called to handle various errors. `default: none`, errors are thrown/logger to console. It can also be assigned or cleared after construction (`client.errorHandler = fn`), and socket errors follow the change.
 * `useDefaultRoute`: Use the default interface on a Linux system. Useful when running in containers
 * `protocol`: Use `tcp` option for TCP protocol, or `uds` for the Unix Domain Socket protocol or `stream` for the raw stream. Defaults to `udp` otherwise.
 * `path`: Used only when the protocol is `uds`. Defaults to `/var/run/datadog/dsd.socket`.

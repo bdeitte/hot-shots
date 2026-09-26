@@ -5,6 +5,7 @@ const dns = require('dns');
 const dnsCounter = require('./helpers/dnsCounter.js');
 const EventEmitter = require('events');
 const helpers = require('./helpers/helpers.js');
+const net = require('net');
 const sinon = require('sinon');
 
 const closeAll = helpers.closeAll;
@@ -2246,6 +2247,116 @@ describe('#udpDns', () => {
             done();
           });
         }, 50);
+      });
+    });
+
+    it('still closes the socket when a cold lookup fails during the final flush', done => {
+      server = createServer(udpServerType, opts => {
+        dns.lookup = (host, options, callback) => setImmediate(() => {
+          const err = new Error('getaddrinfo ENOTFOUND localhost');
+          err.code = 'ENOTFOUND';
+          callback(err);
+        });
+        const reported = [];
+        const statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
+          cacheDns: true,
+          maxBufferSize: 1024,
+          bufferFlushInterval: 100000,
+          errorHandler: err => reported.push(err)
+        }), 'client');
+        const state = { closed: false };
+        const realSocketClose = statsd.socket.close.bind(statsd.socket);
+        statsd.socket.close = () => {
+          state.closed = true;
+          realSocketClose();
+        };
+
+        // Nothing has resolved yet, so the final flush starts the cold lookup.
+        statsd.increment('buffered.before.first.lookup');
+        statsd.close(closeError => {
+          assert.ok(!closeError, `close should not fail on a failed lookup, got ${closeError && closeError.message}`);
+          assert.ok(state.closed, 'the socket must be closed after a failed cold lookup');
+          const failure = reported.find(err => err.code === 'ENOTFOUND');
+          assert.ok(failure, `errorHandler should see the resolver's code, saw ${JSON.stringify(reported.map(e => e.code))}`);
+          assert.strictEqual(failure.hotShotsCode, 'HOTSHOTS_DNS_LOOKUP_FAILED');
+          done();
+        });
+      });
+    });
+
+    it('also closes a non-cacheDns client whose per-packet lookup fails during the final flush', done => {
+      server = createServer(udpServerType, opts => {
+        dns.lookup = (host, options, callback) => setImmediate(() => {
+          const err = new Error('getaddrinfo ENOTFOUND localhost');
+          err.code = 'ENOTFOUND';
+          callback(err);
+        });
+        const reported = [];
+        const statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
+          maxBufferSize: 1024,
+          bufferFlushInterval: 100000,
+          errorHandler: err => reported.push(err)
+        }), 'client');
+        const state = { closed: false };
+        const realSocketClose = statsd.socket.close.bind(statsd.socket);
+        statsd.socket.close = () => {
+          state.closed = true;
+          realSocketClose();
+        };
+
+        statsd.increment('buffered.before.lookup');
+        statsd.close(closeError => {
+          assert.ok(!closeError, `close should not fail on a failed lookup, got ${closeError && closeError.message}`);
+          assert.ok(state.closed, 'the socket must be closed after a failed lookup');
+          const failure = reported.find(err => err.code === 'ENOTFOUND');
+          assert.ok(failure, `errorHandler should see the resolver's code, saw ${JSON.stringify(reported.map(e => e.code))}`);
+          assert.strictEqual(failure.hotShotsCode, 'HOTSHOTS_DNS_LOOKUP_FAILED');
+          done();
+        });
+      });
+    });
+
+    it('also closes a client whose custom udpSocketOptions.lookup fails during the final flush', done => {
+      server = createServer(udpServerType, opts => {
+        const reported = [];
+        const statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
+          maxBufferSize: 1024,
+          bufferFlushInterval: 100000,
+          udpSocketOptions: {
+            type: 'udp4',
+            // dgram also looks up the IP-literal bind address before the
+            // first send, so a realistic lookup has to answer those itself.
+            lookup: (host, options, callback) => setImmediate(() => {
+              if (net.isIP(host)) {
+                callback(null, host, net.isIP(host));
+                return;
+              }
+              const err = new Error('custom lookup failed');
+              err.code = 'ENOTFOUND';
+              callback(err);
+            })
+          },
+          errorHandler: err => reported.push(err)
+        }), 'client');
+        const state = { closed: false };
+        const realSocketClose = statsd.socket.close.bind(statsd.socket);
+        statsd.socket.close = () => {
+          state.closed = true;
+          realSocketClose();
+        };
+
+        statsd.increment('buffered.before.custom.lookup');
+        statsd.close(closeError => {
+          assert.ok(!closeError, `close should not fail on a failed lookup, got ${closeError && closeError.message}`);
+          assert.ok(state.closed, 'the socket must be closed after a failed custom lookup');
+          const failure = reported.find(err => err.code === 'ENOTFOUND');
+          assert.ok(failure, `errorHandler should see the lookup's code, saw ${JSON.stringify(reported.map(e => e.code))}`);
+          assert.strictEqual(failure.hotShotsCode, 'HOTSHOTS_DNS_LOOKUP_FAILED');
+          done();
+        });
       });
     });
   });
