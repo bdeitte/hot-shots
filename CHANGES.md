@@ -3,6 +3,21 @@ CHANGELOG
 
 ## Unreleased
 
+* [@bdeitte](https://github.com/bdeitte) BREAKING: Drop Node.js 18 support, now requires Node.js >= 20.0.0
+* [@bdeitte](https://github.com/bdeitte) BREAKING: Default the `tcp` host to `127.0.0.1` instead of `localhost` when none is given ([#185](https://github.com/bdeitte/hot-shots/issues/185)). A `tcp` client with no `host` whose agent listens on `::1` only must now pass `host` explicitly. TCP also tries every resolved address family for an explicit hostname ([#222](https://github.com/bdeitte/hot-shots/issues/222))
+* [@bdeitte](https://github.com/bdeitte) Eliminate per-packet DNS lookups on UDP. A client with an IP `host`, or no `host`, now makes no `dns.lookup` calls and creates none of the APM spans they generate ([DataDog/dd-trace-js#2984](https://github.com/DataDog/dd-trace-js/issues/2984))
+* [@bdeitte](https://github.com/bdeitte) Improve `cacheDns`: concurrent sends share one lookup, a stale address keeps sending while a refresh runs, a failed lookup backs off instead of retrying on every send, lookups are pinned to the socket's address family, and the cold-start queue is bounded at 1000
+* [@bdeitte](https://github.com/bdeitte) Make `close()` complete instead of hanging. The final flush is bounded at 5 seconds, a stalled or failed DNS lookup, an incomplete `tcp` connect, an already-destroyed socket and a waiting `uds` retry no longer block it, and every queued send's callback fires exactly once
+* [@bdeitte](https://github.com/bdeitte) Bound the memory a stalled receiver can retain. Add `maxPendingWriteBytes` (default 1 MiB) to cap unflushed `tcp` and `stream` bytes, and cap `uds` sends waiting on a retry backoff at 1000
+* [@bdeitte](https://github.com/bdeitte) Give every refused send a `HOTSHOTS_*` error code and count it as `packets_dropped_queue`, and add `bytes_dropped_queue` to the Datadog telemetry. A `cacheDns` cooldown refusal keeps the resolver's code on `code` and carries `HOTSHOTS_DNS_COOLDOWN` on `hotShotsCode`, and a failed lookup carries `HOTSHOTS_DNS_LOOKUP_FAILED` there. See NETWORKING.md for each code and its bucket
+* [@bdeitte](https://github.com/bdeitte) Deliver send failures on a later tick, so an `errorHandler` that emits a metric on failure can no longer grow the stack without bound
+* [@bdeitte](https://github.com/bdeitte) Contain a user callback or `errorHandler` that throws, on every path that reaches one, reporting it with `console.error` and continuing. Such a throw previously could end the process
+* [@bdeitte](https://github.com/bdeitte) Add NETWORKING.md, documenting the send path and failure modes of each transport, and link it from README.md
+* [@bdeitte](https://github.com/bdeitte) Fix `tcpGracefulErrorHandling: false` and `udsGracefulErrorHandling: false` not stopping socket replacement after a failed send
+* [@bdeitte](https://github.com/bdeitte) Fix a failed `tcp`/`uds` socket replacement leaving the old socket without its `errorHandler`
+* [@bdeitte](https://github.com/bdeitte) Support assigning `errorHandler` after construction: socket errors now reach a handler set that way, and clearing it detaches it
+* [@bdeitte](https://github.com/bdeitte) Add a Docker perfTest harness (see `perfTest/README.md`), test Node.js 26 in CI, and refresh the lockfile
+
 ## 17.1.1 (2026-9-13)
 
 * [@erulabs](https://github.com/erulabs) Reuse formatted tag strings in `overrideTags` to avoid splitting and reconstructing values, while preserving tag sanitization, overrides, and duplicate-key ordering.

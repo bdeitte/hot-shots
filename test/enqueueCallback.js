@@ -43,6 +43,12 @@ describe('#enqueueCallback', () => {
     server = createServer('udp', opts => {
       statsd = createHotShotsClient(Object.assign(opts, {
         maxBufferSize: 8,
+        // Only the overflow-triggered flush is under test, and the assertion
+        // below counts sends. At the 1000ms default, an event-loop stall long
+        // enough to make this timer due lets it flush the buffered second
+        // metric in the timers phase, which runs before the check phase this
+        // assertion waits in. That is a second send and a spurious failure.
+        bufferFlushInterval: 60000,
         errorHandler: err => received.push(err),
       }), 'client');
 
@@ -57,8 +63,10 @@ describe('#enqueueCallback', () => {
       // errorHandler branch and the per-metric callback fires synchronously with no args.
       const originalSocketSend = statsd.socket.send.bind(statsd.socket);
       let socketSendCalls = 0;
+      const sendLog = [];
       statsd.socket.send = function (buf, cb) {
         socketSendCalls++;
+        sendLog.push({ n: socketSendCalls, buf: String(buf), stack: new Error('send').stack });
         if (socketSendCalls === 1) {
           // First send is the overflow-triggered flush — fail it via the real callback path.
           process.nextTick(() => cb(new Error('synthetic socket failure')));
@@ -79,7 +87,8 @@ describe('#enqueueCallback', () => {
       // with the async send error.
       setImmediate(() => {
         try {
-          assert.strictEqual(socketSendCalls, 1, 'overflow flush should have called socket.send once');
+          assert.strictEqual(socketSendCalls, 1,
+            `overflow flush should have called socket.send once; sends=${JSON.stringify(sendLog, null, 2)}`);
           assert.strictEqual(received.length, 1, 'errorHandler should receive the formatted send error');
           assert.ok(received[0].message.includes('synthetic socket failure'),
             `errorHandler message should include socket failure, got: ${received[0].message}`);
@@ -91,6 +100,132 @@ describe('#enqueueCallback', () => {
           statsd.socket.send = originalSocketSend;
         }
         done();
+      });
+    });
+  });
+
+  it('delivers a send failure on a later tick, not the calling frame', done => {
+    // A failure reported on the caller's own frame lets an errorHandler that
+    // resends grow the stack without bound against an always-failing
+    // transport, so every failure path hands off to a later tick.
+    server = createServer('udp', opts => {
+      const client = createHotShotsClient(opts, 'client');
+      client.close(() => {
+        // Already closed, so afterEach must not close it a second time.
+        statsd = null;
+        let onCallingFrame = true;
+        // The client is closed, so this send fails inside the transport.
+        client.increment('after.close', err => {
+          assert.ok(err, 'a send after close should fail');
+          assert.strictEqual(onCallingFrame, false,
+            'the failure callback must not run on the calling frame');
+          done();
+        });
+        onCallingFrame = false;
+      });
+    });
+  });
+
+  it('delivers a missing-socket failure on a later tick', done => {
+    server = createServer('udp', opts => {
+      const client = createHotShotsClient(opts, 'client');
+      client.socket.close();
+      client.socket = null;
+      // This test closes the client itself.
+      statsd = null;
+      const state = { onCallingFrame: true, ranOnCallingFrame: null, error: null };
+      client.increment('no.socket', err => {
+        state.error = err;
+        state.ranOnCallingFrame = state.onCallingFrame;
+      });
+      state.onCallingFrame = false;
+      setImmediate(() => {
+        client.close(() => {
+          assert.ok(state.error && state.error.message.includes('Socket not created properly'),
+            `expected the missing-socket error, saw ${state.error && state.error.message}`);
+          assert.strictEqual(state.ranOnCallingFrame, false,
+            'the failure callback must not run on the calling frame');
+          done();
+        });
+      });
+    });
+  });
+
+  it('delivers a dnsError on a later tick', done => {
+    server = createServer('udp', opts => {
+      const client = createHotShotsClient(opts, 'client');
+      // This test closes the client itself.
+      statsd = null;
+      const dnsError = new Error('dns boom');
+      client.dnsError = dnsError;
+      const state = { onCallingFrame: true, ranOnCallingFrame: null, error: null };
+      client.increment('dns.error', err => {
+        state.error = err;
+        state.ranOnCallingFrame = state.onCallingFrame;
+      });
+      state.onCallingFrame = false;
+      setImmediate(() => {
+        client.dnsError = null;
+        client.close(() => {
+          assert.strictEqual(state.error, dnsError);
+          assert.strictEqual(state.ranOnCallingFrame, false,
+            'the dnsError callback must not run on the calling frame');
+          done();
+        });
+      });
+    });
+  });
+
+  it('falls back to console.error when errorHandler is cleared before a deferred missing-socket failure', done => {
+    server = createServer('udp', opts => {
+      const calls = [];
+      const client = createHotShotsClient(Object.assign(opts, { errorHandler: err => calls.push(err) }), 'client');
+      // This test closes the client itself.
+      statsd = null;
+      client.socket.close();
+      client.socket = null;
+      const originalConsoleError = console.error;
+      const logged = [];
+      console.error = msg => logged.push(String(msg));
+      client.increment('no.socket');
+      client.errorHandler = undefined;
+      setImmediate(() => {
+        console.error = originalConsoleError;
+        client.close(() => {
+          assert.deepStrictEqual(calls, [], 'the cleared handler must not be called');
+          assert.ok(logged.some(msg => msg.includes('Socket not created properly')),
+            `the failure should reach console.error, saw ${JSON.stringify(logged)}`);
+          assert.ok(!logged.some(msg => msg.includes('errorHandler threw')),
+            `no handler threw, saw ${JSON.stringify(logged)}`);
+          done();
+        });
+      });
+    });
+  });
+
+  it('falls back to console.error when errorHandler is cleared before a deferred dnsError', done => {
+    server = createServer('udp', opts => {
+      const calls = [];
+      const client = createHotShotsClient(Object.assign(opts, { errorHandler: err => calls.push(err) }), 'client');
+      // This test closes the client itself.
+      statsd = null;
+      client.dnsError = new Error('dns boom');
+      const originalConsoleError = console.error;
+      const logged = [];
+      console.error = msg => logged.push(String(msg));
+      client.increment('dns.error');
+      client.errorHandler = undefined;
+      setImmediate(() => {
+        console.error = originalConsoleError;
+        client.dnsError = null;
+        client.close(() => {
+          assert.deepStrictEqual(calls, [], 'the cleared handler must not be called');
+          assert.ok(logged.some(msg => msg.includes('dns boom')),
+            `the failure should reach console.error, saw ${JSON.stringify(logged)}`);
+          assert.ok(!logged.some(msg => msg.includes('errorHandler threw')),
+            `no handler threw, saw ${JSON.stringify(logged)}`);
+          done();
+        });
       });
     });
   });

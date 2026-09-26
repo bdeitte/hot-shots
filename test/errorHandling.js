@@ -1,7 +1,10 @@
 const assert = require('assert');
+const constants = require('../lib/constants');
 const process = require('process');
 const path = require('path');
 const helpers = require('./helpers/helpers.js');
+const { EventEmitter } = require('events');
+const net = require('net');
 
 /**
  * Create an internal error with a code and message.
@@ -60,6 +63,294 @@ describe('#errorHandling', () => {
         assert.ok(false);
       });
     });
+  });
+
+  it('should contain an errorHandler that throws on the socket error event', done => {
+    // hot-shots registers errorHandler as the socket's 'error' listener, so a
+    // throw there escapes through EventEmitter.emit and ends the process.
+    const originalConsoleError = console.error;
+    const logged = [];
+    console.error = msg => logged.push(String(msg));
+
+    statsd = createHotShotsClient({
+      host: '127.0.0.1',
+      port: 8125,
+      errorHandler() {
+        throw new Error('listener boom');
+      }
+    }, 'client');
+
+    statsd.socket.emit('error', new Error('socket blew up'));
+
+    setImmediate(() => {
+      console.error = originalConsoleError;
+      const contained = logged.filter(msg => msg.includes('listener boom'));
+      assert.strictEqual(contained.length, 1,
+        `the throw should be reported once with console.error, saw ${JSON.stringify(logged)}`);
+      done();
+    });
+  });
+
+  it('should contain an errorHandler that throws when socket replacement fails', done => {
+    // Two calls on this path, both previously bare: createTransport reports the
+    // creation failure, then protocolErrorHandler reports that it could not
+    // replace the socket. Both run inside a socket 'error' emit.
+    const originalConsoleError = console.error;
+    const originalConnect = net.connect;
+    const logged = [];
+    console.error = msg => logged.push(String(msg));
+
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, {
+        protocol: 'tcp',
+        errorHandler() {
+          throw new Error('replacement boom');
+        }
+      }), 'client');
+
+      setTimeout(() => {
+        // Make the replacement transport fail to build.
+        net.connect = () => {
+          throw new Error('connect refused');
+        };
+        // Old enough to clear the graceful-restart rate limit.
+        statsd.socket.createdAt = Date.now() - 60000;
+        statsd.socket.emit('error', internalError(badTCPConnectionCode(), 'bad connection'));
+
+        setTimeout(() => {
+          net.connect = originalConnect;
+          console.error = originalConsoleError;
+          // The replacement failed, so protocolErrorHandler returned with the
+          // original socket still in place and the client closes normally.
+          ignoreErrors = true;
+          const contained = logged.filter(msg => msg.includes('replacement boom'));
+          assert.ok(contained.length >= 1,
+            `the throws should be reported with console.error, saw ${JSON.stringify(logged)}`);
+          done();
+        }, 20);
+      }, 20);
+    });
+  });
+
+  it('should close cleanly when errorHandler is assigned after construction', done => {
+    const client = createHotShotsClient({ host: '127.0.0.1', port: 8125 }, 'client');
+    // eslint-disable-next-line no-empty-function
+    client.errorHandler = () => {};
+    // This test closes the client itself.
+    statsd = null;
+    client.close(err => {
+      assert.ok(!err, `close should not fail, got ${err && err.message}`);
+      done();
+    });
+  });
+
+  it('should replace a tcp socket when errorHandler is assigned after construction', done => {
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp' }), 'client');
+      const seen = [];
+      statsd.errorHandler = err => seen.push(err.message);
+      setTimeout(() => {
+        const initialSocket = statsd.socket;
+        // Old enough to clear the graceful-restart rate limit.
+        initialSocket.createdAt = Date.now() - 60000;
+        // ECONNRESET is a replaceable tcp error on every platform, including
+        // Windows, where badTCPConnectionCode() has no mapping.
+        initialSocket.emit('error', internalError('ECONNRESET', 'bad connection'));
+        statsd.socket.emit('error', new Error('after replacement'));
+        ignoreErrors = true;
+        assert.notStrictEqual(statsd.socket, initialSocket, 'the socket should have been replaced');
+        assert.ok(seen.includes('after replacement'),
+          `errorHandler should see errors on the new socket, saw ${JSON.stringify(seen)}`);
+        done();
+      }, 20);
+    });
+  });
+
+  it('should route socket errors to an errorHandler assigned after construction', done => {
+    statsd = createHotShotsClient({ host: '127.0.0.1', port: 8125 }, 'client');
+    const seen = [];
+    statsd.errorHandler = err => seen.push(err.message);
+    statsd.socket.emit('error', new Error('late handler'));
+    assert.deepStrictEqual(seen, ['late handler']);
+    done();
+  });
+
+  it('should detach the socket listener when a late errorHandler is removed', done => {
+    const originalConsoleError = console.error;
+    const logged = [];
+    statsd = createHotShotsClient({ host: '127.0.0.1', port: 8125 }, 'client');
+    const seen = [];
+    statsd.errorHandler = err => seen.push(err.message);
+    statsd.errorHandler = undefined;
+    console.error = msg => logged.push(String(msg));
+    try {
+      statsd.socket.emit('error', new Error('handler gone'));
+    } finally {
+      console.error = originalConsoleError;
+    }
+    // Back to the state of a client built without an errorHandler: only the
+    // transport's default debug listener remains.
+    assert.deepStrictEqual(seen, [], 'the removed handler must not be called');
+    assert.deepStrictEqual(logged, [], `nothing should be logged, saw ${JSON.stringify(logged)}`);
+    done();
+  });
+
+  it('should attach a late errorHandler to a socket that sendMessage recreates', done => {
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp' }), 'client');
+      statsd.socket.close();
+      statsd.socket = null;
+      const seen = [];
+      // Assigned while there is no socket, so the setter has nothing to attach to.
+      statsd.errorHandler = err => seen.push(err.message);
+      // This send finds the socket missing: it recreates it, and still fails.
+      statsd.increment('recreate.socket');
+      assert.ok(statsd.socket, 'sendMessage should have recreated the socket');
+      statsd.socket.emit('error', new Error('on the recreated socket'));
+      ignoreErrors = true;
+      assert.ok(seen.includes('on the recreated socket'),
+        `errorHandler should see errors on the recreated socket, saw ${JSON.stringify(seen)}`);
+      done();
+    });
+  });
+
+  it('should detach a child listener from its replacement socket when the child clears errorHandler', done => {
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp' }), 'client');
+      let childCalls = 0;
+      const child = statsd.childClient({ errorHandler: () => { childCalls++; } });
+      setTimeout(() => {
+        const sharedSocket = statsd.socket;
+        sharedSocket.createdAt = Date.now() - 60000;
+        sharedSocket.send = (buf, callback) => setImmediate(() => callback({ code: 'ECONNRESET' }));
+        child.increment('replace.me', () => {
+          const childSocket = child.socket;
+          assert.notStrictEqual(childSocket, sharedSocket, 'the child should have replaced its socket');
+          childCalls = 0;
+          child.errorHandler = undefined;
+          const originalConsoleError = console.error;
+          const logged = [];
+          console.error = msg => logged.push(String(msg));
+          try {
+            childSocket.emit('error', new Error('after clearing'));
+          } finally {
+            console.error = originalConsoleError;
+          }
+          ignoreErrors = true;
+          child.close();
+          assert.strictEqual(childCalls, 0, 'the cleared handler must not be called');
+          assert.ok(!logged.some(msg => msg.includes('hot-shots: socket error')),
+            `the child's listener should be detached, saw ${JSON.stringify(logged)}`);
+          done();
+        });
+      }, 20);
+    });
+  });
+
+  it('should keep errorHandler on the old socket when socket replacement fails', done => {
+    const originalConnect = net.connect;
+    const seen = [];
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, {
+        protocol: 'tcp',
+        errorHandler(err) {
+          seen.push(err.message);
+        }
+      }), 'client');
+      setTimeout(() => {
+        const initialSocket = statsd.socket;
+        net.connect = () => {
+          throw new Error('connect refused');
+        };
+        // Old enough to clear the graceful-restart rate limit.
+        initialSocket.createdAt = Date.now() - 60000;
+        try {
+          // ECONNRESET is replaceable on every platform, so the failed
+          // replacement is really attempted on Windows too.
+          initialSocket.emit('error', internalError('ECONNRESET', 'bad connection'));
+        } finally {
+          net.connect = originalConnect;
+        }
+        initialSocket.emit('error', new Error('later socket error'));
+        ignoreErrors = true;
+        assert.strictEqual(statsd.socket, initialSocket, 'the failed replacement should leave the old socket in place');
+        assert.ok(seen.includes('later socket error'),
+          `errorHandler should still see errors on the old socket, saw ${JSON.stringify(seen)}`);
+        done();
+      }, 20);
+    });
+  });
+
+  it('should contain an errorHandler that throws while the constructor reports a bad protocol', () => {
+    // The constructor reports an unsupported protocol through errorHandler
+    // rather than throwing. A handler that throws from there must not turn a
+    // misconfiguration into an exception out of `new StatsD(...)`.
+    const originalConsoleError = console.error;
+    const logged = [];
+    console.error = msg => logged.push(String(msg));
+
+    let client;
+    try {
+      assert.doesNotThrow(() => {
+        client = createHotShotsClient({
+          protocol: 'invalid-protocol',
+          errorHandler() {
+            throw new Error('handler boom');
+          }
+        }, 'client');
+      });
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    const contained = logged.filter(msg => msg.includes('handler boom'));
+    assert.strictEqual(contained.length, 1,
+      `the throw should be reported once with console.error, saw ${JSON.stringify(logged)}`);
+    if (client) {
+      client.close(() => { /* no socket was ever created */ });
+    }
+  });
+
+  it('should contain an errorHandler that throws on the send-failure path', done => {
+    // README documents that a throwing errorHandler is contained rather than
+    // propagated. This is the single-send failure path, where hot-shots calls
+    // errorHandler itself from inside the transport's write callback. Without
+    // containment the throw escapes as an uncaught exception and ends the
+    // process. The stream here reports a write failure without emitting
+    // 'error', so only that path is under test.
+    const originalConsoleError = console.error;
+    const logged = [];
+    console.error = msg => logged.push(String(msg));
+
+    const stream = new EventEmitter();
+    stream.destroyed = false;
+    stream.writableLength = 0;
+    stream.write = (chunk, writeCallback) => {
+      setImmediate(() => writeCallback(new Error('write failed')));
+      return true;
+    };
+    stream.destroy = () => {
+      stream.destroyed = true;
+      setImmediate(() => stream.emit('close'));
+    };
+
+    statsd = createHotShotsClient({
+      protocol: 'stream',
+      stream: stream,
+      errorHandler() {
+        throw new Error('handler boom');
+      }
+    }, 'client');
+
+    statsd.increment('a');
+
+    setTimeout(() => {
+      console.error = originalConsoleError;
+      const contained = logged.filter(msg => msg.includes('handler boom'));
+      assert.strictEqual(contained.length, 1,
+        `the throw should be reported once with console.error, saw ${JSON.stringify(logged)}`);
+      done();
+    }, 50);
   });
 
   testTypes().forEach(([description, serverType, clientType]) => {
@@ -396,6 +687,28 @@ describe('#errorHandling', () => {
               }, 5);
             });
           });
+
+          it('should not re-create the socket from a failed send with tcpGracefulErrorHandling set to false', (done) => {
+            const code = badTCPConnectionCode();
+            server = createServer('tcp', opts => {
+              const client = statsd = createHotShotsClient(Object.assign(opts, {
+                protocol: 'tcp',
+                tcpGracefulErrorHandling: false,
+                // eslint-disable-next-line no-empty-function
+                errorHandler() {}
+              }), 'client');
+              setTimeout(() => {
+                const initialSocket = client.socket;
+                // Old enough to clear the graceful-restart rate limit.
+                initialSocket.createdAt = Date.now() - 60000;
+                initialSocket.send = (buf, callback) => setImmediate(() => callback(internalError(code, 'bad connection')));
+                client.increment('metric.name', () => {
+                  assert.strictEqual(client.socket, initialSocket, 'the socket must not be replaced');
+                  done();
+                });
+              }, 5);
+            });
+          });
         });
       }
 
@@ -646,6 +959,29 @@ describe('#errorHandling', () => {
             });
           });
 
+          it('should not re-create the socket from a failed send with udsGracefulErrorHandling set to false', (done) => {
+            const code = badUDSConnectionCode();
+            server = createServer('uds_broken', opts => {
+              const client = statsd = createHotShotsClient(Object.assign(opts, {
+                protocol: 'uds',
+                udsGracefulErrorHandling: false,
+                maxBufferSize: 0,
+                // eslint-disable-next-line no-empty-function
+                errorHandler() {}
+              }), 'client');
+              setTimeout(() => {
+                const initialSocket = client.socket;
+                // Old enough to clear the graceful-restart rate limit.
+                initialSocket.createdAt = Date.now() - 60000;
+                initialSocket.send = (buf, callback) => setImmediate(() => callback(internalError(code, 'bad connection')));
+                client.increment('metric.name', () => {
+                  assert.strictEqual(client.socket, initialSocket, 'the socket must not be replaced');
+                  done();
+                });
+              }, 5);
+            });
+          });
+
           describe('#udsRetry', () => {
             /**
              * Create UDS test server
@@ -687,6 +1023,304 @@ describe('#errorHandling', () => {
                 }
               };
             }
+
+            it('should still deliver a retry that lands inside close()\'s drain budget', (done) => {
+              const socketPath = path.join(__dirname, 'test-retry-drain.sock');
+              const received = [];
+              const udsServer = createUdsTestServer(socketPath, buf => received.push(buf.toString()));
+
+              if (!udsServer) {
+                return done();
+              }
+
+              // First attempt reports congestion; the retry falls at the default
+              // 100ms, well inside the drain budget (closingFlushInterval * 11).
+              const unixDgramModule = require('unix-dgram'); // eslint-disable-line global-require
+              const realCreateSocket = unixDgramModule.createSocket;
+              let attempts = 0;
+              unixDgramModule.createSocket = function(type) {
+                const realSocket = realCreateSocket(type);
+                const realSend = realSocket.send.bind(realSocket);
+                realSocket.send = function(buffer, callback) {
+                  attempts++;
+                  if (attempts === 1) {
+                    return process.nextTick(() => callback(internalError('CONGESTION', 'congestion')));
+                  }
+                  return realSend(buffer, callback);
+                };
+                return realSocket;
+              };
+
+              // Not assigned to the shared `statsd`; this test closes it itself.
+              const client = createHotShotsClient({
+                protocol: 'uds',
+                path: socketPath,
+                maxBufferSize: 0
+              }, 'client');
+
+              client.timing('drain.retry.metric', 100);
+
+              // Closing while the retry is still in backoff must not abandon it:
+              // the drain wait exists precisely to let an in-flight send finish,
+              // and cancelling retries any earlier would drop this metric.
+              client.close(() => {
+                setTimeout(() => {
+                  unixDgramModule.createSocket = realCreateSocket;
+                  udsServer.cleanup();
+                  assert.strictEqual(attempts, 2, 'the retry should have been attempted');
+                  assert.ok(received.some(msg => msg.includes('drain.retry.metric')),
+                    `the retried metric should still be delivered, saw ${JSON.stringify(received)}`);
+                  done();
+                }, 150);
+              });
+            });
+
+            it('should abandon a retry still waiting out its backoff when close() runs', (done) => {
+              const socketPath = path.join(__dirname, 'test-retry-abandon.sock');
+              const udsServer = createUdsTestServer(socketPath);
+
+              if (!udsServer) {
+                return done();
+              }
+
+              // Every attempt reports congestion, so the send is always sitting in
+              // a backoff timer rather than completing.
+              const unixDgramModule = require('unix-dgram'); // eslint-disable-line global-require
+              const realCreateSocket = unixDgramModule.createSocket;
+              unixDgramModule.createSocket = function(type) {
+                const realSocket = realCreateSocket(type);
+                realSocket.send = function(buffer, callback) {
+                  process.nextTick(() => callback(internalError('CONGESTION', 'congestion')));
+                };
+                return realSocket;
+              };
+
+              // Deliberately not assigned to the shared `statsd`: this test closes
+              // the client itself, and letting afterEach close it again races that
+              // close and trips a native assertion inside unix-dgram.
+              const client = createHotShotsClient({
+                protocol: 'uds',
+                path: socketPath,
+                udsRetryOptions: {
+                  // Long enough that the retry is certainly still pending at close.
+                  retries: 5,
+                  retryDelayMs: 2000,
+                  backoffFactor: 2
+                },
+                maxBufferSize: 0
+              }, 'client');
+
+              const state = { err: 'not called' };
+              client.timing('test.timer', 100, (err) => {
+                state.err = err;
+              });
+
+              // Let the first attempt fail and schedule its retry, then close.
+              setTimeout(() => {
+                client.close(() => {
+                  setImmediate(() => {
+                    unixDgramModule.createSocket = realCreateSocket;
+                    udsServer.cleanup();
+                    assert.ok(state.err && state.err !== 'not called',
+                      'the abandoned retry should fail its callback rather than hang');
+                    assert.strictEqual(state.err.code, constants.UDS_RETRY_CANCELLED_CODE);
+                    done();
+                  });
+                });
+              }, 50);
+            });
+
+            it('should not call back a non-retryable uds failure on the calling frame', (done) => {
+              const socketPath = path.join(__dirname, 'test-sync-fail.sock');
+              const udsServer = createUdsTestServer(socketPath);
+              if (!udsServer) {
+                return done();
+              }
+
+              // unix-dgram calls its send callback synchronously. Mirror that
+              // with an error that is not retried.
+              const unixDgramModule = require('unix-dgram'); // eslint-disable-line global-require
+              const realCreateSocket = unixDgramModule.createSocket;
+              unixDgramModule.createSocket = function(type) {
+                const realSocket = realCreateSocket(type);
+                realSocket.send = function(buffer, callback) {
+                  callback(internalError('EBADF', 'send EBADF'));
+                };
+                return realSocket;
+              };
+              const client = createHotShotsClient({ protocol: 'uds', path: socketPath, maxBufferSize: 0 }, 'client');
+              unixDgramModule.createSocket = realCreateSocket;
+
+              const state = { onCallingFrame: true, ranOnCallingFrame: null, error: null };
+              client.increment('sync.fail', err => {
+                state.error = err;
+                state.ranOnCallingFrame = state.onCallingFrame;
+              });
+              state.onCallingFrame = false;
+
+              setImmediate(() => {
+                // The uds transport emits 'close' synchronously inside close(),
+                // so assert on a later tick: a throw here would escape into
+                // _close() and call this callback a second time.
+                client.close(() => setImmediate(() => {
+                  udsServer.cleanup();
+                  assert.ok(state.error, 'the send should fail');
+                  assert.strictEqual(state.ranOnCallingFrame, false,
+                    'the failure callback must not run on the calling frame');
+                  done();
+                }));
+              });
+            });
+
+            it('should call a uds send callback once when it throws on success', (done) => {
+              const socketPath = path.join(__dirname, 'test-sync-throw.sock');
+              const udsServer = createUdsTestServer(socketPath);
+              if (!udsServer) {
+                return done();
+              }
+
+              const unixDgramModule = require('unix-dgram'); // eslint-disable-line global-require
+              const realCreateSocket = unixDgramModule.createSocket;
+              unixDgramModule.createSocket = function(type) {
+                const realSocket = realCreateSocket(type);
+                realSocket.send = function(buffer, callback) {
+                  callback();
+                };
+                return realSocket;
+              };
+              const client = createHotShotsClient({ protocol: 'uds', path: socketPath, maxBufferSize: 0 }, 'client');
+              unixDgramModule.createSocket = realCreateSocket;
+
+              const originalConsoleError = console.error;
+              const logged = [];
+              console.error = msg => logged.push(String(msg));
+              let calls = 0;
+              client.increment('throws', () => {
+                calls++;
+                throw new Error('callback boom');
+              });
+
+              setImmediate(() => {
+                console.error = originalConsoleError;
+                // Asserted on a later tick; see the calling-frame test above.
+                client.close(() => setImmediate(() => {
+                  udsServer.cleanup();
+                  assert.strictEqual(calls, 1, `the callback should run once, ran ${calls} times`);
+                  assert.ok(logged.some(msg => msg.includes('callback boom')),
+                    `the throw should be reported, saw ${JSON.stringify(logged)}`);
+                  done();
+                }));
+              });
+            });
+
+            it('should call back once when uds retries are exhausted', (done) => {
+              const socketPath = path.join(__dirname, 'test-retry-exhaust.sock');
+              const udsServer = createUdsTestServer(socketPath);
+              if (!udsServer) {
+                return done();
+              }
+
+              const unixDgramModule = require('unix-dgram'); // eslint-disable-line global-require
+              const realCreateSocket = unixDgramModule.createSocket;
+              unixDgramModule.createSocket = function(type) {
+                const realSocket = realCreateSocket(type);
+                realSocket.send = function(buffer, callback) {
+                  callback(internalError('CONGESTION', 'congestion'));
+                };
+                return realSocket;
+              };
+              const client = createHotShotsClient({
+                protocol: 'uds',
+                path: socketPath,
+                maxBufferSize: 0,
+                udsRetryOptions: { retries: 1, retryDelayMs: 1, maxRetryDelayMs: 1 }
+              }, 'client');
+              unixDgramModule.createSocket = realCreateSocket;
+
+              const errors = [];
+              client.increment('exhausted', err => errors.push(err));
+
+              setTimeout(() => {
+                // Asserted on a later tick; see the calling-frame test above.
+                client.close(() => setImmediate(() => {
+                  udsServer.cleanup();
+                  assert.strictEqual(errors.length, 1, `expected one callback, saw ${errors.length}`);
+                  assert.ok(errors[0] && errors[0].message.includes('congestion'),
+                    `expected the congestion error, saw ${errors[0] && errors[0].message}`);
+                  done();
+                }));
+              }, 50);
+            });
+
+            it('should drop the oldest pending retry past the cap rather than grow without bound', (done) => {
+              const socketPath = path.join(__dirname, 'test-retry-cap.sock');
+              const udsServer = createUdsTestServer(socketPath);
+
+              if (!udsServer) {
+                return done();
+              }
+
+              // Every attempt reports congestion, so every send parks in a
+              // backoff timer holding its buffer and never completes. Without a
+              // cap this is the same unbounded growth the tcp/stream and DNS
+              // paths already bound.
+              const unixDgramModule = require('unix-dgram'); // eslint-disable-line global-require
+              const realCreateSocket = unixDgramModule.createSocket;
+              unixDgramModule.createSocket = function(type) {
+                const realSocket = realCreateSocket(type);
+                realSocket.send = function(buffer, callback) {
+                  process.nextTick(() => callback(internalError('CONGESTION', 'congestion')));
+                };
+                return realSocket;
+              };
+
+              // Closed by this test, not by afterEach: closing twice races the
+              // native unix-dgram socket.
+              const client = createHotShotsClient({
+                protocol: 'uds',
+                path: socketPath,
+                udsRetryOptions: {
+                  // Long enough that no retry fires during the test.
+                  retries: 5,
+                  retryDelayMs: 60000,
+                  backoffFactor: 2
+                },
+                maxBufferSize: 0
+              }, 'client');
+
+              const overflow = 25;
+              const total = constants.UDS_MAX_PENDING_RETRIES + overflow;
+              const dropped = [];
+              for (let i = 0; i < total; i++) {
+                client.timing(`capped.${i}`, 100, err => {
+                  if (err && err.code === constants.UDS_RETRY_QUEUE_FULL_CODE) {
+                    dropped.push(i);
+                  }
+                });
+              }
+
+              // Drops are deferred a tick, and each send needs a tick to report
+              // congestion before it parks, so let the whole batch settle.
+              setTimeout(() => {
+                client.close(() => {
+                  setImmediate(() => {
+                    unixDgramModule.createSocket = realCreateSocket;
+                    udsServer.cleanup();
+                    assert.strictEqual(dropped.length, overflow,
+                      `exactly the ${overflow} oldest sends should be dropped, saw ${dropped.length}`);
+                    // The oldest are the ones evicted, so the dropped indexes are
+                    // the first `overflow` sends in order.
+                    const expected = [];
+                    for (let i = 0; i < overflow; i++) {
+                      expected.push(i);
+                    }
+                    assert.deepStrictEqual(dropped, expected,
+                      'the cap should evict the oldest pending retry, not the newest');
+                    done();
+                  });
+                });
+              }, 300);
+            });
 
             it('should retry UDS send with exponential backoff on failure', (done) => {
               const socketPath = path.join(__dirname, 'test-retry.sock');
@@ -756,6 +1390,7 @@ describe('#errorHandling', () => {
               // Mock unix-dgram socket to always fail
               const unixDgramModule = require('unix-dgram'); // eslint-disable-line global-require
               const realCreateSocket = unixDgramModule.createSocket;
+              let reported = false;
               unixDgramModule.createSocket = function(type) {
                 const realSocket = realCreateSocket(type);
                 realSocket.send = function(buffer, callback) {
@@ -772,8 +1407,15 @@ describe('#errorHandling', () => {
                   retries: 5,
                 },
                 maxBufferSize: 0,
+                // Only the first error is the one under test. close() may report
+                // a second one later if it gives up on its final flush, so this
+                // must not assume a single invocation.
                 errorHandler: (err) => {
                   assert.ok(err);
+                  if (reported) {
+                    return;
+                  }
+                  reported = true;
                   // restore
                   unixDgramModule.createSocket = realCreateSocket;
                   // clean up the uds server to avoid hanging the test
@@ -797,10 +1439,19 @@ describe('#errorHandling', () => {
                   retries: 0
                 },
                 maxBufferSize: 1,
+                // Bounded rather than exact. With retries off the send fails once,
+                // and close()'s final flush fails the same way (both are ENOENT
+                // against a socket with no server), so two is expected. Anything
+                // beyond that would mean a retry happened, which is what this test
+                // exists to catch.
                 errorHandler: (err) => {
-                  errorCount++;
                   assert.ok(err);
-                  assert.strictEqual(errorCount, 1);
+                  errorCount++;
+                  assert.ok(errorCount <= 2,
+                    `retries are off, so expected at most the send plus the close flush, saw ${errorCount}`);
+                  if (errorCount > 1) {
+                    return;
+                  }
                   done();
                 }
               }, 'client');
@@ -828,6 +1479,15 @@ describe('#errorHandling', () => {
                   return;
                 }
                 cleanedUp = true;
+                // Stop the afterEach from blocking on this client. Its
+                // udsRetryOptions allow 20 attempts at up to 800ms, so a send
+                // still mid-retry here can take far longer to settle than
+                // close()'s CLOSE_FLUSH_TIMEOUT budget. Close it without
+                // waiting so the shared afterEach does not race that budget.
+                if (statsd === client) {
+                  statsd = null;
+                }
+                client.close();
                 udsServer.cleanup();
                 // restore unix-dgram createSocket if we patched it
                 try {

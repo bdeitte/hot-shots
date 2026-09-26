@@ -204,4 +204,106 @@ describe('#typescript', function () {
       ].join('\n')
     );
   });
+
+  // types.d.mts re-exports an explicit list, so a type added to types.d.ts is
+  // reachable through the `require` condition while the `import` one still
+  // rejects it. SendError shipped that way once. Both conditions are covered
+  // below so the two entry points cannot drift apart again.
+  it('should compile a SendError import with moduleResolution NodeNext (ESM)', () => {
+    fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ type: 'module' }));
+    compileTs(
+      {
+        compilerOptions: {
+          target: 'esnext',
+          module: 'NodeNext',
+          moduleResolution: 'NodeNext',
+          strict: true,
+          noEmit: true,
+        },
+      },
+      [
+        'import { SendError, StatsD } from \'hot-shots\';',
+        'const handler = (err: SendError): void => {',
+        '  if (err.hotShotsCode === \'HOTSHOTS_DNS_COOLDOWN\' || err.code === \'ENOTFOUND\') {',
+        '    console.error(err.message);',
+        '  }',
+        '};',
+        'const client = new StatsD({ mock: true, errorHandler: handler });',
+        'client.increment(\'test\', 1, (error?: SendError) => { void error; });',
+        'client.close();',
+      ].join('\n')
+    );
+  });
+
+  it('should compile a SendError import with moduleResolution NodeNext (CJS)', () => {
+    compileTs(
+      {
+        compilerOptions: {
+          target: 'es2020',
+          module: 'NodeNext',
+          moduleResolution: 'NodeNext',
+          strict: true,
+          noEmit: true,
+        },
+      },
+      [
+        'import { SendError, StatsD } from \'hot-shots\';',
+        'const handler = (err: SendError): void => {',
+        '  if (err.hotShotsCode === \'HOTSHOTS_DNS_COOLDOWN\' || err.code === \'ENOTFOUND\') {',
+        '    console.error(err.message);',
+        '  }',
+        '};',
+        'const client = new StatsD({ mock: true, errorHandler: handler });',
+        'client.increment(\'test\', 1, (error?: SendError) => { void error; });',
+        'client.close();',
+      ].join('\n')
+    );
+  });
+
+  // Widening errorHandler and StatsCb from Error to SendError must stay
+  // backwards compatible: a handler a caller already declared with plain Error
+  // is still assignable, since parameters are contravariant.
+  it('should still accept an errorHandler and callback declared with plain Error', () => {
+    fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ type: 'module' }));
+    compileTs(
+      {
+        compilerOptions: {
+          target: 'esnext',
+          module: 'NodeNext',
+          moduleResolution: 'NodeNext',
+          strict: true,
+          noEmit: true,
+        },
+      },
+      [
+        'import { StatsD } from \'hot-shots\';',
+        'const legacyHandler = (err: Error): void => { console.error(err.message); };',
+        'const client = new StatsD({ mock: true, errorHandler: legacyHandler });',
+        'client.increment(\'test\', 1, (error?: Error) => { void error; });',
+        'client.close();',
+      ].join('\n')
+    );
+  });
+
+  it('should compile assigning and clearing errorHandler after construction', () => {
+    fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ type: 'module' }));
+    compileTs(
+      {
+        compilerOptions: {
+          target: 'esnext',
+          module: 'NodeNext',
+          moduleResolution: 'NodeNext',
+          strict: true,
+          noEmit: true,
+        },
+      },
+      [
+        'import { StatsD, SendError } from \'hot-shots\';',
+        'const client = new StatsD({ mock: true });',
+        'client.errorHandler = (err: SendError): void => { console.error(err.hotShotsCode); };',
+        'client.errorHandler = undefined;',
+        'client.close();',
+      ].join('\n')
+    );
+  });
 });
