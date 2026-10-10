@@ -16,9 +16,11 @@ hot-shots is a Node.js client library for StatsD, DogStatsD (Datadog), and Teleg
 - **lib/constants.js**: Protocol constants and error codes
 - **lib/telemetry.js**: Client-side telemetry for DogStatsD (tracks metrics/bytes sent/dropped)
 - **lib/aggregator.js**: Opt-in client-side aggregation of counts/gauges/sets for DogStatsD
+- **lib/originDetection.js**: DogStatsD origin detection (container ID lookup from cgroups)
 - **index.js**: Main CJS entry point (exports lib/statsd.js)
 - **index.mjs**: ESM entry point (re-exports from index.js)
 - **types.d.ts**: TypeScript type definitions
+- **types.d.mts**: ESM type entry point (named re-exports from types.d.ts)
 
 ### Protocol Support
 The library supports multiple transport protocols:
@@ -40,7 +42,7 @@ If you are in any DNS, retry, or other protocol code, read through NETWORKING.md
 ### Testing
 ```bash
 npm test                    # Run all tests with linting
-npm run lint               # Run ESLint on lib and test files
+npm run lint               # Run ESLint on lib, test, perfTest and root .mjs files
 npm run coverage          # Run tests with coverage report
 ```
 
@@ -220,7 +222,7 @@ See `test/udpDns.js` and `test/udpSocketOptions.js` for examples.
 ## Important Notes
 
 - Node.js >= 20.0.0 required (see `engines` in package.json)
-- TypeScript definitions in types.d.ts must be updated for API changes
+- TypeScript definitions in types.d.ts must be updated for API changes. types.d.mts re-exports a named list of types from types.d.ts, so add any newly exported type name there too
 - Constructor parameter expansion is deprecated - use options object
 - Mock mode available for testing (prevents actual metric sending)
 - Add debug logging that can be enabled with "NODE_DEBUG=hot-shots"
@@ -235,8 +237,8 @@ See `test/udpDns.js` and `test/udpSocketOptions.js` for examples.
     }
   }
   ```
-- Updates that are new for a release should be noted in CHANGES.md using the format: `* [@username](https://github.com/username) Description`. For breaking changes, prefix with `Breaking:` (e.g., `* [@username](https://github.com/username) BREAKING: Description`). Do not use bold section headers. Always link `@username` mentions to their GitHub profiles and `#NNN` issue/PR references to `https://github.com/bdeitte/hot-shots/issues/NNN`.
-- CHANGES.md should be concise and does not need to go into every detail. The updates should also not be mentioning updates to existing updates inside of a specific release- it should just change how these unreleased changes are written about to only be discussing what is new for the release overall.
+- Updates that are new for a release should be noted in CHANGES.md using the format: `* [@username](https://github.com/username) Description`. For breaking changes, prefix with `BREAKING:` (e.g., `* [@username](https://github.com/username) BREAKING: Description`). Do not use bold section headers. Always link `@username` mentions to their GitHub profiles and `#NNN` issue/PR references to `https://github.com/bdeitte/hot-shots/issues/NNN`.
+- CHANGES.md should be concise and does not need to go into every detail. It describes the net change from main that users of the release will see, not the history of the branch. When a later commit on a branch fixes or reworks something an earlier commit on the same branch introduced, do not add an entry about that fix; instead update or remove the earlier entry so it describes the final result.
 - API changes should be noted in README.md
 - If you are making a very large set of changes, use the manual performance tests in the perfTest directory to understand the before and after effects of the changes and report these out
 
@@ -245,5 +247,5 @@ See `test/udpDns.js` and `test/udpSocketOptions.js` for examples.
 After making whatever changes are needed, you must do the following:
 1. Double-check that you've added the right tests needed and run again if needed
 2. Look at README.md and make an update only if needed
-3. Look at types.d.ts and make an update only if needed
+3. Look at types.d.ts and types.d.mts and make an update only if needed
 4. Add the updates to CHANGES.md
