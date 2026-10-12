@@ -143,6 +143,9 @@ describe('#enqueueCallback', () => {
         client.close(() => {
           assert.ok(state.error && state.error.message.includes('Socket not created properly'),
             `expected the missing-socket error, saw ${state.error && state.error.message}`);
+          assert.ok(state.error.message.startsWith('Error sending hot-shots message: '),
+            `expected the send-error prefix, saw ${state.error.message}`);
+          assert.strictEqual(state.error.code, 'HOTSHOTS_SOCKET_NOT_CREATED');
           assert.strictEqual(state.ranOnCallingFrame, false,
             'the failure callback must not run on the calling frame');
           done();
@@ -157,6 +160,7 @@ describe('#enqueueCallback', () => {
       // This test closes the client itself.
       statsd = null;
       const dnsError = new Error('dns boom');
+      dnsError.code = 'ENOTFOUND';
       client.dnsError = dnsError;
       const state = { onCallingFrame: true, ranOnCallingFrame: null, error: null };
       client.increment('dns.error', err => {
@@ -167,7 +171,10 @@ describe('#enqueueCallback', () => {
       setImmediate(() => {
         client.dnsError = null;
         client.close(() => {
-          assert.strictEqual(state.error, dnsError);
+          assert.strictEqual(state.error.message, 'Error sending hot-shots message: Error: dns boom');
+          assert.strictEqual(state.error.code, 'ENOTFOUND', 'the resolver\'s code must stay on code');
+          assert.strictEqual(state.error.hotShotsCode, 'HOTSHOTS_DNS_LOOKUP_FAILED');
+          assert.strictEqual(dnsError.hotShotsCode, undefined, 'the caller\'s error must not be mutated');
           assert.strictEqual(state.ranOnCallingFrame, false,
             'the dnsError callback must not run on the calling frame');
           done();

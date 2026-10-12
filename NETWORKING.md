@@ -367,12 +367,13 @@ sequenceDiagram
 |---|---|---|---|
 | HOTSHOTS_DNS_QUEUE_FULL | udp (cacheDns) | 1000 sends already queued behind a lookup; oldest dropped | queue |
 | HOTSHOTS_DNS_COOLDOWN (on hotShotsCode; code stays the resolver's) | udp (cacheDns) | a recent lookup failed and the next attempt is not due yet | queue |
-| HOTSHOTS_DNS_LOOKUP_FAILED (on hotShotsCode; code stays the resolver's) | udp | the lookup itself failed, cold cacheDns or per-packet | writer |
+| HOTSHOTS_DNS_LOOKUP_FAILED (on hotShotsCode; code stays the resolver's) | udp | the lookup itself failed, cold cacheDns or per-packet. Also marks a send refused because a caller set this.dnsError, which is not counted | writer |
 | HOTSHOTS_DNS_CANCELLED | udp (cacheDns) | queued mid-lookup, cancelled by close() | queue |
 | HOTSHOTS_DNS_CLOSED | udp (cacheDns) | send arrived after close() latched the queue shut | queue |
 | HOTSHOTS_UDS_RETRY_CANCELLED | uds | a retry was waiting out its backoff when close() ran | queue |
 | HOTSHOTS_UDS_RETRY_QUEUE_FULL | uds | 1000 sends already waiting out a retry backoff; oldest dropped | queue |
 | HOTSHOTS_WRITE_QUEUE_FULL | tcp, stream | over maxPendingWriteBytes unflushed across an event-loop turn without draining | queue |
+| HOTSHOTS_SOCKET_NOT_CREATED | any (recreated on tcp/uds only) | no socket to write to, because creating or recreating it failed | writer |
 | HOTSHOTS_CLOSE_FLUSH_TIMEOUT | any | close() stopped waiting on the final flush | n/a |
 | ERR_SOCKET_DESTROYED | tcp | write attempted on a destroyed socket | writer |
 | ERR_STREAM_DESTROYED | stream | write attempted on a destroyed stream | writer |
@@ -382,4 +383,10 @@ The seven queue-bucket codes are REFUSED_CODES: the client turned the send away,
 abandoned uds retry, stopped retrying it. Everything else falls into the writer bucket,
 including a DNS lookup that failed before any packet was written. CLOSE_CONTINUE_CODES
 adds the flush timeout and HOTSHOTS_DNS_LOOKUP_FAILED, giving the set of errors that must
-not abort close().
+not abort close(). HOTSHOTS_SOCKET_NOT_CREATED is in neither list, so a final flush that
+finds no socket still aborts close() as it did before the code existed.
+
+Every send failure reaches the callback or errorHandler with the message prefix
+`Error sending hot-shots message:`, including the refusals raised before the transport is
+reached (no socket, a cached this.dnsError, a closed cacheDns queue). The underlying
+error is not passed through itself; its code and hotShotsCode are copied onto the wrapper.

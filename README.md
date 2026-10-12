@@ -429,7 +429,7 @@ The per-metric `callback` argument has different behavior depending on whether b
 
 Unbuffered mode (`maxBufferSize === 0`, the default for UDP/TCP):
 - On the successful send path the callback is invoked asynchronously after the underlying transport completes, with signature `(error, bytes)` — `error` is `null` and `bytes` is the number of bytes written.
-- On failure `error` is set, always on a later tick than the send itself. One failure path is still synchronous: a client whose socket was never created successfully. Sampled-out metrics also invoke the callback synchronously, with no arguments.
+- On failure `error` is set, always on a later tick than the send itself. Its message starts with `Error sending hot-shots message:`, and its `code` or `hotShotsCode` says why. Sampled-out metrics invoke the callback synchronously, with no arguments.
 - If you specify both `errorHandler` and `callback`, the callback takes precedence — the error is reported to the callback only.
 
 Buffered mode (`maxBufferSize > 0`, the default for UDS):
