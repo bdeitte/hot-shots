@@ -111,6 +111,22 @@ function testProtocolTypes() {
 }
 
 /**
+ * Point the client at the exact address the TCP server bound.
+ *
+ * server.address() reports `address`, but StatsD reads `host`, so without this
+ * the client falls back to Node's default of 'localhost'. Where localhost
+ * resolves to ::1 first, that leaves an IPv4-only server and an IPv6-seeking
+ * client. autoSelectFamily hides it for the client code under test, but these
+ * tests should target the bound address directly rather than lean on that.
+ *
+ * @param {Object} address - the result of server.address()
+ * @returns {Object} client options carrying an explicit host
+ */
+function tcpClientOptions(address) {
+  return Object.assign({}, address, { host: address.address });
+}
+
+/**
  * Create statsd server to send messages to for testing
  */
 function createServer(serverType, callback) {
@@ -180,10 +196,10 @@ function createServer(serverType, callback) {
       });
     });
     server.on('listening', () => {
-      onListening(server.address());
+      onListening(tcpClientOptions(server.address()));
     });
 
-    server.listen(0, 'localhost');
+    server.listen(0, '127.0.0.1');
   }
   else if (serverType === TCP_BROKEN) {
     server = net.createServer(socket => {
@@ -196,10 +212,10 @@ function createServer(serverType, callback) {
       socket.destroy();
     });
     server.on('listening', () => {
-      onListening(server.address());
+      onListening(tcpClientOptions(server.address()));
     });
 
-    server.listen(0, 'localhost');
+    server.listen(0, '127.0.0.1');
   }
   else if (serverType === STREAM) {
     server = new EventEmitter();

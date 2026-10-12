@@ -243,7 +243,7 @@ describe('#childClient', () => {
         const err = new Error('test error');
         const child = parent.childClient({
           errorHandler(e) {
-            assert.strictEqual(e, err);
+            assert.strictEqual(e.message, `Error sending hot-shots message: ${err}`);
             done();
           }
         });

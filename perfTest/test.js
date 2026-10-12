@@ -2,8 +2,8 @@
 
 const StatsD = require('../lib/statsd');
 
-const WARMUP = process.env.WARMUP ? parseInt(process.env.WARMUP) : 20000;
-const ITERS  = process.env.ITERS  ? parseInt(process.env.ITERS)  : 300000;
+const WARMUP = process.env.WARMUP ? parseInt(process.env.WARMUP, 10) : 20000;
+const ITERS  = process.env.ITERS  ? parseInt(process.env.ITERS, 10)  : 300000;
 
 const noTagClient = new StatsD({ mock: true });
 const globalTagClient = new StatsD({
@@ -11,8 +11,16 @@ const globalTagClient = new StatsD({
   globalTags: { env: 'prod', region: 'us-east-1', service: 'api' }
 });
 
-const timerWrapped = noTagClient.timer(function noop() {}, 'hot.shots.perf.timer');
+// Empty on purpose: this measures the wrapper's own overhead, not the work.
+// eslint-disable-next-line no-empty-function
+const timerWrapped = noTagClient.timer(() => {}, 'hot.shots.perf.timer');
 
+/**
+ * Runs one micro-benchmark and prints its throughput.
+ * @param {string} label - the benchmark name to print
+ * @param {Function} fn - the operation to measure, called once per iteration
+ * @returns {void}
+ */
 function bench(label, fn) {
   noTagClient.mockBuffer = [];
   globalTagClient.mockBuffer = [];
