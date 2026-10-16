@@ -46,6 +46,7 @@ export interface ClientOptions {
   udsGracefulRestartRateLimit?: number;
   closingFlushInterval?: number;
   udpSocketOptions?: dgram.SocketOptions;
+  tcpEncoding?: BufferEncoding;
   udsRetryOptions?: {
     retries?: number;
     retryDelayMs?: number;
