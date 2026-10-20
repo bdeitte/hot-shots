@@ -3,6 +3,8 @@ CHANGELOG
 
 ## Unreleased
 
+* [@ralsina](https://github.com/ralsina) Track the buffered byte count on the shared buffer holder instead of per client, so the buffer shared between a client and its `childClient()`s can no longer exceed `maxBufferSize`. Since 13.2.0 the oversized datagrams were truncated by the Datadog agent, which surfaced as prefix tag keys and values. See [#335](https://github.com/bdeitte/hot-shots/issues/335)
+
 ## 17.1.1 (2026-9-13)
 
 * [@erulabs](https://github.com/erulabs) Reuse formatted tag strings in `overrideTags` to avoid splitting and reconstructing values, while preserving tag sanitization, overrides, and duplicate-key ordering.
