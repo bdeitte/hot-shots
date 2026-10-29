@@ -4,6 +4,8 @@ CHANGELOG
 ## Unreleased
 
 * [@bdeitte](https://github.com/bdeitte) BREAKING: Drop Node.js 18 support, now requires Node.js >= 20.0.0
+* [@bdeitte](https://github.com/bdeitte) Test Node.js 26 in CI
+* [@bdeitte](https://github.com/bdeitte) Fix a `cacheDns` client with no `host` failing every send on Node.js 26, which rejects `dns.lookup` without a hostname. Such a client now sends to the default address without a lookup
 * [@bdeitte](https://github.com/bdeitte) BREAKING: Default the `tcp` host to `127.0.0.1` instead of `localhost` when none is given ([#185](https://github.com/bdeitte/hot-shots/issues/185)). A `tcp` client with no `host` whose agent listens on `::1` only must now pass `host` explicitly. TCP also tries every resolved address family for an explicit hostname ([#222](https://github.com/bdeitte/hot-shots/issues/222))
 * [@bdeitte](https://github.com/bdeitte) Eliminate per-packet DNS lookups on UDP. A client with an IP `host`, or no `host`, now makes no `dns.lookup` calls and creates none of the APM spans they generate ([DataDog/dd-trace-js#2984](https://github.com/DataDog/dd-trace-js/issues/2984))
 * [@bdeitte](https://github.com/bdeitte) Improve `cacheDns`: concurrent sends share one lookup, a stale address keeps sending while a refresh runs, a failed lookup backs off instead of retrying on every send, lookups are pinned to the socket's address family, and the cold-start queue is bounded at 1000
@@ -16,7 +18,7 @@ CHANGELOG
 * [@bdeitte](https://github.com/bdeitte) Fix `tcpGracefulErrorHandling: false` and `udsGracefulErrorHandling: false` not stopping socket replacement after a failed send
 * [@bdeitte](https://github.com/bdeitte) Fix a failed `tcp`/`uds` socket replacement leaving the old socket without its `errorHandler`
 * [@bdeitte](https://github.com/bdeitte) Support assigning `errorHandler` after construction: socket errors now reach a handler set that way, and clearing it detaches it
-* [@bdeitte](https://github.com/bdeitte) Add a Docker perfTest harness (see `perfTest/README.md`), test Node.js 26 in CI, and refresh the lockfile
+* [@bdeitte](https://github.com/bdeitte) Add a Docker perfTest harness that counts the network and DNS calls the test suite makes (see `perfTest/README.md`)
 
 ## 17.1.1 (2026-9-13)
 

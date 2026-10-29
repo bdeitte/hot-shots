@@ -152,9 +152,9 @@ Tests must not depend on ambient state:
   host. `test/init.js` shows the convention of deleting them in `afterEach`.
 - Do not rely on how the machine resolves `localhost`. To test address-family
   behavior, stub `dns.lookup` so an unpinned lookup answers `::1` and a
-  `family: 4` lookup answers `127.0.0.1`. The stub must handle dgram's numeric
-  family form (`lookup(host, 4, cb)`) as well as the options-object form the
-  `cacheDns` path uses.
+  `family: 4` lookup answers `127.0.0.1`. The stub must handle every call form:
+  `lookup(host, cb)`, dgram's numeric family form `lookup(host, 4, cb)`, and the
+  options-object form `lookup(host, { family }, cb)`.
 - Close the client and any server before asserting, then assert inside the close
   callback. An assertion that throws first leaves the socket open and can hang
   the run. See the TCP tests in `test/transport.js` for the pattern.
