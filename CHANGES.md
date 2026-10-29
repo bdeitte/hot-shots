@@ -5,6 +5,7 @@ CHANGELOG
 
 * [@bdeitte](https://github.com/bdeitte) BREAKING: Drop Node.js 18 support, now requires Node.js >= 20.0.0
 * [@bdeitte](https://github.com/bdeitte) Test Node.js 26 in CI
+* [@bdeitte](https://github.com/bdeitte) Fix a `cacheDns` client with no `host` failing every send on Node.js 26, which rejects `dns.lookup` without a hostname. Such a client now sends to the default address without a lookup
 
 ## 17.1.1 (2026-9-13)
 

@@ -68,6 +68,7 @@ describe('#udpDnsCacheTransport', () => {
         const socketMock = mockDgramSocket();
 
         statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
           cacheDns: true
         }), 'client');
 
@@ -99,6 +100,7 @@ describe('#udpDnsCacheTransport', () => {
         const socketMock = mockDgramSocket();
 
         statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
           cacheDns: true
         }), 'client');
 
@@ -134,6 +136,7 @@ describe('#udpDnsCacheTransport', () => {
 
         const cacheDnsTtl = 100;
         statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
           cacheDns: true,
           cacheDnsTtl: cacheDnsTtl
         }), 'client');
@@ -175,6 +178,7 @@ describe('#udpDnsCacheTransport', () => {
         mockDgramSocket();
 
         statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
           cacheDns: true,
         }), 'client');
 
@@ -252,6 +256,35 @@ describe('#udpDnsCacheTransport', () => {
     });
   });
 
+  describe('No host', () => {
+    // Node 26 rejects dns.lookup(undefined), so a lookup here fails every send
+    it('should skip DNS lookup and let dgram pick the default address', done => {
+      server = createServer(udpServerType, opts => {
+        clock = sinon.useFakeTimers();
+        const socketMock = mockDgramSocket();
+
+        statsd = createHotShotsClient(Object.assign(opts, {
+          cacheDns: true,
+        }), 'client');
+
+        let dnsLookupCount = 0;
+        dns.lookup = () => {
+          dnsLookupCount++;
+        };
+
+        statsd.send('test', {}, (error) => {
+          assert.strictEqual(error, null);
+        });
+
+        clock.tick(1000);
+        assert.strictEqual(dnsLookupCount, 0);
+        assert.strictEqual(socketMock.sendCount, 1);
+        assert.strictEqual(socketMock.host, undefined);
+        done();
+      });
+    });
+  });
+
   describe('DNS resolution address change', () => {
     it('should use new address after TTL expires and DNS resolves differently', done => {
       server = createServer(udpServerType, opts => {
@@ -260,6 +293,7 @@ describe('#udpDnsCacheTransport', () => {
 
         const cacheDnsTtl = 100;
         statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
           cacheDns: true,
           cacheDnsTtl: cacheDnsTtl
         }), 'client');
