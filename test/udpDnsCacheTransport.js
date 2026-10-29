@@ -257,6 +257,20 @@ describe('#udpDnsCacheTransport', () => {
   });
 
   describe('No host', () => {
+    // DD_AGENT_HOST would otherwise become the client's host
+    let originalAgentHost;
+
+    beforeEach(() => {
+      originalAgentHost = process.env.DD_AGENT_HOST;
+      delete process.env.DD_AGENT_HOST;
+    });
+
+    afterEach(() => {
+      if (originalAgentHost !== undefined) {
+        process.env.DD_AGENT_HOST = originalAgentHost;
+      }
+    });
+
     // Node 26 rejects dns.lookup(undefined), so a lookup here fails every send
     it('should skip DNS lookup and let dgram pick the default address', done => {
       server = createServer(udpServerType, opts => {
