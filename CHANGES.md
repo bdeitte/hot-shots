@@ -3,6 +3,9 @@ CHANGELOG
 
 ## Unreleased
 
+* [@bdeitte](https://github.com/bdeitte) BREAKING: Drop Node.js 18 support, now requires Node.js >= 20.0.0
+* [@bdeitte](https://github.com/bdeitte) Test Node.js 26 in CI
+
 ## 17.1.1 (2026-9-13)
 
 * [@erulabs](https://github.com/erulabs) Reuse formatted tag strings in `overrideTags` to avoid splitting and reconstructing values, while preserving tag sanitization, overrides, and duplicate-key ordering.
