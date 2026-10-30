@@ -168,6 +168,20 @@ describe('#event', () => {
         });
       });
 
+      it('should count the event title and text lengths in utf-8 bytes', done => {
+        // The header is _e{TITLE_UTF8_LENGTH,TEXT_UTF8_LENGTH}, so these are byte
+        // counts: 'déploiement' is 11 utf-16 code units but 12 utf-8 bytes, and
+        // '完了 🚀' is 5 utf-16 code units but 11 utf-8 bytes.
+        server = createServer(serverType, opts => {
+          statsd = createHotShotsClient(opts, clientType);
+          statsd.event('déploiement', '完了 🚀');
+        });
+        server.on('metrics', event => {
+          assert.strictEqual(event, `_e{12,11}:déploiement|完了 🚀${metricEnd}`);
+          done();
+        });
+      });
+
       it('should handle event with special characters in title and text', done => {
         server = createServer(serverType, opts => {
           statsd = createHotShotsClient(opts, clientType);

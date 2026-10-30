@@ -188,7 +188,8 @@ function createServer(serverType, callback) {
   }
   else if (serverType === TCP) {
     server = net.createServer(socket => {
-      socket.setEncoding('ascii');
+      // The tcp transport writes utf-8 bytes, so this is the decode that matches it.
+      socket.setEncoding('utf8');
       socket.on('data', data => {
         if (data) {
           server.emit('metrics', data);
