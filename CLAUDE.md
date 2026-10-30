@@ -40,7 +40,7 @@ The library supports multiple transport protocols:
 ### Testing
 ```bash
 npm test                    # Run all tests with linting
-npm run lint               # Run ESLint on lib and test files
+npm run lint               # Run ESLint on lib, test, perfTest and root .mjs files
 npm run coverage          # Run tests with coverage report
 ```
 
@@ -236,6 +236,7 @@ See `test/udpDnsCacheTransport.js` and `test/udpSocketOptions.js` for examples.
 - Updates that are new for a release should be noted in CHANGES.md using the format: `* [@username](https://github.com/username) Description`. For breaking changes, prefix with `BREAKING:` (e.g., `* [@username](https://github.com/username) BREAKING: Description`). Do not use bold section headers. Always link `@username` mentions to their GitHub profiles and `#NNN` issue/PR references to `https://github.com/bdeitte/hot-shots/issues/NNN`.
 - CHANGES.md should be concise and does not need to go into every detail. It describes the net change from main that users of the release will see, not the history of the branch. When a later commit on a branch fixes or reworks something an earlier commit on the same branch introduced, do not add an entry about that fix; instead update or remove the earlier entry so it describes the final result.
 - API changes should be noted in README.md
+- If you are making a very large set of changes, use the manual performance tests in the perfTest directory to understand the before and after effects of the changes and report these out
 
 ## Follow for all code changes
 

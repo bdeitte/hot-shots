@@ -233,11 +233,15 @@ describe('#transportExtended', () => {
     });
 
     let client;
-    tcpServer.listen(0, 'localhost', () => {
+    // Bind and connect the IP literal rather than 'localhost'. Where localhost
+    // resolves to ::1 first, the server listens on IPv6 only while the client
+    // reaches IPv4, and this test times out without ever closing tcpServer --
+    // the leaked handle then keeps mocha from exiting at all.
+    tcpServer.listen(0, '127.0.0.1', () => {
       const addr = tcpServer.address();
       client = new StatsD({
         protocol: 'tcp',
-        host: 'localhost',
+        host: '127.0.0.1',
         port: addr.port,
       });
       client.increment('test.metric');
