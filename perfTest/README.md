@@ -59,10 +59,15 @@ process to every count.
 ## Reading the report
 
 DNS appears twice and the two figures will differ. `dns.lookup calls` counts
-API invocations. `resolver syscalls (port 53)` counts queries that reached the
-wire. Node answers an IP literal inside `dns.lookup` without touching the
-network, and `localhost` comes from `/etc/hosts`. The syscall count therefore
-sits near zero while the in-process count runs high. Never add the two together.
+API invocations. `resolver syscalls (port 53)` counts the traced `connect()`,
+`sendto()`, `sendmsg()` and `sendmmsg()` calls whose address is port 53. That
+is a sign that something contacted a nameserver, not a count of DNS queries.
+glibc's resolver connects its socket to the nameserver and then sends without
+an address, so a lookup that sends several queries usually shows up as one
+`connect()`, and a failed attempt counts the same as one that got an answer.
+Node answers an IP literal inside `dns.lookup` without touching the network,
+and `localhost` comes from `/etc/hosts`. The syscall count therefore sits near
+zero while the in-process count runs high. Never add the two together.
 
 That split is why the harness exists. Changing how often hot-shots calls
 `dns.lookup` moves the in-process number and leaves the syscall number flat.

@@ -68,7 +68,11 @@ net.Socket.prototype.connect = function connect(...args) {
 
 const originalWrite = net.Socket.prototype.write;
 net.Socket.prototype.write = function write(...args) {
-  counts.tcpWrite += 1;
+  // Piped stdout and stderr are net.Socket instances too, as in a non-TTY
+  // docker run, so without this every line of console output counts as TCP.
+  if (this !== process.stdout && this !== process.stderr) {
+    counts.tcpWrite += 1;
+  }
   return originalWrite.apply(this, args);
 };
 
