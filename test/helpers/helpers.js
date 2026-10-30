@@ -22,6 +22,7 @@ const CLIENT = 'client';
 const CHILD_CLIENT = 'child client';
 const CHILD_CHILD_CLIENT = 'child child client';
 const TCP_BROKEN = 'tcp_broken';
+const TCP_UTF8 = 'tcp_utf8';
 const UDS_BROKEN = 'uds_broken';
 
 // tcp puts a newline at the end but udp/uds do not
@@ -130,8 +131,11 @@ function tcpClientOptions(address) {
  * Create statsd server to send messages to for testing
  */
 function createServer(serverType, callback) {
-  const onListening = (opts) => {
-    callback(Object.assign(opts, { protocol: serverType, bufferFlushInterval: 10 }));
+  // The protocol defaults to the server type, which holds for every type whose
+  // name is a protocol. TCP_UTF8 is a tcp server with a different decode, so it
+  // passes the protocol its client should speak.
+  const onListening = (opts, protocol = serverType) => {
+    callback(Object.assign(opts, { protocol, bufferFlushInterval: 10 }));
   };
 
   let server;
@@ -188,8 +192,7 @@ function createServer(serverType, callback) {
   }
   else if (serverType === TCP) {
     server = net.createServer(socket => {
-      // The tcp transport writes utf-8 bytes, so this is the decode that matches it.
-      socket.setEncoding('utf8');
+      socket.setEncoding('ascii');
       socket.on('data', data => {
         if (data) {
           server.emit('metrics', data);
@@ -198,6 +201,23 @@ function createServer(serverType, callback) {
     });
     server.on('listening', () => {
       onListening(tcpClientOptions(server.address()));
+    });
+
+    server.listen(0, '127.0.0.1');
+  }
+  else if (serverType === TCP_UTF8) {
+    // Same as TCP but decoding utf-8, for a payload that is not ascii. TCP stays
+    // on ascii so the decode every other test has used is still exercised.
+    server = net.createServer(socket => {
+      socket.setEncoding('utf8');
+      socket.on('data', data => {
+        if (data) {
+          server.emit('metrics', data);
+        }
+      });
+    });
+    server.on('listening', () => {
+      onListening(tcpClientOptions(server.address()), TCP);
     });
 
     server.listen(0, '127.0.0.1');
@@ -280,5 +300,6 @@ module.exports = {
   testTypes: testTypes,
   testProtocolTypes: testProtocolTypes,
   createServer: createServer,
+  TCP_UTF8: TCP_UTF8,
   createHotShotsClient: createHotShotsClient,
 };
