@@ -1689,7 +1689,7 @@ describe('#udpDns', () => {
     it('completes close in buffered mode when the final flush lookup is stuck (regression, Important 2)', done => {
       server = createServer(udpServerType, opts => {
         // Never invoke the callback: the lookup stays in flight forever. The
-        // close-time flush guard now waits CLOSE_FLUSH_TIMEOUT (5s) instead of
+        // close-time flush guard now waits FLUSH_TIMEOUT (5s) instead of
         // the old closingFlushInterval * 11 (~550ms) budget, so drive it with fake
         // timers rather than actually waiting 5 real seconds.
         // eslint-disable-next-line no-empty-function
@@ -1718,15 +1718,15 @@ describe('#udpDns', () => {
           done();
         });
 
-        // Advance past CLOSE_FLUSH_TIMEOUT (5000ms) to fire the flush guard,
+        // Advance past FLUSH_TIMEOUT (5000ms) to fire the flush guard,
         // plus a little more to cover the subsequent drain-wait tick.
-        clock.tick(constants.CLOSE_FLUSH_TIMEOUT + 1000);
+        clock.tick(constants.FLUSH_TIMEOUT + 1000);
       });
     });
 
     it('delivers the buffered final flush when a slow first lookup resolves within the close budget (regression, Important 2)', done => {
       server = createServer(udpServerType, opts => {
-        // Resolves at ~800ms - well under the new 5s CLOSE_FLUSH_TIMEOUT budget,
+        // Resolves at ~800ms - well under the new 5s FLUSH_TIMEOUT budget,
         // but well past the old ~550ms drain-only budget that used to silently drop
         // this flush. Real timers here (not faked): this exercises the real send
         // path end-to-end, and 800ms real wait is short enough to stay well inside

@@ -259,6 +259,52 @@ describe('#transportBackpressure', () => {
       });
     });
 
+    it('logs a run of refused writes once, not once per metric, when there is no errorHandler', done => {
+      const stream = new PassThrough();
+      const emitted = { count: 0 };
+      stream.on('error', () => {
+        emitted.count++;
+      });
+      statsd = createHotShotsClient({ protocol: 'stream', stream: stream }, 'client');
+
+      const originalConsoleError = console.error;
+      const logged = [];
+      console.error = msg => logged.push(String(msg));
+
+      const big = 'x'.repeat(64 * 1024);
+      for (let i = 0; i < 40; i++) {
+        statsd.increment(`${big}.${i}`);
+      }
+
+      // A turn later the gate refuses, and every one of these has no callback,
+      // so each refusal falls through to the console fallback.
+      setImmediate(() => {
+        for (let i = 0; i < 1000; i++) {
+          statsd.increment('refused.metric');
+        }
+        setTimeout(() => {
+          const duringStall = logged.length;
+          const emittedDuringStall = emitted.count;
+          // Reading lets the accepted writes complete, ending the run.
+          stream.resume();
+          setTimeout(() => {
+            console.error = originalConsoleError;
+            assert.strictEqual(duringStall, 1,
+              `the first refusal should be logged and the rest held back, saw ${duringStall}: ` +
+              `${JSON.stringify(logged.slice(0, 3))}`);
+            assert.strictEqual(emittedDuringStall, 1,
+              `only the first refusal should be emitted on the socket, saw ${emittedDuringStall}`);
+            const summary = logged.slice(1);
+            assert.strictEqual(summary.length, 1,
+              `recovery should log one summary of the held-back refusals, saw ${JSON.stringify(summary)}`);
+            assert.ok(summary[0].includes('999'),
+              `the summary should count the held-back refusals, saw ${summary[0]}`);
+            done();
+          }, 100);
+        }, 50);
+      });
+    });
+
     it('drains messagesInFlight back to zero after a burst of refused writes', done => {
       const stream = new PassThrough();
       statsd = createHotShotsClient({ protocol: 'stream', stream: stream }, 'client');
@@ -310,8 +356,8 @@ describe('#transportBackpressure', () => {
 
   describe('close is bounded when a transport never completes the final flush', () => {
     it('completes a tcp close whose connect never finishes, instead of hanging forever', function (done) {
-      // The guard waits CLOSE_FLUSH_TIMEOUT before giving up, so allow for it.
-      this.timeout(constants.CLOSE_FLUSH_TIMEOUT + 5000);
+      // The guard waits FLUSH_TIMEOUT before giving up, so allow for it.
+      this.timeout(constants.FLUSH_TIMEOUT + 5000);
 
       const state = { reported: null };
       statsd = createHotShotsClient({
@@ -337,10 +383,10 @@ describe('#transportBackpressure', () => {
       client.close(closeError => {
         const elapsed = Date.now() - startedAt;
         assert.ok(!closeError, `close should not fail, got ${closeError && closeError.message}`);
-        assert.ok(elapsed >= constants.CLOSE_FLUSH_TIMEOUT,
+        assert.ok(elapsed >= constants.FLUSH_TIMEOUT,
           `close should wait out the flush budget, returned after ${elapsed}ms`);
         assert.ok(state.reported, 'giving up on the final flush should be reported');
-        assert.strictEqual(state.reported.code, constants.CLOSE_FLUSH_TIMEOUT_CODE);
+        assert.strictEqual(state.reported.code, constants.FLUSH_TIMEOUT_CODE);
         done();
       });
     });

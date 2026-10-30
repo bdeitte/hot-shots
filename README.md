@@ -136,7 +136,10 @@ For `tcp` and `stream` clients, hot-shots refuses sends once more than
 without draining. Node otherwise queues writes in memory without limit while a
 socket is connecting or its peer has stopped reading. Refused sends fail with
 code `HOTSHOTS_WRITE_QUEUE_FULL` and, with `includeDatadogTelemetry` enabled,
-count as `packets_dropped_queue`.
+count as `packets_dropped_queue`. A send with no callback, on a client with no
+`errorHandler`, reports its failure to the console. For a run of these refusals
+only the first is logged, and a count of the rest is logged once sends succeed
+again.
 
 A socket's pending bytes only fall when control returns to the event loop, so a
 synchronous loop of metrics accumulates its whole burst before any of it is
@@ -651,6 +654,8 @@ client.flush(() => {
   // buffered payload has been handed to the transport
 });
 ```
+
+The callback waits at most 5 seconds. If the transport has not finished by then, for example because a `tcp` connect never completes, the callback receives an error with code `HOTSHOTS_FLUSH_TIMEOUT`. The metrics may still be sent afterwards.
 
 ## Sanitization
 

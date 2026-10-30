@@ -557,10 +557,14 @@ describe('#close', () => {
               child.socket.emit('error', new Error('synthetic async error'));
             }, 30);
             setTimeout(() => {
-              assert.strictEqual(childCalls, 1, `the child's handler should fire exactly once; got ${childCalls}`);
-              server.close();
-              server = null;
-              done();
+              // The child moved off the shared socket without closing it, so
+              // the parent still has its own socket to close.
+              statsd.close(() => {
+                server.close();
+                server = null;
+                assert.strictEqual(childCalls, 1, `the child's handler should fire exactly once; got ${childCalls}`);
+                done();
+              });
             }, 200);
           });
         }, 20);

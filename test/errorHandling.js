@@ -278,6 +278,105 @@ describe('#errorHandling', () => {
     });
   });
 
+  it('should leave the shared socket open when a child replaces its own', done => {
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, {
+        protocol: 'tcp',
+        errorHandler() {} // eslint-disable-line no-empty-function
+      }), 'client');
+      // Inherits the parent's errorHandler, so its send failure is the one that
+      // triggers a replacement.
+      const child = statsd.childClient({});
+      setTimeout(() => {
+        const sharedSocket = statsd.socket;
+        sharedSocket.createdAt = Date.now() - 60000;
+        const realSend = sharedSocket.send;
+        sharedSocket.send = (buf, callback) => setImmediate(() => callback({ code: 'ECONNRESET' }));
+        child.increment('replace.me');
+        setTimeout(() => {
+          sharedSocket.send = realSend;
+          ignoreErrors = true;
+          const childSocket = child.socket;
+          const sharedClosed = sharedSocket.isSocketClosed();
+          child.close(() => {
+            assert.notStrictEqual(childSocket, sharedSocket, 'the child should have its own socket now');
+            assert.strictEqual(statsd.socket, sharedSocket, 'the parent should keep its socket');
+            assert.ok(!sharedClosed, 'the child must not close the socket its parent and siblings still send on');
+            done();
+          });
+        }, 20);
+      }, 20);
+    });
+  });
+
+  describe('a replaced tcp socket with no errorHandler', () => {
+    let originalConsoleError;
+    let logged;
+
+    beforeEach(() => {
+      originalConsoleError = console.error;
+      logged = [];
+    });
+
+    afterEach(() => {
+      console.error = originalConsoleError;
+    });
+
+    /**
+     * Builds a tcp client with no errorHandler and replaces its socket once,
+     * then starts capturing console.error.
+     * @param {Object} opts - the server options
+     * @returns {void}
+     */
+    const createReplacedClient = opts => {
+      statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp', closingFlushInterval: 5 }), 'client');
+      const initialSocket = statsd.socket;
+      initialSocket.createdAt = Date.now() - 60000;
+      initialSocket.emit('error', internalError('ECONNRESET', 'bad connection'));
+      assert.notStrictEqual(statsd.socket, initialSocket, 'the socket should have been replaced');
+      console.error = msg => logged.push(String(msg));
+    };
+
+    it('should log a failed send once', done => {
+      server = createServer('tcp', opts => {
+        setTimeout(() => {
+          createReplacedClient(opts);
+          statsd.socket.send = (buf, callback) => setImmediate(() => callback(new Error('write failed')));
+          statsd.increment('fails');
+          setTimeout(() => {
+            console.error = originalConsoleError;
+            ignoreErrors = true;
+            const lines = logged.filter(msg => msg.includes('write failed'));
+            assert.strictEqual(lines.length, 1, `the failure should be logged once, saw ${JSON.stringify(logged)}`);
+            done();
+          }, 20);
+        }, 20);
+      });
+    });
+
+    it('should log a close error once', done => {
+      server = createServer('tcp', opts => {
+        setTimeout(() => {
+          createReplacedClient(opts);
+          const socket = statsd.socket;
+          const realClose = socket.close;
+          socket.close = () => {
+            socket.emit('error', new Error('close failed'));
+            realClose();
+          };
+          statsd.close();
+          statsd = null;
+          setTimeout(() => {
+            console.error = originalConsoleError;
+            const lines = logged.filter(msg => msg.includes('close failed'));
+            assert.strictEqual(lines.length, 1, `the failure should be logged once, saw ${JSON.stringify(logged)}`);
+            done();
+          }, 100);
+        }, 20);
+      });
+    });
+  });
+
   it('should not also log replacement socket errors once an errorHandler is assigned', done => {
     server = createServer('tcp', opts => {
       statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp' }), 'client');
@@ -410,6 +509,73 @@ describe('#errorHandling', () => {
         `the throw should be reported once with console.error, saw ${JSON.stringify(logged)}`);
       done();
     }, 50);
+  });
+
+  describe('a send callback that throws on a deferred failure', () => {
+    let savedUncaught;
+    let uncaught;
+
+    beforeEach(() => {
+      // Swapped out so an escaping throw is recorded rather than failing the run
+      // from mocha's own handler, which would hide what the assertion checks.
+      savedUncaught = process.listeners('uncaughtException');
+      process.removeAllListeners('uncaughtException');
+      uncaught = [];
+      process.on('uncaughtException', err => uncaught.push(err));
+    });
+
+    afterEach(() => {
+      process.removeAllListeners('uncaughtException');
+      savedUncaught.forEach(listener => process.on('uncaughtException', listener));
+    });
+
+    /**
+     * Sends one metric whose callback throws, then checks a tick later that the
+     * throw was contained and reported rather than escaping.
+     * @param {Function} breakClient - puts statsd into a state that fails the send
+     * @param {Function} done - mocha callback
+     * @returns {void}
+     */
+    const assertContained = (breakClient, done) => {
+      const originalConsoleError = console.error;
+      const logged = [];
+      console.error = msg => logged.push(String(msg));
+      statsd = createHotShotsClient({ protocol: 'stream', stream: new EventEmitter() }, 'client');
+      statsd.socket.close = () => {}; // eslint-disable-line no-empty-function
+      breakClient(statsd);
+      statsd.increment('a', 1, () => {
+        throw new Error('callback boom');
+      });
+      setTimeout(() => {
+        console.error = originalConsoleError;
+        statsd = null;
+        // Passed to done rather than thrown: a throw here would land in the
+        // swapped-in uncaughtException listener and the test would time out.
+        try {
+          assert.deepStrictEqual(uncaught.map(err => err.message), [],
+            'the throw must not escape as an uncaught exception');
+          assert.ok(logged.some(msg => msg.includes('callback boom')),
+            `the throw should be reported with console.error, saw ${JSON.stringify(logged)}`);
+          done();
+        } catch (assertErr) {
+          done(assertErr);
+        }
+      }, 20);
+    };
+
+    it('is contained for a cached DNS error', done => {
+      assertContained(client => {
+        client.dnsError = new Error('cached lookup failure');
+      }, done);
+    });
+
+    it('is contained when the transport throws synchronously', done => {
+      assertContained(client => {
+        client.socket.send = () => {
+          throw new Error('sync transport failure');
+        };
+      }, done);
+    });
   });
 
   testTypes().forEach(([description, serverType, clientType]) => {
@@ -1541,7 +1707,7 @@ describe('#errorHandling', () => {
                 // Stop the afterEach from blocking on this client. Its
                 // udsRetryOptions allow 20 attempts at up to 800ms, so a send
                 // still mid-retry here can take far longer to settle than
-                // close()'s CLOSE_FLUSH_TIMEOUT budget. Close it without
+                // close()'s FLUSH_TIMEOUT budget. Close it without
                 // waiting so the shared afterEach does not race that budget.
                 if (statsd === client) {
                   statsd = null;

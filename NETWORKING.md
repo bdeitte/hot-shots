@@ -59,13 +59,18 @@ flowchart LR
     H -->|no| L["console.error +<br/>socket.emit('error', err)"]
 ```
 
+On that last branch, a run of queue-full refusals (QUEUE_FULL_CODES: the DNS queue, the uds
+retry queue, and the tcp/stream write cap) logs and emits only its first refusal. The rest
+are counted, and one summary line is logged when a send next succeeds. A stalled peer
+refuses every metric sent, and a line per metric would flood the console.
+
 ## Invariants
 
 These hold for every transport and explain most of the non-obvious code.
 
 | Invariant | Why |
 |---|---|
-| A send failure never calls back on the send's own stack frame (failLater / setImmediate) | The documented errorHandler pattern is "emit a metric when a send fails". An inline callback would recurse into the same failing path until RangeError. unix-dgram calls its send callback synchronously, so the uds transport routes its failures through failLater too |
+| A send failure never calls back on the send's own stack frame (failLater) | The documented errorHandler pattern is "emit a metric when a send fails". An inline callback would recurse into the same failing path until RangeError. unix-dgram calls its send callback synchronously, so the uds transport routes its failures through failLater too. So does Client, for a send it refuses before reaching a transport |
 | Every queued send is called back exactly once | The drain in close() waits on messagesInFlight, and a swallowed callback hangs it |
 | A user callback that throws never escapes a fan-out (invokeCallback) | Batch flushes would otherwise abandon the rest of the batch, or the close itself |
 | In-memory queueing is capped in every transport | Each transport can otherwise accumulate without bound when its peer is gone |
@@ -206,7 +211,7 @@ sequenceDiagram
     Client->>Client: code in tcpErrors() / udsErrors()?
     Client->>Client: socket older than<br/>gracefulRestartRateLimit (1000ms)?
     Client->>New: createTransport
-    Client->>Old: close()
+    Client->>Old: close(), unless a child shares it
     Client->>New: re-attach errorHandler +<br/>protocol error handler
     App->>Client: increment(...)
     Client->>New: write
@@ -221,7 +226,7 @@ Two paths reach protocolErrorHandler, and they differ on child clients:
 | Path | Runs for children? |
 |---|---|
 | The socket's own 'error' listener, installed by maybeAddProtocolErrorHandler | No. A child shares a socket it did not create, so it never installs one |
-| The send callback in sendMessage, for any tcp/uds client with a callback or an errorHandler | Yes. A child that replaces the socket updates only its own this.socket, leaving the parent pointed at the old one, which the replacement has just closed |
+| The send callback in sendMessage, for any tcp/uds client with a callback or an errorHandler | Yes. A child still on its parent's socket moves only itself to the new socket and leaves the old one open, since the parent and any siblings still send on it. The old socket's owner replaces it when its own sends fail |
 
 Separately, a missing this.socket is recreated inline by sendMessage, again for tcp and
 uds only.
@@ -320,14 +325,13 @@ sequenceDiagram
     Client->>Client: clearInterval(buffer flush, aggregation flush)
     Client->>Client: aggregator.flush(), then aggregator.closed = true
     Client->>Client: telemetry.stop() + final flush (guarded)
-    Client->>Client: start 5s flushGuard timer
-    Client->>Transport: flushQueue(onFlushSettled)
+    Client->>Transport: flushQueue(boundFlushCallback(onFlushSettled))
 
     alt flush completes
         Transport-->>Client: callback
-    else flush stuck for CLOSE_FLUSH_TIMEOUT (5s)
+    else flush stuck for FLUSH_TIMEOUT (5s)
         Client->>Transport: cancelPendingSends (udp/cacheDns)
-        Client->>Client: onFlushSettled(HOTSHOTS_CLOSE_FLUSH_TIMEOUT)
+        Client->>Client: onFlushSettled(HOTSHOTS_FLUSH_TIMEOUT)
     end
 
     Note over Client: CLOSE_CONTINUE_CODES are reported but do not abort<br/>the close. Any other flush error aborts it
@@ -342,7 +346,9 @@ sequenceDiagram
 - The **5 s flush guard** covers the two ways a transport can never call back: a cold-start
   DNS lookup, and a write behind a connect that never completes. It is much larger than the
   drain budget on purpose, since a first DNS lookup or TCP connect taking a few hundred ms
-  is ordinary.
+  is ordinary. flush(callback) shares the same bound (boundFlushCallback) over its whole
+  wait, including the drain of in-flight sends, and calls back with HOTSHOTS_FLUSH_TIMEOUT.
+  It cancels nothing, since the client stays open.
 - A flush error outside CLOSE_CONTINUE_CODES aborts the close. _close() never runs and
   the socket stays open, so a caller must not assume a closed socket on error. A failed
   DNS lookup is not such an error. It carries hotShotsCode HOTSHOTS_DNS_LOOKUP_FAILED,
@@ -374,7 +380,7 @@ sequenceDiagram
 | HOTSHOTS_UDS_RETRY_QUEUE_FULL | uds | 1000 sends already waiting out a retry backoff; oldest dropped | queue |
 | HOTSHOTS_WRITE_QUEUE_FULL | tcp, stream | over maxPendingWriteBytes unflushed across an event-loop turn without draining | queue |
 | HOTSHOTS_SOCKET_NOT_CREATED | any (recreated on tcp/uds only) | no socket to write to, because creating or recreating it failed | writer |
-| HOTSHOTS_CLOSE_FLUSH_TIMEOUT | any | close() stopped waiting on the final flush | n/a |
+| HOTSHOTS_FLUSH_TIMEOUT | any | close() stopped waiting on the final flush, or flush(callback) on its flush | n/a |
 | ERR_SOCKET_DESTROYED | tcp | write attempted on a destroyed socket | writer |
 | ERR_STREAM_DESTROYED | stream | write attempted on a destroyed stream | writer |
 | EAGAIN / congestion | uds | receiver buffer full; retried before surfacing | writer |
