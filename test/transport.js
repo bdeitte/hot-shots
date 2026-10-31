@@ -255,19 +255,20 @@ describe('#transportExtended', () => {
     let client;
     const tcpServer = net.createServer(socket => {
       socket.on('data', data => {
-        assert.strictEqual(data.toString('hex'), Buffer.from(line, 'utf8').toString('hex'));
+        // Close before asserting so a failed assertion cannot leave tcpServer open
         client.close(() => {
           tcpServer.close(() => {
+            assert.strictEqual(data.toString('hex'), Buffer.from(line, 'utf8').toString('hex'));
             done();
           });
         });
       });
     });
 
-    tcpServer.listen(0, 'localhost', () => {
+    tcpServer.listen(0, '127.0.0.1', () => {
       client = new StatsD({
         protocol: 'tcp',
-        host: 'localhost',
+        host: '127.0.0.1',
         port: tcpServer.address().port,
       });
       client.increment('caf\u00e9.orders', 1, { city: '\u6771\u4eac' });
