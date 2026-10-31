@@ -110,7 +110,7 @@ Parameters (specified as one object passed into hot-shots):
 * `useDefaultRoute`: Use the default interface on a Linux system. Useful when running in containers
 * `protocol`: Use `tcp` option for TCP protocol, or `uds` for the Unix Domain Socket protocol or `stream` for the raw stream. Defaults to `udp` otherwise.
 * `path`: Used only when the protocol is `uds`. Defaults to `/var/run/datadog/dsd.socket`.
-* `stream`: Reference to a stream instance. Used only when the protocol is `stream`.
+* `stream`: Reference to a stream instance. Used only when the protocol is `stream`. Destroying the stream yourself before calling `close()` is supported.
 
 For UDP clients, when *host* is an IP address or is left unset, hot-shots
 performs no DNS lookups regardless of *cacheDns*. With *cacheDns* and a

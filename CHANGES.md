@@ -7,6 +7,7 @@ CHANGELOG
 * [@bdeitte](https://github.com/bdeitte) Pin `cacheDns` lookups to the socket's address family, so a `udp4` client whose hostname resolves to `::1` first still reaches an IPv4 agent
 * [@bdeitte](https://github.com/bdeitte) Fix `tcpGracefulErrorHandling: false` and `udsGracefulErrorHandling: false` not stopping socket replacement after a failed send
 * [@bdeitte](https://github.com/bdeitte) Contain an `errorHandler` that throws on every path that calls it, reporting the throw with `console.error`. Previously a throw from the send-failure path escaped as an uncaught exception, and a throw while the constructor or `check()`/`event()` reported an error propagated to the caller
+* [@bdeitte](https://github.com/bdeitte) Fix `close()` never calling back on a `tcp` or `stream` client whose socket was already destroyed, such as a stream the application destroyed itself
 
 ## 18.0.0 (2026-10-31)
 

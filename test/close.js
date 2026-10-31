@@ -1,6 +1,8 @@
 const assert = require('assert');
 const sinon = require('sinon');
 const helpers = require('./helpers/helpers.js');
+const net = require('net');
+const { PassThrough } = require('stream');
 
 const testTypes = helpers.testTypes;
 const createServer = helpers.createServer;
@@ -703,6 +705,74 @@ describe('#close', () => {
           done();
         }, 50);
       });
+    });
+  });
+
+  describe('already-destroyed socket', () => {
+    it('tcp: completes close when the socket was destroyed out of band', function (done) {
+      this.timeout(4000);
+      const tcpServer = net.createServer(() => {}); // eslint-disable-line no-empty-function
+      tcpServer.listen(0, '127.0.0.1', () => {
+        const client = createHotShotsClient({
+          protocol: 'tcp',
+          host: '127.0.0.1',
+          port: tcpServer.address().port,
+          tcpGracefulErrorHandling: false,
+          // eslint-disable-next-line no-empty-function
+          errorHandler: () => {}
+        }, 'client');
+
+        setTimeout(() => {
+          // Destroy the socket behind the client's back, then close normally.
+          client.socket.close();
+          tcpServer.close();
+
+          const state = { calls: 0 };
+          client.close(() => {
+            state.calls++;
+            // Give any real 'close' event a chance to arrive after the emulated
+            // one, so a double-invocation would be caught.
+            setTimeout(() => {
+              assert.strictEqual(state.calls, 1,
+                `close callback must fire exactly once, fired ${state.calls} times`);
+              done();
+            }, 100);
+          });
+        }, 100);
+      });
+    });
+
+    it('stream: completes close when the application destroyed its own stream first', function (done) {
+      this.timeout(4000);
+      const stream = new PassThrough();
+      const state = { calls: 0, appCloseEvents: 0 };
+      // The application's own listener on the stream it owns.
+      stream.on('close', () => {
+        state.appCloseEvents++;
+      });
+
+      const client = createHotShotsClient({ protocol: 'stream', stream: stream }, 'client');
+
+      // The owning application destroys the stream it handed us.
+      stream.destroy();
+
+      setTimeout(() => {
+        assert.strictEqual(state.appCloseEvents, 1,
+          'the stream should have emitted its own close exactly once by now');
+
+        client.close(() => {
+          state.calls++;
+          setTimeout(() => {
+            assert.strictEqual(state.calls, 1,
+              `close callback must fire exactly once, fired ${state.calls} times`);
+            // The client must not synthesize a second 'close' on a stream it
+            // does not own: the application's listeners would run again.
+            assert.strictEqual(state.appCloseEvents, 1,
+              `close() must not re-emit 'close' on the caller's stream, saw ${state.appCloseEvents} events`);
+            done();
+          }, 100);
+        });
+      }, 50);
     });
   });
 });
