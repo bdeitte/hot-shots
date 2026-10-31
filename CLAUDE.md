@@ -29,6 +29,8 @@ The library supports multiple transport protocols:
 - **UDS**: Unix Domain Sockets (requires unix-dgram optional dependency)
 - **Stream**: Raw stream protocol for custom transports
 
+If you are in any DNS, retry, or other protocol code, read through NETWORKING.md
+
 ### Client Architecture
 - Main Client class handles initialization and configuration
 - Transport layer abstracts protocol differences
@@ -134,10 +136,12 @@ Search for existing coverage before writing a test, and put the test in the file
 that owns its subject. Do not create a new cross-cutting file (a
 "regressions" or "guards" file collecting unrelated cases) - every test file
 here is named for what it tests, and a new test almost always belongs in one
-that already exists. Useful starting points: `udpDnsCacheTransport.js` for the
-cacheDns cache, `close.js` for close semantics, `errorHandling.js` for
-errorHandler routing and containment, `telemetry.js` for counter buckets,
-`enqueueCallback.js` for callback timing.
+that already exists. Useful starting points: `udpDns.js` for everything about
+name resolution - lookup counts, the cacheDns cache, its pending queue and its
+close path, `transportBackpressure.js` for the write caps and bounded close,
+`close.js` for close semantics, `errorHandling.js` for errorHandler routing and
+containment, `telemetry.js` for counter buckets, `enqueueCallback.js` for
+callback timing.
 
 ### Test Isolation
 
@@ -207,7 +211,7 @@ Key points:
 - Restore the clock in `afterEach` to avoid affecting other tests
 - Use `clock.tick(ms)` to advance time instead of `setTimeout`
 
-See `test/udpDnsCacheTransport.js` and `test/udpSocketOptions.js` for examples.
+See `test/udpDns.js` and `test/udpSocketOptions.js` for examples.
 
 ## Dependencies
 

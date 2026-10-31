@@ -1,6 +1,7 @@
 const assert = require('assert');
 const helpers = require('./helpers/helpers.js');
 const sinon = require('sinon');
+const dns = require('dns');
 
 const closeAll = helpers.closeAll;
 const createServer = helpers.createServer;
@@ -558,6 +559,30 @@ describe('#telemetry', () => {
   });
 
   describe('bytes tracking', () => {
+    it('should count a failed DNS lookup as a writer drop, not a queue drop', done => {
+      const originalLookup = dns.lookup;
+      server = createServer('udp', opts => {
+        dns.lookup = (host, options, callback) => setImmediate(() => {
+          const err = new Error('getaddrinfo ENOTFOUND localhost');
+          err.code = 'ENOTFOUND';
+          callback(err);
+        });
+        statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
+          cacheDns: true,
+          includeDatadogTelemetry: true
+        }), 'client');
+
+        statsd.increment('test.counter', 1, err => {
+          dns.lookup = originalLookup;
+          assert.strictEqual(err.hotShotsCode, 'HOTSHOTS_DNS_LOOKUP_FAILED');
+          assert.strictEqual(statsd.telemetry.packetsDroppedWriter, 1);
+          assert.strictEqual(statsd.telemetry.packetsDroppedQueue, 0);
+          done();
+        });
+      });
+    });
+
     it('should track bytes sent on successful send', done => {
       server = createServer('udp', opts => {
         statsd = createHotShotsClient(Object.assign(opts, {
