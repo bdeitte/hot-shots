@@ -6,6 +6,7 @@ CHANGELOG
 * [@bdeitte](https://github.com/bdeitte) Eliminate per-packet DNS lookups on UDP. A client with an IP `host` or no `host` now makes no `dns.lookup` calls, and a `cacheDns` client no longer looks up its cached address again on every packet, so neither creates the APM spans those lookups generate ([DataDog/dd-trace-js#2984](https://github.com/DataDog/dd-trace-js/issues/2984))
 * [@bdeitte](https://github.com/bdeitte) Pin `cacheDns` lookups to the socket's address family, so a `udp4` client whose hostname resolves to `::1` first still reaches an IPv4 agent
 * [@bdeitte](https://github.com/bdeitte) Fix `tcpGracefulErrorHandling: false` and `udsGracefulErrorHandling: false` not stopping socket replacement after a failed send
+* [@bdeitte](https://github.com/bdeitte) Contain an `errorHandler` that throws on every path that calls it, reporting the throw with `console.error`. Previously a throw from the send-failure path escaped as an uncaught exception, and a throw while the constructor or `check()`/`event()` reported an error propagated to the caller
 
 ## 18.0.0 (2026-10-31)
 

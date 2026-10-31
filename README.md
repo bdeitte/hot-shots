@@ -373,6 +373,8 @@ For broad error coverage, specify an `errorHandler` in your root client. It catc
 
 In unbuffered mode (`maxBufferSize === 0`), if you specify both an `errorHandler` and a per-metric callback, the callback takes precedence. In buffered mode (`maxBufferSize > 0`), per-metric callbacks do not receive send errors from periodic or overflow-driven flushes — those errors go to `errorHandler` (or are logged). See [Callback semantics](#callback-semantics) for details.
 
+An `errorHandler` that throws is contained rather than propagated, on every path that reaches it, including the constructor and `check()`/`event()` on an unsupported client. hot-shots reports the throw with `console.error` and continues, so one bad handler cannot surface at an unrelated call site or end the process from inside a transport callback.
+
 ### Callback semantics
 
 The per-metric `callback` argument has different behavior depending on whether buffering is enabled:
