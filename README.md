@@ -106,7 +106,7 @@ Parameters (specified as one object passed into hot-shots):
 * `bufferFlushInterval`: If buffering is in use, this is the time in ms to always flush any buffered metrics. `default: 1000`
 * `telegraf`:    Use Telegraf's StatsD line protocol, which is slightly different than the rest `default: false`
 * `sampleRate`:    Sends only a sample of data to StatsD for all StatsD methods.  Can be overridden at the method level. `default: 1`
-* `errorHandler`: A function with one argument. It is called to handle various errors. `default: none`, errors are thrown/logger to console
+* `errorHandler`: A function with one argument. It is called to handle various errors. `default: none`, errors are thrown/logger to console. It can also be assigned or cleared after construction (`client.errorHandler = fn`), and socket errors follow the change.
 * `useDefaultRoute`: Use the default interface on a Linux system. Useful when running in containers
 * `protocol`: Use `tcp` option for TCP protocol, or `uds` for the Unix Domain Socket protocol or `stream` for the raw stream. Defaults to `udp` otherwise.
 * `path`: Used only when the protocol is `uds`. Defaults to `/var/run/datadog/dsd.socket`.
@@ -373,7 +373,7 @@ For broad error coverage, specify an `errorHandler` in your root client. It catc
 
 In unbuffered mode (`maxBufferSize === 0`), if you specify both an `errorHandler` and a per-metric callback, the callback takes precedence. In buffered mode (`maxBufferSize > 0`), per-metric callbacks do not receive send errors from periodic or overflow-driven flushes — those errors go to `errorHandler` (or are logged). See [Callback semantics](#callback-semantics) for details.
 
-An `errorHandler` that throws is contained rather than propagated, on every path that reaches it, including the constructor and `check()`/`event()` on an unsupported client. hot-shots reports the throw with `console.error` and continues, so one bad handler cannot surface at an unrelated call site or end the process from inside a transport callback.
+An `errorHandler` that throws is contained rather than propagated, on every path that reaches it, including the socket `error` event, the constructor, and `check()`/`event()` on an unsupported client. hot-shots reports the throw with `console.error` and continues, so one bad handler cannot surface at an unrelated call site or end the process from inside a transport callback.
 
 ### Callback semantics
 

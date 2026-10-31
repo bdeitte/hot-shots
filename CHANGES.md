@@ -6,8 +6,10 @@ CHANGELOG
 * [@bdeitte](https://github.com/bdeitte) Eliminate per-packet DNS lookups on UDP. A client with an IP `host` or no `host` now makes no `dns.lookup` calls, and a `cacheDns` client no longer looks up its cached address again on every packet, so neither creates the APM spans those lookups generate ([DataDog/dd-trace-js#2984](https://github.com/DataDog/dd-trace-js/issues/2984))
 * [@bdeitte](https://github.com/bdeitte) Pin `cacheDns` lookups to the socket's address family, so a `udp4` client whose hostname resolves to `::1` first still reaches an IPv4 agent
 * [@bdeitte](https://github.com/bdeitte) Fix `tcpGracefulErrorHandling: false` and `udsGracefulErrorHandling: false` not stopping socket replacement after a failed send
-* [@bdeitte](https://github.com/bdeitte) Contain an `errorHandler` that throws on every path that calls it, reporting the throw with `console.error`. Previously a throw from the send-failure path escaped as an uncaught exception, and a throw while the constructor or `check()`/`event()` reported an error propagated to the caller
+* [@bdeitte](https://github.com/bdeitte) Contain an `errorHandler` that throws on every path that calls it, reporting the throw with `console.error`. Previously a throw from the socket `error` event or the send-failure path escaped as an uncaught exception, and a throw while the constructor or `check()`/`event()` reported an error propagated to the caller
 * [@bdeitte](https://github.com/bdeitte) Fix `close()` never calling back on a `tcp` or `stream` client whose socket was already destroyed, such as a stream the application destroyed itself
+* [@bdeitte](https://github.com/bdeitte) Support assigning `errorHandler` after construction. Socket errors now reach a handler set that way, and clearing it detaches it. Previously a late handler never saw socket errors
+* [@bdeitte](https://github.com/bdeitte) Fix a failed `tcp`/`uds` socket replacement leaving the old socket without its `errorHandler`, and a child client that replaces its socket closing the socket its parent still uses
 
 ## 18.0.0 (2026-10-31)
 
