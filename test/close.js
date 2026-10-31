@@ -872,6 +872,35 @@ describe('#close', () => {
         }, 500);
       });
 
+      it('stream: delivers a child\'s inherited handler when the parent clears its own mid-close', done => {
+        const stream = createSlowDestroyStream();
+        const seen = [];
+        const handler = err => seen.push(err.message);
+        const parent = createHotShotsClient({ protocol: 'stream', stream: stream, errorHandler: handler }, 'client');
+        // Inherits the parent's handler, which the shared socket delivers when
+        // close() starts.
+        const child = parent.childClient({});
+
+        stream.destroy();
+        child.close();
+        // Clearing the parent's handler detaches the listener that was
+        // delivering the child's errors, while the child's close is pending.
+        setTimeout(() => {
+          parent.errorHandler = undefined;
+        }, 100);
+
+        setTimeout(() => {
+          try {
+            assert.deepStrictEqual(uncaught.map(err => err.message), []);
+            assert.ok(seen.some(msg => msg.includes('late destroy failure')),
+              `the child's handler should still get the destroy error, saw ${JSON.stringify(seen)}`);
+            done();
+          } catch (assertErr) {
+            done(assertErr);
+          }
+        }, 500);
+      });
+
       it('stream: calls the close callback once, after the destroy finishes', done => {
         const stream = createSlowDestroyStream();
         const calls = [];
