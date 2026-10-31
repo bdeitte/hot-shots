@@ -3,7 +3,7 @@ const constants = require('../lib/constants');
 const sinon = require('sinon');
 const helpers = require('./helpers/helpers.js');
 const net = require('net');
-const { PassThrough } = require('stream');
+const { PassThrough, Writable } = require('stream');
 
 const testTypes = helpers.testTypes;
 const createServer = helpers.createServer;
@@ -812,6 +812,87 @@ describe('#close', () => {
           }, 100);
         });
       }, 50);
+    });
+
+    describe('a destroy that is still pending', () => {
+      let savedUncaught;
+      let uncaught;
+
+      beforeEach(() => {
+        // Swapped out so an escaping 'error' is recorded rather than failing the
+        // run from mocha's own handler, which would hide what is asserted.
+        savedUncaught = process.listeners('uncaughtException');
+        process.removeAllListeners('uncaughtException');
+        uncaught = [];
+        process.on('uncaughtException', err => uncaught.push(err));
+      });
+
+      afterEach(() => {
+        process.removeAllListeners('uncaughtException');
+        savedUncaught.forEach(listener => process.on('uncaughtException', listener));
+      });
+
+      /**
+       * Builds a stream whose _destroy finishes later, with an error, as a
+       * stream flushing to a slow resource can.
+       * @returns {Writable} the stream
+       */
+      const createSlowDestroyStream = () => new Writable({
+        write(chunk, encoding, callback) {
+          callback();
+        },
+        destroy(_err, callback) {
+          setTimeout(() => callback(new Error('late destroy failure')), 300);
+        }
+      });
+
+      it('stream: waits for the destroy and routes its error to errorHandler', done => {
+        const stream = createSlowDestroyStream();
+        const seen = [];
+        const client = createHotShotsClient({
+          protocol: 'stream',
+          stream: stream,
+          errorHandler: err => seen.push(err.message)
+        }, 'client');
+
+        // destroyed is now true, but the stream has not closed yet.
+        stream.destroy();
+        client.close();
+
+        setTimeout(() => {
+          try {
+            assert.deepStrictEqual(uncaught.map(err => err.message), [],
+              'the late destroy error must not escape as an uncaught exception');
+            assert.ok(seen.some(msg => msg.includes('late destroy failure')),
+              `the late destroy error should reach errorHandler, saw ${JSON.stringify(seen)}`);
+            done();
+          } catch (assertErr) {
+            done(assertErr);
+          }
+        }, 500);
+      });
+
+      it('stream: calls the close callback once, after the destroy finishes', done => {
+        const stream = createSlowDestroyStream();
+        const calls = [];
+        // eslint-disable-next-line no-empty-function
+        const client = createHotShotsClient({ protocol: 'stream', stream: stream, errorHandler: () => {} }, 'client');
+
+        stream.destroy();
+        client.close(err => calls.push(err));
+
+        setTimeout(() => {
+          try {
+            assert.deepStrictEqual(uncaught.map(err => err.message), []);
+            assert.strictEqual(calls.length, 1, `close callback must fire exactly once, fired ${calls.length} times`);
+            assert.ok(calls[0] && calls[0].message.includes('late destroy failure'),
+              `the close callback should get the destroy error, got ${calls[0] && calls[0].message}`);
+            done();
+          } catch (assertErr) {
+            done(assertErr);
+          }
+        }, 500);
+      });
     });
   });
 });
