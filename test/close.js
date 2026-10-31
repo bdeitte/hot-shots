@@ -1,6 +1,9 @@
 const assert = require('assert');
+const constants = require('../lib/constants');
 const sinon = require('sinon');
 const helpers = require('./helpers/helpers.js');
+const net = require('net');
+const { PassThrough, Writable } = require('stream');
 
 const testTypes = helpers.testTypes;
 const createServer = helpers.createServer;
@@ -702,6 +705,323 @@ describe('#close', () => {
             `console.error must include handler error, got: ${msg}`);
           done();
         }, 50);
+      });
+    });
+  });
+
+  describe('final flush that never completes', () => {
+    let clock;
+    let consoleErrorStub;
+
+    afterEach(() => {
+      if (clock) {
+        clock.restore();
+        clock = null;
+      }
+      if (consoleErrorStub) {
+        consoleErrorStub.restore();
+        consoleErrorStub = null;
+      }
+    });
+
+    it('stops waiting after FLUSH_TIMEOUT, reports it, and still closes the socket', done => {
+      server = createServer('udp', opts => {
+        // Installed after the server is listening, which uses real timers.
+        clock = sinon.useFakeTimers();
+        // The stuck send also trips close()'s force-close warning.
+        consoleErrorStub = sinon.stub(console, 'error');
+
+        const state = { reported: null, socketClosed: false, calls: [] };
+        const closingFlushInterval = 5;
+        const client = createHotShotsClient(Object.assign(opts, {
+          maxBufferSize: 1024,
+          bufferFlushInterval: 100000,
+          closingFlushInterval: closingFlushInterval,
+          errorHandler: err => {
+            state.reported = err;
+          }
+        }), 'client');
+        // A send that never calls back, as a tcp write into a socket whose
+        // connect never completes is left.
+        client.socket.send = () => { /* never calls back */ };
+        const realClose = client.socket.close;
+        client.socket.close = () => {
+          state.socketClosed = true;
+          realClose();
+        };
+
+        // Buffered, so it is only handed to the stuck send by close()'s final
+        // flushQueue.
+        client.increment('buffered.metric');
+        client.close(err => state.calls.push(err));
+
+        clock.tickAsync(constants.FLUSH_TIMEOUT - 1).then(() => {
+          assert.strictEqual(state.reported, null, 'close should keep waiting until FLUSH_TIMEOUT');
+          return clock.tickAsync(1);
+        }).then(() => {
+          assert.ok(state.reported, 'giving up on the final flush should be reported');
+          assert.strictEqual(state.reported.code, constants.FLUSH_TIMEOUT_CODE);
+          // Then the drain budget for the send that is still in flight.
+          return clock.tickAsync(closingFlushInterval * 12);
+        }).then(() => {
+          clock.restore();
+          clock = null;
+          // dgram emits 'close' on a later tick of the real event loop.
+          setTimeout(() => {
+            try {
+              assert.ok(state.socketClosed, 'the socket should still be closed');
+              assert.strictEqual(state.calls.length, 1, `close callback must fire once, fired ${state.calls.length} times`);
+              assert.ok(!state.calls[0], `close should not fail, got ${state.calls[0] && state.calls[0].message}`);
+              server.close();
+              server = null;
+              done();
+            } catch (assertErr) {
+              done(assertErr);
+            }
+          }, 20);
+        }).catch(done);
+      });
+    });
+  });
+
+  describe('already-destroyed socket', () => {
+    it('tcp: completes close when the socket was destroyed out of band', function (done) {
+      this.timeout(4000);
+      const tcpServer = net.createServer(() => {}); // eslint-disable-line no-empty-function
+      tcpServer.listen(0, '127.0.0.1', () => {
+        const client = createHotShotsClient({
+          protocol: 'tcp',
+          host: '127.0.0.1',
+          port: tcpServer.address().port,
+          tcpGracefulErrorHandling: false,
+          // eslint-disable-next-line no-empty-function
+          errorHandler: () => {}
+        }, 'client');
+
+        setTimeout(() => {
+          // Destroy the socket behind the client's back, then close normally.
+          client.socket.close();
+          tcpServer.close();
+
+          const state = { calls: 0 };
+          client.close(() => {
+            state.calls++;
+            // Give any real 'close' event a chance to arrive after the emulated
+            // one, so a double-invocation would be caught.
+            setTimeout(() => {
+              assert.strictEqual(state.calls, 1,
+                `close callback must fire exactly once, fired ${state.calls} times`);
+              done();
+            }, 100);
+          });
+        }, 100);
+      });
+    });
+
+    it('stream: completes close when the application destroyed its own stream first', function (done) {
+      this.timeout(4000);
+      const stream = new PassThrough();
+      const state = { calls: 0, appCloseEvents: 0 };
+      // The application's own listener on the stream it owns.
+      stream.on('close', () => {
+        state.appCloseEvents++;
+      });
+
+      const client = createHotShotsClient({ protocol: 'stream', stream: stream }, 'client');
+
+      // The owning application destroys the stream it handed us.
+      stream.destroy();
+
+      setTimeout(() => {
+        assert.strictEqual(state.appCloseEvents, 1,
+          'the stream should have emitted its own close exactly once by now');
+
+        client.close(() => {
+          state.calls++;
+          setTimeout(() => {
+            assert.strictEqual(state.calls, 1,
+              `close callback must fire exactly once, fired ${state.calls} times`);
+            // The client must not synthesize a second 'close' on a stream it
+            // does not own: the application's listeners would run again.
+            assert.strictEqual(state.appCloseEvents, 1,
+              `close() must not re-emit 'close' on the caller's stream, saw ${state.appCloseEvents} events`);
+            done();
+          }, 100);
+        });
+      }, 50);
+    });
+
+    describe('a destroy that is still pending', () => {
+      let savedUncaught;
+      let uncaught;
+
+      beforeEach(() => {
+        // Swapped out so an escaping 'error' is recorded rather than failing the
+        // run from mocha's own handler, which would hide what is asserted.
+        savedUncaught = process.listeners('uncaughtException');
+        process.removeAllListeners('uncaughtException');
+        uncaught = [];
+        process.on('uncaughtException', err => uncaught.push(err));
+      });
+
+      afterEach(() => {
+        process.removeAllListeners('uncaughtException');
+        savedUncaught.forEach(listener => process.on('uncaughtException', listener));
+      });
+
+      /**
+       * Builds a stream whose _destroy finishes later, with an error, as a
+       * stream flushing to a slow resource can.
+       * @returns {Writable} the stream
+       */
+      const createSlowDestroyStream = () => new Writable({
+        write(chunk, encoding, callback) {
+          callback();
+        },
+        destroy(_err, callback) {
+          setTimeout(() => callback(new Error('late destroy failure')), 300);
+        }
+      });
+
+      it('stream: waits for the destroy and routes its error to errorHandler', done => {
+        const stream = createSlowDestroyStream();
+        const seen = [];
+        const client = createHotShotsClient({
+          protocol: 'stream',
+          stream: stream,
+          errorHandler: err => seen.push(err.message)
+        }, 'client');
+
+        // destroyed is now true, but the stream has not closed yet.
+        stream.destroy();
+        client.close();
+
+        setTimeout(() => {
+          try {
+            assert.deepStrictEqual(uncaught.map(err => err.message), [],
+              'the late destroy error must not escape as an uncaught exception');
+            assert.ok(seen.some(msg => msg.includes('late destroy failure')),
+              `the late destroy error should reach errorHandler, saw ${JSON.stringify(seen)}`);
+            done();
+          } catch (assertErr) {
+            done(assertErr);
+          }
+        }, 500);
+      });
+
+      it('stream: delivers a child\'s inherited handler when the parent clears its own mid-close', done => {
+        const stream = createSlowDestroyStream();
+        const seen = [];
+        const handler = err => seen.push(err.message);
+        const parent = createHotShotsClient({ protocol: 'stream', stream: stream, errorHandler: handler }, 'client');
+        // Inherits the parent's handler, which the shared socket delivers when
+        // close() starts.
+        const child = parent.childClient({});
+
+        stream.destroy();
+        child.close();
+        // Clearing the parent's handler detaches the listener that was
+        // delivering the child's errors, while the child's close is pending.
+        setTimeout(() => {
+          parent.errorHandler = undefined;
+        }, 100);
+
+        setTimeout(() => {
+          try {
+            assert.deepStrictEqual(uncaught.map(err => err.message), []);
+            assert.ok(seen.some(msg => msg.includes('late destroy failure')),
+              `the child's handler should still get the destroy error, saw ${JSON.stringify(seen)}`);
+            done();
+          } catch (assertErr) {
+            done(assertErr);
+          }
+        }, 500);
+      });
+
+      /**
+       * Builds a stream that never emits 'close', whose _destroy finishes later
+       * with the given result.
+       * @param {Error|null} result - what _destroy calls back with
+       * @returns {Writable} the stream
+       */
+      const createSilentSlowDestroyStream = result => new Writable({
+        emitClose: false,
+        write(chunk, encoding, callback) {
+          callback();
+        },
+        destroy(_err, callback) {
+          setTimeout(() => callback(result), 300);
+        }
+      });
+
+      it('stream: completes close after a pending destroy on a stream with emitClose: false', done => {
+        const stream = createSilentSlowDestroyStream(null);
+        const calls = [];
+        // eslint-disable-next-line no-empty-function
+        const client = createHotShotsClient({ protocol: 'stream', stream: stream, errorHandler: () => {} }, 'client');
+
+        stream.destroy();
+        client.close(err => calls.push(err));
+
+        setTimeout(() => {
+          try {
+            assert.deepStrictEqual(uncaught.map(err => err.message), []);
+            assert.strictEqual(calls.length, 1, `close callback must fire exactly once, fired ${calls.length} times`);
+            assert.ok(!calls[0], `close should not fail, got ${calls[0] && calls[0].message}`);
+            assert.strictEqual(stream.listenerCount('error'), 0,
+              'close should remove its temporary error listener once the destroy finishes');
+            done();
+          } catch (assertErr) {
+            done(assertErr);
+          }
+        }, 700);
+      });
+
+      it('stream: routes a late destroy error on a stream with emitClose: false', done => {
+        const stream = createSilentSlowDestroyStream(new Error('late destroy failure'));
+        const seen = [];
+        const client = createHotShotsClient({
+          protocol: 'stream',
+          stream: stream,
+          errorHandler: err => seen.push(err.message)
+        }, 'client');
+
+        stream.destroy();
+        client.close();
+
+        setTimeout(() => {
+          try {
+            assert.deepStrictEqual(uncaught.map(err => err.message), [],
+              'the late destroy error must not escape as an uncaught exception');
+            assert.ok(seen.some(msg => msg.includes('late destroy failure')),
+              `the late destroy error should reach errorHandler, saw ${JSON.stringify(seen)}`);
+            done();
+          } catch (assertErr) {
+            done(assertErr);
+          }
+        }, 700);
+      });
+
+      it('stream: calls the close callback once, after the destroy finishes', done => {
+        const stream = createSlowDestroyStream();
+        const calls = [];
+        // eslint-disable-next-line no-empty-function
+        const client = createHotShotsClient({ protocol: 'stream', stream: stream, errorHandler: () => {} }, 'client');
+
+        stream.destroy();
+        client.close(err => calls.push(err));
+
+        setTimeout(() => {
+          try {
+            assert.deepStrictEqual(uncaught.map(err => err.message), []);
+            assert.strictEqual(calls.length, 1, `close callback must fire exactly once, fired ${calls.length} times`);
+            assert.ok(calls[0] && calls[0].message.includes('late destroy failure'),
+              `the close callback should get the destroy error, got ${calls[0] && calls[0].message}`);
+            done();
+          } catch (assertErr) {
+            done(assertErr);
+          }
+        }, 500);
       });
     });
   });

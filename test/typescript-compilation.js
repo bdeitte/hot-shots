@@ -204,4 +204,28 @@ describe('#typescript', function () {
       ].join('\n')
     );
   });
+
+  it('should compile assigning and clearing errorHandler after construction', () => {
+    compileTs(
+      {
+        compilerOptions: {
+          target: 'es2020',
+          module: 'commonjs',
+          moduleResolution: 'node',
+          strict: true,
+          esModuleInterop: true,
+          noEmit: true,
+        },
+      },
+      [
+        'import { StatsD } from \'hot-shots\';',
+        'const client = new StatsD({ mock: true });',
+        'client.errorHandler = (err: Error) => { console.error(err.message); };',
+        'const child = client.childClient({});',
+        'child.errorHandler = undefined;',
+        'client.errorHandler = undefined;',
+        'client.close();',
+      ].join('\n')
+    );
+  });
 });

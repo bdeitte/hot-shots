@@ -87,7 +87,9 @@ Parameters (specified as one object passed into hot-shots):
 * `tagSeparator`: Separate tags with character `default: ','`. Note does not work with `telegraf` option.
 * `globalize`:   Expose this StatsD instance globally. `default: false`
 * `cacheDns`:    Caches dns lookup to *host* for *cacheDnsTtl*, only used
-  when protocol is `udp`, `default: false`
+  when protocol is `udp`, `default: false`. hot-shots pins the lookup to the
+  socket's address family, so a `udp4` client never resolves a hostname to an
+  IPv6 address it cannot send to.
 * `cacheDnsTtl`: time-to-live of dns lookups in milliseconds, when *cacheDns* is enabled. `default: 60000`
 * `mock`:        Create a mock StatsD instance, using a mock transport that doesn't create real sockets.
   Stats are not sent to the server but can be read from mockBuffer for testing.  Note that
@@ -104,11 +106,17 @@ Parameters (specified as one object passed into hot-shots):
 * `bufferFlushInterval`: If buffering is in use, this is the time in ms to always flush any buffered metrics. `default: 1000`
 * `telegraf`:    Use Telegraf's StatsD line protocol, which is slightly different than the rest `default: false`
 * `sampleRate`:    Sends only a sample of data to StatsD for all StatsD methods.  Can be overridden at the method level. `default: 1`
-* `errorHandler`: A function with one argument. It is called to handle various errors. `default: none`, errors are thrown/logger to console
+* `errorHandler`: A function with one argument. It is called to handle various errors. `default: none`, errors are thrown/logger to console. It can also be assigned or cleared after construction (`client.errorHandler = fn`), and socket errors follow the change.
 * `useDefaultRoute`: Use the default interface on a Linux system. Useful when running in containers
 * `protocol`: Use `tcp` option for TCP protocol, or `uds` for the Unix Domain Socket protocol or `stream` for the raw stream. Defaults to `udp` otherwise.
 * `path`: Used only when the protocol is `uds`. Defaults to `/var/run/datadog/dsd.socket`.
-* `stream`: Reference to a stream instance. Used only when the protocol is `stream`.
+* `stream`: Reference to a stream instance. Used only when the protocol is `stream`. Destroying the stream yourself before calling `close()` is supported.
+
+For UDP clients, when *host* is an IP address or is left unset, hot-shots
+performs no DNS lookups regardless of *cacheDns*. With *cacheDns* and a
+hostname, packets go to the cached address without another lookup. Node otherwise routes every packet's destination through `dns.lookup`. That
+call is a no-op for an IP address, but it still registers as an async operation
+that APM tools report as a span.
 
 If no transport options (`host`, `port`, `protocol`, `path`, `stream`) are passed, the transport can be configured from environment variables for parity with the official DogStatsD clients (these are Datadog-agent variables and are ignored for `telegraf` clients):
 * `DD_DOGSTATSD_URL`: A transport URL. `udp://host[:port]` configures UDP (port defaults to 8125), while `unix:///path/to/socket` or `unixgram:///path/to/socket` configures a Unix Domain Socket. The `unixstream://` scheme is not supported.
@@ -119,7 +127,7 @@ Precedence is: explicit transport options > `DD_DOGSTATSD_URL` > `DD_DOGSTATSD_S
 * `tcpGracefulRestartRateLimit`: Used only when the protocol is `tcp`. Time (ms) between re-creating the socket. Defaults to `1000`.
 * `udsGracefulErrorHandling`: Used only when the protocol is `uds`. Boolean indicating whether to handle socket errors gracefully. Defaults to true.
 * `udsGracefulRestartRateLimit`: Used only when the protocol is `uds`. Time (ms) between re-creating the socket. Defaults to `1000`.
-* `closingFlushInterval`: Before closing, StatsD will check for inflight messages. Time (ms) between each check. Defaults to `50`.
+* `closingFlushInterval`: Before closing, StatsD will check for inflight messages. Time (ms) between each check. Defaults to `50`. Separately, `close()` waits up to 5 seconds for the final buffered flush, for example over a `tcp` connection that never completes. Past that the flush is dropped and reported via `errorHandler` or the console. `close()` then closes the socket and invokes its callback rather than hanging.
 * `udsRetryOptions`: Used only when the protocol is `uds`. Retry/backoff options for UDS sends:
   * `retries`: Number of retry attempts for failed packet sends. Defaults to `3`.
   * `retryDelayMs`: Initial delay in milliseconds before retrying a failed packet send. Defaults to `100`.
@@ -365,6 +373,8 @@ For broad error coverage, specify an `errorHandler` in your root client. It catc
 
 In unbuffered mode (`maxBufferSize === 0`), if you specify both an `errorHandler` and a per-metric callback, the callback takes precedence. In buffered mode (`maxBufferSize > 0`), per-metric callbacks do not receive send errors from periodic or overflow-driven flushes — those errors go to `errorHandler` (or are logged). See [Callback semantics](#callback-semantics) for details.
 
+An `errorHandler` that throws is contained rather than propagated, on every path that reaches it, including the socket `error` event, the constructor, and `check()`/`event()` on an unsupported client. hot-shots reports the throw with `console.error` and continues, so one bad handler cannot surface at an unrelated call site or end the process from inside a transport callback.
+
 ### Callback semantics
 
 The per-metric `callback` argument has different behavior depending on whether buffering is enabled:
@@ -379,7 +389,7 @@ Buffered mode (`maxBufferSize > 0`, the default for UDS):
 - It is not a delivery signal — the actual UDP/TCP/UDS send happens later, when the buffer fills or the flush interval fires.
 - Send failures from the periodic flush interval and overflow-driven flush are routed to `errorHandler` (or logged), never to the per-metric callback.
 
-`close`'s callback receives an error as its first parameter on failure. On the success path it fires after the socket close completes. On a flush failure it fires early with the error and the socket close is skipped — your code should not assume the socket has been closed when the callback receives an error.
+`close`'s callback receives an error as its first parameter on failure. On the success path it fires after the socket close completes. A final flush that `close()` stopped waiting on (code `HOTSHOTS_FLUSH_TIMEOUT`) goes to `errorHandler` or the console, the socket is still closed, and your callback fires with no error. On any other flush failure it fires early with the error and the socket close is skipped — your code should not assume the socket has been closed when the callback receives an error.
 
 ```javascript
 // Using errorHandler
@@ -585,6 +595,8 @@ client.flush(() => {
   // buffered payload has been handed to the transport
 });
 ```
+
+The callback waits at most 5 seconds. If the transport has not finished by then, for example because a `tcp` connect never completes, the callback receives an error with code `HOTSHOTS_FLUSH_TIMEOUT`. The metrics may still be sent afterwards.
 
 ## Sanitization
 

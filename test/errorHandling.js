@@ -2,6 +2,8 @@ const assert = require('assert');
 const process = require('process');
 const path = require('path');
 const helpers = require('./helpers/helpers.js');
+const { EventEmitter } = require('events');
+const net = require('net');
 
 /**
  * Create an internal error with a code and message.
@@ -59,6 +61,450 @@ describe('#errorHandling', () => {
       server.on('metrics', () => {
         assert.ok(false);
       });
+    });
+  });
+
+  it('should contain an errorHandler that throws while the constructor reports a bad protocol', () => {
+    // The constructor reports an unsupported protocol through errorHandler
+    // rather than throwing. A handler that throws from there must not turn a
+    // misconfiguration into an exception out of `new StatsD(...)`.
+    const originalConsoleError = console.error;
+    const logged = [];
+    console.error = msg => logged.push(String(msg));
+
+    let client;
+    try {
+      assert.doesNotThrow(() => {
+        client = createHotShotsClient({
+          protocol: 'invalid-protocol',
+          errorHandler() {
+            throw new Error('handler boom');
+          }
+        }, 'client');
+      });
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    const contained = logged.filter(msg => msg.includes('handler boom'));
+    assert.strictEqual(contained.length, 1,
+      `the throw should be reported once with console.error, saw ${JSON.stringify(logged)}`);
+    if (client) {
+      client.close(() => { /* no socket was ever created */ });
+    }
+  });
+
+  it('should contain an errorHandler that throws on the send-failure path', done => {
+    // This is the single-send failure path, where hot-shots calls errorHandler
+    // itself from inside the transport's write callback. Without containment
+    // the throw escapes as an uncaught exception and ends the process. The
+    // stream here reports a write failure without emitting 'error', so only
+    // that path is under test.
+    const originalConsoleError = console.error;
+    const logged = [];
+    console.error = msg => logged.push(String(msg));
+
+    const stream = new EventEmitter();
+    stream.destroyed = false;
+    stream.write = (chunk, writeCallback) => {
+      setImmediate(() => writeCallback(new Error('write failed')));
+      return true;
+    };
+    stream.destroy = () => {
+      stream.destroyed = true;
+      setImmediate(() => stream.emit('close'));
+    };
+
+    statsd = createHotShotsClient({
+      protocol: 'stream',
+      stream: stream,
+      errorHandler() {
+        throw new Error('handler boom');
+      }
+    }, 'client');
+
+    statsd.increment('a');
+
+    setTimeout(() => {
+      console.error = originalConsoleError;
+      const contained = logged.filter(msg => msg.includes('handler boom'));
+      assert.strictEqual(contained.length, 1,
+        `the throw should be reported once with console.error, saw ${JSON.stringify(logged)}`);
+      done();
+    }, 50);
+  });
+
+  it('should contain an errorHandler that throws on the socket error event', done => {
+    // hot-shots registers errorHandler as the socket's 'error' listener, so a
+    // throw there escapes through EventEmitter.emit and ends the process.
+    const originalConsoleError = console.error;
+    const logged = [];
+    console.error = msg => logged.push(String(msg));
+
+    statsd = createHotShotsClient({
+      host: '127.0.0.1',
+      port: 8125,
+      errorHandler() {
+        throw new Error('listener boom');
+      }
+    }, 'client');
+
+    statsd.socket.emit('error', new Error('socket blew up'));
+
+    setImmediate(() => {
+      console.error = originalConsoleError;
+      const contained = logged.filter(msg => msg.includes('listener boom'));
+      assert.strictEqual(contained.length, 1,
+        `the throw should be reported once with console.error, saw ${JSON.stringify(logged)}`);
+      done();
+    });
+  });
+
+  it('should contain an errorHandler that throws when socket replacement fails', done => {
+    // Two calls on this path, both previously bare: createTransport reports the
+    // creation failure, then protocolErrorHandler reports that it could not
+    // replace the socket. Both run inside a socket 'error' emit.
+    const originalConsoleError = console.error;
+    const originalConnect = net.connect;
+    const logged = [];
+    console.error = msg => logged.push(String(msg));
+
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, {
+        protocol: 'tcp',
+        errorHandler() {
+          throw new Error('replacement boom');
+        }
+      }), 'client');
+
+      setTimeout(() => {
+        // Make the replacement transport fail to build.
+        net.connect = () => {
+          throw new Error('connect refused');
+        };
+        // Old enough to clear the graceful-restart rate limit.
+        statsd.socket.createdAt = Date.now() - 60000;
+        statsd.socket.emit('error', internalError(badTCPConnectionCode(), 'bad connection'));
+
+        setTimeout(() => {
+          net.connect = originalConnect;
+          console.error = originalConsoleError;
+          // The replacement failed, so protocolErrorHandler returned with the
+          // original socket still in place and the client closes normally.
+          ignoreErrors = true;
+          const contained = logged.filter(msg => msg.includes('replacement boom'));
+          assert.ok(contained.length >= 1,
+            `the throws should be reported with console.error, saw ${JSON.stringify(logged)}`);
+          done();
+        }, 20);
+      }, 20);
+    });
+  });
+
+  it('should close cleanly when errorHandler is assigned after construction', done => {
+    const client = createHotShotsClient({ host: '127.0.0.1', port: 8125 }, 'client');
+    // eslint-disable-next-line no-empty-function
+    client.errorHandler = () => {};
+    // This test closes the client itself.
+    statsd = null;
+    client.close(err => {
+      assert.ok(!err, `close should not fail, got ${err && err.message}`);
+      done();
+    });
+  });
+
+  it('should replace a tcp socket when errorHandler is assigned after construction', done => {
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp' }), 'client');
+      const seen = [];
+      statsd.errorHandler = err => seen.push(err.message);
+      setTimeout(() => {
+        const initialSocket = statsd.socket;
+        // Old enough to clear the graceful-restart rate limit.
+        initialSocket.createdAt = Date.now() - 60000;
+        // ECONNRESET is a replaceable tcp error on every platform, including
+        // Windows, where badTCPConnectionCode() has no mapping.
+        initialSocket.emit('error', internalError('ECONNRESET', 'bad connection'));
+        statsd.socket.emit('error', new Error('after replacement'));
+        ignoreErrors = true;
+        assert.notStrictEqual(statsd.socket, initialSocket, 'the socket should have been replaced');
+        assert.ok(seen.includes('after replacement'),
+          `errorHandler should see errors on the new socket, saw ${JSON.stringify(seen)}`);
+        done();
+      }, 20);
+    });
+  });
+
+  it('should route socket errors to an errorHandler assigned after construction', done => {
+    statsd = createHotShotsClient({ host: '127.0.0.1', port: 8125 }, 'client');
+    const seen = [];
+    statsd.errorHandler = err => seen.push(err.message);
+    statsd.socket.emit('error', new Error('late handler'));
+    assert.deepStrictEqual(seen, ['late handler']);
+    done();
+  });
+
+  it('should detach the socket listener when a late errorHandler is removed', done => {
+    const originalConsoleError = console.error;
+    const logged = [];
+    statsd = createHotShotsClient({ host: '127.0.0.1', port: 8125 }, 'client');
+    const seen = [];
+    statsd.errorHandler = err => seen.push(err.message);
+    statsd.errorHandler = undefined;
+    console.error = msg => logged.push(String(msg));
+    try {
+      statsd.socket.emit('error', new Error('handler gone'));
+    } finally {
+      console.error = originalConsoleError;
+    }
+    // Back to the state of a client built without an errorHandler: only the
+    // transport's default debug listener remains.
+    assert.deepStrictEqual(seen, [], 'the removed handler must not be called');
+    assert.deepStrictEqual(logged, [], `nothing should be logged, saw ${JSON.stringify(logged)}`);
+    done();
+  });
+
+  it('should attach a late errorHandler to a socket that sendMessage recreates', done => {
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp' }), 'client');
+      statsd.socket.close();
+      statsd.socket = null;
+      const seen = [];
+      // Assigned while there is no socket, so the setter has nothing to attach to.
+      statsd.errorHandler = err => seen.push(err.message);
+      // This send finds the socket missing: it recreates it, and still fails.
+      statsd.increment('recreate.socket');
+      assert.ok(statsd.socket, 'sendMessage should have recreated the socket');
+      statsd.socket.emit('error', new Error('on the recreated socket'));
+      ignoreErrors = true;
+      assert.ok(seen.includes('on the recreated socket'),
+        `errorHandler should see errors on the recreated socket, saw ${JSON.stringify(seen)}`);
+      done();
+    });
+  });
+
+  it('should detach a child listener from its replacement socket when the child clears errorHandler', done => {
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp' }), 'client');
+      let childCalls = 0;
+      const child = statsd.childClient({ errorHandler: () => { childCalls++; } });
+      setTimeout(() => {
+        const sharedSocket = statsd.socket;
+        sharedSocket.createdAt = Date.now() - 60000;
+        sharedSocket.send = (buf, callback) => setImmediate(() => callback({ code: 'ECONNRESET' }));
+        child.increment('replace.me', () => {
+          const childSocket = child.socket;
+          assert.notStrictEqual(childSocket, sharedSocket, 'the child should have replaced its socket');
+          childCalls = 0;
+          child.errorHandler = undefined;
+          const originalConsoleError = console.error;
+          const logged = [];
+          console.error = msg => logged.push(String(msg));
+          try {
+            childSocket.emit('error', new Error('after clearing'));
+          } finally {
+            console.error = originalConsoleError;
+          }
+          ignoreErrors = true;
+          child.close();
+          assert.strictEqual(childCalls, 0, 'the cleared handler must not be called');
+          assert.ok(!logged.some(msg => msg.includes('hot-shots: socket error')),
+            `the child's listener should be detached, saw ${JSON.stringify(logged)}`);
+          done();
+        });
+      }, 20);
+    });
+  });
+
+  it('should reattach a child errorHandler to its replacement socket when the handler is restored', done => {
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp' }), 'client');
+      const child = statsd.childClient({});
+      setTimeout(() => {
+        const sharedSocket = statsd.socket;
+        sharedSocket.createdAt = Date.now() - 60000;
+        sharedSocket.send = (buf, callback) => setImmediate(() => callback({ code: 'ECONNRESET' }));
+        const originalConsoleError = console.error;
+        console.error = () => {}; // eslint-disable-line no-empty-function
+        child.increment('replace.me', () => {
+          console.error = originalConsoleError;
+          const childSocket = child.socket;
+          assert.notStrictEqual(childSocket, sharedSocket, 'the child should have replaced its socket');
+          const seen = [];
+          // Assigned only after the child owns its replacement socket.
+          child.errorHandler = err => seen.push(err.message);
+          childSocket.emit('error', new Error('late on child socket'));
+          // Clearing and restoring must reattach too.
+          child.errorHandler = undefined;
+          child.errorHandler = err => seen.push(err.message);
+          childSocket.emit('error', new Error('restored on child socket'));
+          ignoreErrors = true;
+          child.close();
+          assert.deepStrictEqual(seen, ['late on child socket', 'restored on child socket']);
+          done();
+        });
+      }, 20);
+    });
+  });
+
+  it('should leave the shared socket open when a child replaces its own', done => {
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, {
+        protocol: 'tcp',
+        errorHandler() {} // eslint-disable-line no-empty-function
+      }), 'client');
+      // Inherits the parent's errorHandler, so its send failure is the one that
+      // triggers a replacement.
+      const child = statsd.childClient({});
+      setTimeout(() => {
+        const sharedSocket = statsd.socket;
+        sharedSocket.createdAt = Date.now() - 60000;
+        const realSend = sharedSocket.send;
+        sharedSocket.send = (buf, callback) => setImmediate(() => callback({ code: 'ECONNRESET' }));
+        child.increment('replace.me');
+        setTimeout(() => {
+          sharedSocket.send = realSend;
+          ignoreErrors = true;
+          const childSocket = child.socket;
+          const sharedClosed = sharedSocket.isSocketClosed();
+          child.close(() => {
+            assert.notStrictEqual(childSocket, sharedSocket, 'the child should have its own socket now');
+            assert.strictEqual(statsd.socket, sharedSocket, 'the parent should keep its socket');
+            assert.ok(!sharedClosed, 'the child must not close the socket its parent and siblings still send on');
+            done();
+          });
+        }, 20);
+      }, 20);
+    });
+  });
+
+  describe('a replaced tcp socket with no errorHandler', () => {
+    let originalConsoleError;
+    let logged;
+
+    beforeEach(() => {
+      originalConsoleError = console.error;
+      logged = [];
+    });
+
+    afterEach(() => {
+      console.error = originalConsoleError;
+    });
+
+    /**
+     * Builds a tcp client with no errorHandler and replaces its socket once,
+     * then starts capturing console.error.
+     * @param {Object} opts - the server options
+     * @returns {void}
+     */
+    const createReplacedClient = opts => {
+      statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp', closingFlushInterval: 5 }), 'client');
+      const initialSocket = statsd.socket;
+      initialSocket.createdAt = Date.now() - 60000;
+      initialSocket.emit('error', internalError('ECONNRESET', 'bad connection'));
+      assert.notStrictEqual(statsd.socket, initialSocket, 'the socket should have been replaced');
+      console.error = msg => logged.push(String(msg));
+    };
+
+    it('should log a failed send once', done => {
+      server = createServer('tcp', opts => {
+        setTimeout(() => {
+          createReplacedClient(opts);
+          statsd.socket.send = (buf, callback) => setImmediate(() => callback(new Error('write failed')));
+          statsd.increment('fails');
+          setTimeout(() => {
+            console.error = originalConsoleError;
+            ignoreErrors = true;
+            const lines = logged.filter(msg => msg.includes('write failed'));
+            assert.strictEqual(lines.length, 1, `the failure should be logged once, saw ${JSON.stringify(logged)}`);
+            done();
+          }, 20);
+        }, 20);
+      });
+    });
+
+    it('should log a close error once', done => {
+      server = createServer('tcp', opts => {
+        setTimeout(() => {
+          createReplacedClient(opts);
+          const socket = statsd.socket;
+          const realClose = socket.close;
+          socket.close = () => {
+            socket.emit('error', new Error('close failed'));
+            realClose();
+          };
+          statsd.close();
+          statsd = null;
+          setTimeout(() => {
+            console.error = originalConsoleError;
+            const lines = logged.filter(msg => msg.includes('close failed'));
+            assert.strictEqual(lines.length, 1, `the failure should be logged once, saw ${JSON.stringify(logged)}`);
+            done();
+          }, 100);
+        }, 20);
+      });
+    });
+  });
+
+  it('should not also log replacement socket errors once an errorHandler is assigned', done => {
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp' }), 'client');
+      setTimeout(() => {
+        const initialSocket = statsd.socket;
+        initialSocket.createdAt = Date.now() - 60000;
+        const originalConsoleError = console.error;
+        const logged = [];
+        console.error = msg => logged.push(String(msg));
+        const seen = [];
+        try {
+          // Replaced while there is no errorHandler.
+          initialSocket.emit('error', internalError('ECONNRESET', 'bad connection'));
+          assert.notStrictEqual(statsd.socket, initialSocket, 'the socket should have been replaced');
+          statsd.errorHandler = err => seen.push(err.message);
+          statsd.socket.emit('error', new Error('after assignment'));
+        } finally {
+          console.error = originalConsoleError;
+        }
+        ignoreErrors = true;
+        assert.deepStrictEqual(seen, ['after assignment']);
+        assert.ok(!logged.some(msg => msg.includes('after assignment')),
+          `the error should reach only the handler, saw ${JSON.stringify(logged)}`);
+        done();
+      }, 20);
+    });
+  });
+
+  it('should keep errorHandler on the old socket when socket replacement fails', done => {
+    const originalConnect = net.connect;
+    const seen = [];
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, {
+        protocol: 'tcp',
+        errorHandler(err) {
+          seen.push(err.message);
+        }
+      }), 'client');
+      setTimeout(() => {
+        const initialSocket = statsd.socket;
+        net.connect = () => {
+          throw new Error('connect refused');
+        };
+        // Old enough to clear the graceful-restart rate limit.
+        initialSocket.createdAt = Date.now() - 60000;
+        try {
+          // ECONNRESET is replaceable on every platform, so the failed
+          // replacement is really attempted on Windows too.
+          initialSocket.emit('error', internalError('ECONNRESET', 'bad connection'));
+        } finally {
+          net.connect = originalConnect;
+        }
+        initialSocket.emit('error', new Error('later socket error'));
+        ignoreErrors = true;
+        assert.strictEqual(statsd.socket, initialSocket, 'the failed replacement should leave the old socket in place');
+        assert.ok(seen.includes('later socket error'),
+          `errorHandler should still see errors on the old socket, saw ${JSON.stringify(seen)}`);
+        done();
+      }, 20);
     });
   });
 
@@ -396,6 +842,28 @@ describe('#errorHandling', () => {
               }, 5);
             });
           });
+
+          it('should not re-create the socket from a failed send with tcpGracefulErrorHandling set to false', (done) => {
+            const code = badTCPConnectionCode();
+            server = createServer('tcp', opts => {
+              const client = statsd = createHotShotsClient(Object.assign(opts, {
+                protocol: 'tcp',
+                tcpGracefulErrorHandling: false,
+                // eslint-disable-next-line no-empty-function
+                errorHandler() {}
+              }), 'client');
+              setTimeout(() => {
+                const initialSocket = client.socket;
+                // Old enough to clear the graceful-restart rate limit.
+                initialSocket.createdAt = Date.now() - 60000;
+                initialSocket.send = (buf, callback) => setImmediate(() => callback(internalError(code, 'bad connection')));
+                client.increment('metric.name', () => {
+                  assert.strictEqual(client.socket, initialSocket, 'the socket must not be replaced');
+                  done();
+                });
+              }, 5);
+            });
+          });
         });
       }
 
@@ -646,6 +1114,29 @@ describe('#errorHandling', () => {
             });
           });
 
+          it('should not re-create the socket from a failed send with udsGracefulErrorHandling set to false', (done) => {
+            const code = badUDSConnectionCode();
+            server = createServer('uds_broken', opts => {
+              const client = statsd = createHotShotsClient(Object.assign(opts, {
+                protocol: 'uds',
+                udsGracefulErrorHandling: false,
+                maxBufferSize: 0,
+                // eslint-disable-next-line no-empty-function
+                errorHandler() {}
+              }), 'client');
+              setTimeout(() => {
+                const initialSocket = client.socket;
+                // Old enough to clear the graceful-restart rate limit.
+                initialSocket.createdAt = Date.now() - 60000;
+                initialSocket.send = (buf, callback) => setImmediate(() => callback(internalError(code, 'bad connection')));
+                client.increment('metric.name', () => {
+                  assert.strictEqual(client.socket, initialSocket, 'the socket must not be replaced');
+                  done();
+                });
+              }, 5);
+            });
+          });
+
           describe('#udsRetry', () => {
             /**
              * Create UDS test server
@@ -800,8 +1291,11 @@ describe('#errorHandling', () => {
                 errorHandler: (err) => {
                   errorCount++;
                   assert.ok(err);
-                  assert.strictEqual(errorCount, 1);
-                  done();
+                  // The constructor reports the failed connect, and the send
+                  // below reports it again when it cannot recreate the socket.
+                  if (errorCount === 1) {
+                    done();
+                  }
                 }
               }, 'client');
 
