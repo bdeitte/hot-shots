@@ -87,7 +87,9 @@ Parameters (specified as one object passed into hot-shots):
 * `tagSeparator`: Separate tags with character `default: ','`. Note does not work with `telegraf` option.
 * `globalize`:   Expose this StatsD instance globally. `default: false`
 * `cacheDns`:    Caches dns lookup to *host* for *cacheDnsTtl*, only used
-  when protocol is `udp`, `default: false`
+  when protocol is `udp`, `default: false`. hot-shots pins the lookup to the
+  socket's address family, so a `udp4` client never resolves a hostname to an
+  IPv6 address it cannot send to.
 * `cacheDnsTtl`: time-to-live of dns lookups in milliseconds, when *cacheDns* is enabled. `default: 60000`
 * `mock`:        Create a mock StatsD instance, using a mock transport that doesn't create real sockets.
   Stats are not sent to the server but can be read from mockBuffer for testing.  Note that
@@ -109,6 +111,12 @@ Parameters (specified as one object passed into hot-shots):
 * `protocol`: Use `tcp` option for TCP protocol, or `uds` for the Unix Domain Socket protocol or `stream` for the raw stream. Defaults to `udp` otherwise.
 * `path`: Used only when the protocol is `uds`. Defaults to `/var/run/datadog/dsd.socket`.
 * `stream`: Reference to a stream instance. Used only when the protocol is `stream`.
+
+For UDP clients, when *host* is an IP address or is left unset, hot-shots
+performs no DNS lookups regardless of *cacheDns*. With *cacheDns* and a
+hostname, packets go to the cached address without another lookup. Node otherwise routes every packet's destination through `dns.lookup`. That
+call is a no-op for an IP address, but it still registers as an async operation
+that APM tools report as a span.
 
 If no transport options (`host`, `port`, `protocol`, `path`, `stream`) are passed, the transport can be configured from environment variables for parity with the official DogStatsD clients (these are Datadog-agent variables and are ignored for `telegraf` clients):
 * `DD_DOGSTATSD_URL`: A transport URL. `udp://host[:port]` configures UDP (port defaults to 8125), while `unix:///path/to/socket` or `unixgram:///path/to/socket` configures a Unix Domain Socket. The `unixstream://` scheme is not supported.

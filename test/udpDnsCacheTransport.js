@@ -2,6 +2,7 @@ const assert = require('assert');
 const helpers = require('./helpers/helpers.js');
 const dns = require('dns');
 const dgram = require('dgram');
+const net = require('net');
 const sinon = require('sinon');
 
 const closeAll = helpers.closeAll;
@@ -74,7 +75,8 @@ describe('#udpDnsCacheTransport', () => {
 
         const resolvedHostAddress = '1.1.1.1';
         let dnsLookupCount = 0;
-        dns.lookup = (host, callback) => {
+        dns.lookup = (host, options, callback) => {
+          callback = typeof options === 'function' ? options : callback;
           dnsLookupCount++;
           callback(undefined, resolvedHostAddress);
         };
@@ -106,7 +108,8 @@ describe('#udpDnsCacheTransport', () => {
 
         const resolvedHostAddress = '1.1.1.1';
         let dnsLookupCount = 0;
-        dns.lookup = (host, callback) => {
+        dns.lookup = (host, options, callback) => {
+          callback = typeof options === 'function' ? options : callback;
           callback(undefined, resolvedHostAddress);
           dnsLookupCount++;
         };
@@ -143,7 +146,8 @@ describe('#udpDnsCacheTransport', () => {
 
         const resolvedHostAddress = '1.1.1.1';
         let dnsLookupCount = 0;
-        dns.lookup = (host, callback) => {
+        dns.lookup = (host, options, callback) => {
+          callback = typeof options === 'function' ? options : callback;
           callback(undefined, resolvedHostAddress);
           dnsLookupCount++;
         };
@@ -184,7 +188,8 @@ describe('#udpDnsCacheTransport', () => {
 
         const dnsError = new Error('DNS lookup failed');
         dnsError.code = 'ENOTFOUND';
-        dns.lookup = (host, callback) => {
+        dns.lookup = (host, options, callback) => {
+          callback = typeof options === 'function' ? options : callback;
           callback(dnsError);
         };
 
@@ -313,7 +318,8 @@ describe('#udpDnsCacheTransport', () => {
         }), 'client');
 
         let resolvedAddress = '1.1.1.1';
-        dns.lookup = (host, callback) => {
+        dns.lookup = (host, options, callback) => {
+          callback = typeof options === 'function' ? options : callback;
           callback(undefined, resolvedAddress);
         };
 
@@ -337,6 +343,99 @@ describe('#udpDnsCacheTransport', () => {
         clock.tick(1);
         assert.strictEqual(socketMock.host, '2.2.2.2');
         done();
+      });
+    });
+  });
+
+  describe('Address family', () => {
+    it('pins the lookup to family 4 for a udp4 socket', done => {
+      server = createServer(udpServerType, opts => {
+        let seenOptions = null;
+        dns.lookup = (host, options, callback) => {
+          seenOptions = options;
+          callback(null, '127.0.0.1');
+        };
+
+        statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
+          cacheDns: true
+        }), 'client');
+
+        server.on('metrics', metrics => {
+          assert.strictEqual(metrics, 'resolved.metric');
+          // Unpinned, getaddrinfo can answer a udp4 socket with an AAAA record
+          // and every send fails with EINVAL.
+          assert.ok(seenOptions, 'the lookup should receive an options argument');
+          assert.strictEqual(seenOptions.family, 4,
+            `a udp4 client must pin the lookup to family 4, saw ${JSON.stringify(seenOptions)}`);
+          done();
+        });
+
+        statsd.send('resolved.metric', {}, error => {
+          assert.strictEqual(error, null);
+        });
+      });
+    });
+
+    it('pins the lookup to family 6 for a udp6 socket', done => {
+      // No server: the lookup argument is what is under test.
+      server = null;
+      let seenOptions = null;
+      dns.lookup = (host, options, callback) => {
+        seenOptions = options;
+        callback(null, '::1');
+      };
+
+      statsd = createHotShotsClient({
+        host: 'localhost',
+        port: 8125,
+        cacheDns: true,
+        udpSocketOptions: { type: 'udp6' }
+      }, 'client');
+
+      statsd.send('resolved.metric', {}, () => {
+        assert.ok(seenOptions, 'the lookup should receive an options argument');
+        assert.strictEqual(seenOptions.family, 6,
+          `a udp6 client must pin the lookup to family 6, saw ${JSON.stringify(seenOptions)}`);
+        done();
+      });
+    });
+
+    it('still delivers to a udp4 agent when the resolver answers IPv6 first', done => {
+      // An unpinned lookup gets ::1 here, which a udp4 socket cannot send to, so
+      // this fails with EINVAL and delivers nothing unless the family pin is
+      // applied.
+      server = createServer(udpServerType, opts => {
+        dns.lookup = (host, options, callback) => {
+          if (typeof options === 'function') {
+            callback = options;
+            options = {};
+          }
+          // Like the real dns.lookup, an IP literal resolves to itself.
+          if (net.isIP(host)) {
+            return callback(null, host, net.isIP(host));
+          }
+          const family = typeof options === 'object' ? options.family : options;
+          if (family === 4) {
+            return callback(null, '127.0.0.1', 4);
+          }
+          return callback(null, '::1', 6);
+        };
+
+        statsd = createHotShotsClient(Object.assign(opts, {
+          host: 'localhost',
+          cacheDns: true
+        }), 'client');
+
+        server.on('metrics', metrics => {
+          assert.strictEqual(metrics, 'ipv6first.metric');
+          done();
+        });
+
+        statsd.send('ipv6first.metric', {}, error => {
+          assert.strictEqual(error, null,
+            `the send should reach the udp4 agent, got ${error && error.message}`);
+        });
       });
     });
   });

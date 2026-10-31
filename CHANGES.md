@@ -1,6 +1,11 @@
 CHANGELOG
 =========
 
+## Unreleased
+
+* [@bdeitte](https://github.com/bdeitte) Eliminate per-packet DNS lookups on UDP. A client with an IP `host` or no `host` now makes no `dns.lookup` calls, and a `cacheDns` client no longer looks up its cached address again on every packet, so neither creates the APM spans those lookups generate ([DataDog/dd-trace-js#2984](https://github.com/DataDog/dd-trace-js/issues/2984))
+* [@bdeitte](https://github.com/bdeitte) Pin `cacheDns` lookups to the socket's address family, so a `udp4` client whose hostname resolves to `::1` first still reaches an IPv4 agent
+
 ## 18.0.0 (2026-10-31)
 
 * [@bdeitte](https://github.com/bdeitte) BREAKING: Drop Node.js 18 support, now requires Node.js >= 20.0.0. Also test Node.js 26 in CI
