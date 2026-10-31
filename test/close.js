@@ -901,6 +901,70 @@ describe('#close', () => {
         }, 500);
       });
 
+      /**
+       * Builds a stream that never emits 'close', whose _destroy finishes later
+       * with the given result.
+       * @param {Error|null} result - what _destroy calls back with
+       * @returns {Writable} the stream
+       */
+      const createSilentSlowDestroyStream = result => new Writable({
+        emitClose: false,
+        write(chunk, encoding, callback) {
+          callback();
+        },
+        destroy(_err, callback) {
+          setTimeout(() => callback(result), 300);
+        }
+      });
+
+      it('stream: completes close after a pending destroy on a stream with emitClose: false', done => {
+        const stream = createSilentSlowDestroyStream(null);
+        const calls = [];
+        // eslint-disable-next-line no-empty-function
+        const client = createHotShotsClient({ protocol: 'stream', stream: stream, errorHandler: () => {} }, 'client');
+
+        stream.destroy();
+        client.close(err => calls.push(err));
+
+        setTimeout(() => {
+          try {
+            assert.deepStrictEqual(uncaught.map(err => err.message), []);
+            assert.strictEqual(calls.length, 1, `close callback must fire exactly once, fired ${calls.length} times`);
+            assert.ok(!calls[0], `close should not fail, got ${calls[0] && calls[0].message}`);
+            assert.strictEqual(stream.listenerCount('error'), 0,
+              'close should remove its temporary error listener once the destroy finishes');
+            done();
+          } catch (assertErr) {
+            done(assertErr);
+          }
+        }, 700);
+      });
+
+      it('stream: routes a late destroy error on a stream with emitClose: false', done => {
+        const stream = createSilentSlowDestroyStream(new Error('late destroy failure'));
+        const seen = [];
+        const client = createHotShotsClient({
+          protocol: 'stream',
+          stream: stream,
+          errorHandler: err => seen.push(err.message)
+        }, 'client');
+
+        stream.destroy();
+        client.close();
+
+        setTimeout(() => {
+          try {
+            assert.deepStrictEqual(uncaught.map(err => err.message), [],
+              'the late destroy error must not escape as an uncaught exception');
+            assert.ok(seen.some(msg => msg.includes('late destroy failure')),
+              `the late destroy error should reach errorHandler, saw ${JSON.stringify(seen)}`);
+            done();
+          } catch (assertErr) {
+            done(assertErr);
+          }
+        }, 700);
+      });
+
       it('stream: calls the close callback once, after the destroy finishes', done => {
         const stream = createSlowDestroyStream();
         const calls = [];
