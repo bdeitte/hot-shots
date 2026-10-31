@@ -10,6 +10,7 @@ CHANGELOG
 * [@bdeitte](https://github.com/bdeitte) Fix `close()` never calling back on a `tcp` or `stream` client whose socket was already destroyed, such as a stream the application destroyed itself
 * [@bdeitte](https://github.com/bdeitte) Support assigning `errorHandler` after construction. Socket errors now reach a handler set that way, and clearing it detaches it. Previously a late handler never saw socket errors
 * [@bdeitte](https://github.com/bdeitte) Fix a failed `tcp`/`uds` socket replacement leaving the old socket without its `errorHandler`, and a child client that replaces its socket closing the socket its parent still uses
+* [@bdeitte](https://github.com/bdeitte) Bound the final buffered flush in `close()` and the wait in `flush(callback)` at 5 seconds. A `tcp` client whose connection never completes previously hung `close()` forever. Past the bound, `flush` calls back with a `HOTSHOTS_FLUSH_TIMEOUT` error, and `close()` reports it and still closes the socket
 
 ## 18.0.0 (2026-10-31)
 

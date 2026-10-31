@@ -1,4 +1,5 @@
 const assert = require('assert');
+const constants = require('../lib/constants');
 const sinon = require('sinon');
 const helpers = require('./helpers/helpers.js');
 const net = require('net');
@@ -704,6 +705,44 @@ describe('#close', () => {
             `console.error must include handler error, got: ${msg}`);
           done();
         }, 50);
+      });
+    });
+  });
+
+  describe('final flush that never completes', () => {
+    it('completes a tcp close whose connect never finishes, instead of hanging forever', function (done) {
+      // The guard waits FLUSH_TIMEOUT before giving up, so allow for it.
+      this.timeout(constants.FLUSH_TIMEOUT + 5000);
+
+      const state = { reported: null };
+      // TEST-NET-1 (RFC 5737). Routable nowhere, so connect() stays pending and
+      // the final flush's write never calls back.
+      const client = createHotShotsClient({
+        protocol: 'tcp',
+        host: '192.0.2.1',
+        port: 8125,
+        maxBufferSize: 1024,
+        bufferFlushInterval: 100000,
+        tcpGracefulErrorHandling: false,
+        errorHandler: err => {
+          state.reported = err;
+        }
+      }, 'client');
+
+      // Buffered, so it is only handed to the never-connecting socket by
+      // close()'s final flushQueue - whose write callback never fires.
+      client.increment('buffered.metric');
+      assert.ok(client.bufferLength > 0, 'metric should be sitting in the buffer');
+
+      const startedAt = Date.now();
+      client.close(closeError => {
+        const elapsed = Date.now() - startedAt;
+        assert.ok(!closeError, `close should not fail, got ${closeError && closeError.message}`);
+        assert.ok(elapsed >= constants.FLUSH_TIMEOUT,
+          `close should wait out the flush budget, returned after ${elapsed}ms`);
+        assert.ok(state.reported, 'giving up on the final flush should be reported');
+        assert.strictEqual(state.reported.code, constants.FLUSH_TIMEOUT_CODE);
+        done();
       });
     });
   });

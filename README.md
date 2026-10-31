@@ -127,7 +127,7 @@ Precedence is: explicit transport options > `DD_DOGSTATSD_URL` > `DD_DOGSTATSD_S
 * `tcpGracefulRestartRateLimit`: Used only when the protocol is `tcp`. Time (ms) between re-creating the socket. Defaults to `1000`.
 * `udsGracefulErrorHandling`: Used only when the protocol is `uds`. Boolean indicating whether to handle socket errors gracefully. Defaults to true.
 * `udsGracefulRestartRateLimit`: Used only when the protocol is `uds`. Time (ms) between re-creating the socket. Defaults to `1000`.
-* `closingFlushInterval`: Before closing, StatsD will check for inflight messages. Time (ms) between each check. Defaults to `50`.
+* `closingFlushInterval`: Before closing, StatsD will check for inflight messages. Time (ms) between each check. Defaults to `50`. Separately, `close()` waits up to 5 seconds for the final buffered flush, for example over a `tcp` connection that never completes. Past that the flush is dropped and reported via `errorHandler` or the console. `close()` then closes the socket and invokes its callback rather than hanging.
 * `udsRetryOptions`: Used only when the protocol is `uds`. Retry/backoff options for UDS sends:
   * `retries`: Number of retry attempts for failed packet sends. Defaults to `3`.
   * `retryDelayMs`: Initial delay in milliseconds before retrying a failed packet send. Defaults to `100`.
@@ -389,7 +389,7 @@ Buffered mode (`maxBufferSize > 0`, the default for UDS):
 - It is not a delivery signal — the actual UDP/TCP/UDS send happens later, when the buffer fills or the flush interval fires.
 - Send failures from the periodic flush interval and overflow-driven flush are routed to `errorHandler` (or logged), never to the per-metric callback.
 
-`close`'s callback receives an error as its first parameter on failure. On the success path it fires after the socket close completes. On a flush failure it fires early with the error and the socket close is skipped — your code should not assume the socket has been closed when the callback receives an error.
+`close`'s callback receives an error as its first parameter on failure. On the success path it fires after the socket close completes. A final flush that `close()` stopped waiting on (code `HOTSHOTS_FLUSH_TIMEOUT`) goes to `errorHandler` or the console, the socket is still closed, and your callback fires with no error. On any other flush failure it fires early with the error and the socket close is skipped — your code should not assume the socket has been closed when the callback receives an error.
 
 ```javascript
 // Using errorHandler
@@ -595,6 +595,8 @@ client.flush(() => {
   // buffered payload has been handed to the transport
 });
 ```
+
+The callback waits at most 5 seconds. If the transport has not finished by then, for example because a `tcp` connect never completes, the callback receives an error with code `HOTSHOTS_FLUSH_TIMEOUT`. The metrics may still be sent afterwards.
 
 ## Sanitization
 
