@@ -396,6 +396,28 @@ describe('#errorHandling', () => {
               }, 5);
             });
           });
+
+          it('should not re-create the socket from a failed send with tcpGracefulErrorHandling set to false', (done) => {
+            const code = badTCPConnectionCode();
+            server = createServer('tcp', opts => {
+              const client = statsd = createHotShotsClient(Object.assign(opts, {
+                protocol: 'tcp',
+                tcpGracefulErrorHandling: false,
+                // eslint-disable-next-line no-empty-function
+                errorHandler() {}
+              }), 'client');
+              setTimeout(() => {
+                const initialSocket = client.socket;
+                // Old enough to clear the graceful-restart rate limit.
+                initialSocket.createdAt = Date.now() - 60000;
+                initialSocket.send = (buf, callback) => setImmediate(() => callback(internalError(code, 'bad connection')));
+                client.increment('metric.name', () => {
+                  assert.strictEqual(client.socket, initialSocket, 'the socket must not be replaced');
+                  done();
+                });
+              }, 5);
+            });
+          });
         });
       }
 
@@ -642,6 +664,29 @@ describe('#errorHandling', () => {
                   assert.strictEqual(initialSocket, client.socket);
                   done();
                 }, 5);
+              }, 5);
+            });
+          });
+
+          it('should not re-create the socket from a failed send with udsGracefulErrorHandling set to false', (done) => {
+            const code = badUDSConnectionCode();
+            server = createServer('uds_broken', opts => {
+              const client = statsd = createHotShotsClient(Object.assign(opts, {
+                protocol: 'uds',
+                udsGracefulErrorHandling: false,
+                maxBufferSize: 0,
+                // eslint-disable-next-line no-empty-function
+                errorHandler() {}
+              }), 'client');
+              setTimeout(() => {
+                const initialSocket = client.socket;
+                // Old enough to clear the graceful-restart rate limit.
+                initialSocket.createdAt = Date.now() - 60000;
+                initialSocket.send = (buf, callback) => setImmediate(() => callback(internalError(code, 'bad connection')));
+                client.increment('metric.name', () => {
+                  assert.strictEqual(client.socket, initialSocket, 'the socket must not be replaced');
+                  done();
+                });
               }, 5);
             });
           });
