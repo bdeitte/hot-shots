@@ -248,6 +248,32 @@ describe('#transportExtended', () => {
     });
   });
 
+  it('should write TCP messages as utf-8 bytes', done => {
+    // No setEncoding on this server on purpose: the assertion is on the bytes that
+    // reach the socket, which a decode on this side would hide.
+    const line = 'caf\u00e9.orders:1|c|#city:\u6771\u4eac\n';
+    let client;
+    const tcpServer = net.createServer(socket => {
+      socket.on('data', data => {
+        assert.strictEqual(data.toString('hex'), Buffer.from(line, 'utf8').toString('hex'));
+        client.close(() => {
+          tcpServer.close(() => {
+            done();
+          });
+        });
+      });
+    });
+
+    tcpServer.listen(0, 'localhost', () => {
+      client = new StatsD({
+        protocol: 'tcp',
+        host: 'localhost',
+        port: tcpServer.address().port,
+      });
+      client.increment('caf\u00e9.orders', 1, { city: '\u6771\u4eac' });
+    });
+  });
+
   it('should add newline to stream messages', done => {
     class TestStream extends Writable {
       _write(chunk, encoding, callback) { // eslint-disable-line class-methods-use-this

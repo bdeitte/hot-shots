@@ -7,6 +7,8 @@ CHANGELOG
 * [@bdeitte](https://github.com/bdeitte) Test Node.js 26 in CI
 * [@bdeitte](https://github.com/bdeitte) Fix a `cacheDns` client with no `host` failing every send on Node.js 26, which rejects `dns.lookup` without a hostname. Such a client now sends to the default address without a lookup
 * [@bdeitte](https://github.com/bdeitte) Add a Docker perfTest harness that counts the network and DNS calls the test suite makes (see `perfTest/README.md`)
+* [@dylanpulver](https://github.com/dylanpulver) Fix the DogStatsD event length header to count utf-8 bytes: `_e{...}` carries `TITLE_UTF8_LENGTH` and `TEXT_UTF8_LENGTH`, so a non-ascii title or text made the header disagree with the payload and the event unparseable. Matches `datadogpy` and `datadog-go`.
+* [@dylanpulver](https://github.com/dylanpulver) Fix the TCP transport corrupting non-ascii payloads. `addEol` decoded the message buffer to a string so that `socket.write` re-encoded it as `ascii`, which keeps only the low byte of each utf-16 code unit. It now appends the newline to the buffer and writes those bytes, matching the udp, uds and stream transports. Ascii-only payloads are byte-identical.
 
 ## 17.1.1 (2026-9-13)
 
