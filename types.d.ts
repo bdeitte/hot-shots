@@ -127,6 +127,12 @@ export class StatsD {
   constructor(options?: ClientOptions);
   childClient(options?: ChildClientOptions): StatsD;
 
+  /**
+   * The handler for errors without a per-call callback. It can be assigned or
+   * cleared after construction, and socket errors follow the change.
+   */
+  errorHandler?: (err: Error) => void;
+
   increment(stat: string, tags?: Tags): void;
   increment(stat: string | string[], value: number, sampleRate?: number, tags?: Tags, callback?: StatsCb): void;
   increment(stat: string | string[], value: number, tags?: Tags, callback?: StatsCb): void;
