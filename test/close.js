@@ -710,39 +710,76 @@ describe('#close', () => {
   });
 
   describe('final flush that never completes', () => {
-    it('completes a tcp close whose connect never finishes, instead of hanging forever', function (done) {
-      // The guard waits FLUSH_TIMEOUT before giving up, so allow for it.
-      this.timeout(constants.FLUSH_TIMEOUT + 5000);
+    let clock;
+    let consoleErrorStub;
 
-      const state = { reported: null };
-      // TEST-NET-1 (RFC 5737). Routable nowhere, so connect() stays pending and
-      // the final flush's write never calls back.
-      const client = createHotShotsClient({
-        protocol: 'tcp',
-        host: '192.0.2.1',
-        port: 8125,
-        maxBufferSize: 1024,
-        bufferFlushInterval: 100000,
-        tcpGracefulErrorHandling: false,
-        errorHandler: err => {
-          state.reported = err;
-        }
-      }, 'client');
+    afterEach(() => {
+      if (clock) {
+        clock.restore();
+        clock = null;
+      }
+      if (consoleErrorStub) {
+        consoleErrorStub.restore();
+        consoleErrorStub = null;
+      }
+    });
 
-      // Buffered, so it is only handed to the never-connecting socket by
-      // close()'s final flushQueue - whose write callback never fires.
-      client.increment('buffered.metric');
-      assert.ok(client.bufferLength > 0, 'metric should be sitting in the buffer');
+    it('stops waiting after FLUSH_TIMEOUT, reports it, and still closes the socket', done => {
+      server = createServer('udp', opts => {
+        // Installed after the server is listening, which uses real timers.
+        clock = sinon.useFakeTimers();
+        // The stuck send also trips close()'s force-close warning.
+        consoleErrorStub = sinon.stub(console, 'error');
 
-      const startedAt = Date.now();
-      client.close(closeError => {
-        const elapsed = Date.now() - startedAt;
-        assert.ok(!closeError, `close should not fail, got ${closeError && closeError.message}`);
-        assert.ok(elapsed >= constants.FLUSH_TIMEOUT,
-          `close should wait out the flush budget, returned after ${elapsed}ms`);
-        assert.ok(state.reported, 'giving up on the final flush should be reported');
-        assert.strictEqual(state.reported.code, constants.FLUSH_TIMEOUT_CODE);
-        done();
+        const state = { reported: null, socketClosed: false, calls: [] };
+        const closingFlushInterval = 5;
+        const client = createHotShotsClient(Object.assign(opts, {
+          maxBufferSize: 1024,
+          bufferFlushInterval: 100000,
+          closingFlushInterval: closingFlushInterval,
+          errorHandler: err => {
+            state.reported = err;
+          }
+        }), 'client');
+        // A send that never calls back, as a tcp write into a socket whose
+        // connect never completes is left.
+        client.socket.send = () => { /* never calls back */ };
+        const realClose = client.socket.close;
+        client.socket.close = () => {
+          state.socketClosed = true;
+          realClose();
+        };
+
+        // Buffered, so it is only handed to the stuck send by close()'s final
+        // flushQueue.
+        client.increment('buffered.metric');
+        client.close(err => state.calls.push(err));
+
+        clock.tickAsync(constants.FLUSH_TIMEOUT - 1).then(() => {
+          assert.strictEqual(state.reported, null, 'close should keep waiting until FLUSH_TIMEOUT');
+          return clock.tickAsync(1);
+        }).then(() => {
+          assert.ok(state.reported, 'giving up on the final flush should be reported');
+          assert.strictEqual(state.reported.code, constants.FLUSH_TIMEOUT_CODE);
+          // Then the drain budget for the send that is still in flight.
+          return clock.tickAsync(closingFlushInterval * 12);
+        }).then(() => {
+          clock.restore();
+          clock = null;
+          // dgram emits 'close' on a later tick of the real event loop.
+          setTimeout(() => {
+            try {
+              assert.ok(state.socketClosed, 'the socket should still be closed');
+              assert.strictEqual(state.calls.length, 1, `close callback must fire once, fired ${state.calls.length} times`);
+              assert.ok(!state.calls[0], `close should not fail, got ${state.calls[0] && state.calls[0].message}`);
+              server.close();
+              server = null;
+              done();
+            } catch (assertErr) {
+              done(assertErr);
+            }
+          }, 20);
+        }).catch(done);
       });
     });
   });
