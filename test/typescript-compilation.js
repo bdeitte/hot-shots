@@ -213,6 +213,9 @@ describe('#typescript', function () {
           module: 'commonjs',
           moduleResolution: 'node',
           strict: true,
+          // Rejects assigning undefined to an optional property unless its type
+          // includes undefined, and clearing the handler is supported.
+          exactOptionalPropertyTypes: true,
           esModuleInterop: true,
           noEmit: true,
         },

@@ -129,9 +129,10 @@ export class StatsD {
 
   /**
    * The handler for errors without a per-call callback. It can be assigned or
-   * cleared after construction, and socket errors follow the change.
+   * cleared after construction, and socket errors follow the change. Includes
+   * undefined so clearing it compiles under exactOptionalPropertyTypes.
    */
-  errorHandler?: (err: Error) => void;
+  errorHandler?: ((err: Error) => void) | undefined;
 
   increment(stat: string, tags?: Tags): void;
   increment(stat: string | string[], value: number, sampleRate?: number, tags?: Tags, callback?: StatsCb): void;
