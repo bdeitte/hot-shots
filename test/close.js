@@ -3,6 +3,8 @@ const constants = require('../lib/constants');
 const sinon = require('sinon');
 const helpers = require('./helpers/helpers.js');
 const net = require('net');
+const path = require('path');
+const { execFile } = require('child_process');
 const { PassThrough, Writable } = require('stream');
 
 const testTypes = helpers.testTypes;
@@ -465,6 +467,37 @@ describe('#close', () => {
         // No close callback, so a close-time socket error is routed to the
         // errorHandler rather than to a callback, which is where the second
         // delivery would come from.
+        child.close();
+
+        setTimeout(() => {
+          statsd.socket.emit('error', new Error('synthetic async error'));
+        }, 30);
+        setTimeout(() => {
+          assert.strictEqual(inheritedHandlerCalls, 1,
+            `inherited errorHandler should fire exactly once; got ${inheritedHandlerCalls}`);
+          server.close();
+          server = null;
+          done();
+        }, 200);
+      });
+    });
+
+    it('async close-time error reaches an inherited handler once when it clears the parent\'s handler', done => {
+      let inheritedHandlerCalls = 0;
+      server = createServer('udp', opts => {
+        statsd = createHotShotsClient(Object.assign(opts, {
+          // Clearing the parent's handler from inside the delivery detaches the
+          // listener that just delivered. The child's close listener runs next
+          // in the same emit and must still see that this error was delivered.
+          errorHandler: () => {
+            inheritedHandlerCalls++;
+            statsd.errorHandler = undefined;
+          },
+          closingFlushInterval: 5,
+        }), 'client');
+        const child = statsd.childClient();
+        delaySocketClose(statsd, 100);
+
         child.close();
 
         setTimeout(() => {
@@ -1148,6 +1181,120 @@ describe('#close', () => {
             done(assertErr);
           }
         }, 500);
+      });
+    });
+  });
+
+  describe('a stream with emitClose: false', () => {
+    /**
+     * Builds an open stream that never emits 'close'.
+     * @param {number|null} destroyDelayMs - how long _destroy takes to succeed,
+     *   or null for Node's default, which finishes synchronously
+     * @returns {Writable} the stream
+     */
+    const createSilentStream = destroyDelayMs => {
+      const options = {
+        emitClose: false,
+        write(chunk, encoding, callback) {
+          callback();
+        }
+      };
+      if (destroyDelayMs !== null) {
+        options.destroy = (_err, callback) => {
+          setTimeout(() => callback(null), destroyDelayMs);
+        };
+      }
+      return new Writable(options);
+    };
+
+    [['an asynchronous', 100], ['a synchronous', null]].forEach(([kind, delay]) => {
+      it(`completes close when close() starts ${kind} destroy`, done => {
+        const stream = createSilentStream(delay);
+        const calls = [];
+        // eslint-disable-next-line no-empty-function
+        const client = createHotShotsClient({ protocol: 'stream', stream: stream, errorHandler: () => {} }, 'client');
+
+        // The stream is still open, so close() is what starts the destroy.
+        client.close(err => calls.push(err));
+
+        setTimeout(() => {
+          try {
+            assert.strictEqual(calls.length, 1, `close callback must fire exactly once, fired ${calls.length} times`);
+            assert.ok(!calls[0], `close should not fail, got ${calls[0] && calls[0].message}`);
+            assert.strictEqual(stream.listenerCount('error'), 0,
+              'close should remove its temporary error listener once the destroy finishes');
+            done();
+          } catch (assertErr) {
+            done(assertErr);
+          }
+        }, 400);
+      });
+    });
+
+    it('stops waiting on a destroy that never finishes, reports it, and calls back', () => {
+      const clock = sinon.useFakeTimers();
+      try {
+        const stream = new Writable({
+          emitClose: false,
+          write(chunk, encoding, callback) {
+            callback();
+          },
+          // Never calls back, so the stream never finishes closing.
+          destroy() {} // eslint-disable-line no-empty-function
+        });
+        const seen = [];
+        const calls = [];
+        const client = createHotShotsClient({
+          protocol: 'stream',
+          stream: stream,
+          errorHandler: err => seen.push(err.message)
+        }, 'client');
+
+        client.close(err => calls.push(err));
+        clock.tick(constants.FLUSH_TIMEOUT - 1000);
+        assert.strictEqual(calls.length, 0, 'close should still be waiting on the destroy');
+
+        clock.tick(2000);
+        assert.strictEqual(calls.length, 1, `close callback must fire exactly once, fired ${calls.length} times`);
+        assert.ok(!calls[0], `close should not fail, got ${calls[0] && calls[0].message}`);
+        assert.ok(seen.some(msg => msg.includes('stopped waiting on the stream\'s destroy')),
+          `the abandoned destroy should be reported, saw ${JSON.stringify(seen)}`);
+        assert.strictEqual(stream.listenerCount('error'), 0,
+          'close should remove its temporary error listener when it stops waiting');
+      } finally {
+        clock.restore();
+      }
+    });
+
+    it('calls back before the process exits when the destroy held its last handle', function (done) {
+      this.timeout(10000);
+      // Run alone in a child process, so nothing but the destroy's own timer
+      // holds the event loop open. Once that timer fires, close() must still
+      // get to call back. The destroy takes long enough to still be pending
+      // when close() reaches the socket.
+      const script = `
+        const { Writable } = require('stream');
+        const StatsD = require(${JSON.stringify(path.join(__dirname, '..'))});
+        const stream = new Writable({
+          emitClose: false,
+          write(chunk, encoding, callback) { callback(); },
+          destroy(_err, callback) { setTimeout(() => callback(null), 200); }
+        });
+        const client = new StatsD({ protocol: 'stream', stream: stream });
+        stream.destroy();
+        client.close(err => process.stdout.write(err ? 'error: ' + err.message : 'closed'));
+      `;
+      // DD_* variables can turn on Datadog mode and its telemetry timer.
+      const env = Object.assign({}, process.env);
+      Object.keys(env).filter(key => key.startsWith('DD_')).forEach(key => delete env[key]);
+      execFile(process.execPath, ['-e', script], { env: env, timeout: 8000 }, (err, stdout, stderr) => {
+        try {
+          assert.ifError(err);
+          assert.strictEqual(stdout, 'closed', `close() should call back before exit, stderr: ${stderr}`);
+          done();
+        } catch (assertErr) {
+          done(assertErr);
+        }
       });
     });
   });
