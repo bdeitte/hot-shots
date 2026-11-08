@@ -1427,6 +1427,45 @@ describe('#close', () => {
         'close should remove its error listener once the destroy finishes');
     });
 
+    it('still routes a late destroy error when a send error lands between it finishing and emitting', () => {
+      const clock = sinon.useFakeTimers();
+      const consoleError = sinon.stub(console, 'error');
+      let stream;
+      let client;
+      let escaped = null;
+      try {
+        stream = new Writable({
+          emitClose: false,
+          write(chunk, encoding, callback) {
+            callback();
+          },
+          destroy(_err, callback) {
+            setTimeout(() => {
+              // Node marks the stream closed here but emits this error on the
+              // next tick, after the send error emitted just below.
+              callback(new Error('destroy failed after the timeout'));
+              client.increment('after.destroy');
+            }, constants.FLUSH_TIMEOUT + 1000);
+          }
+        });
+        client = createHotShotsClient({ protocol: 'stream', stream: stream }, 'client');
+
+        client.close();
+        clock.tick(constants.FLUSH_TIMEOUT + 2000);
+      } catch (err) {
+        escaped = err;
+      } finally {
+        consoleError.restore();
+        clock.restore();
+      }
+      assert.strictEqual(escaped, null, `the late destroy error must not escape, got ${escaped && escaped.message}`);
+      const logged = consoleError.getCalls().map(call => String(call.args[0]));
+      assert.ok(logged.some(msg => msg.includes('destroy failed after the timeout')),
+        `the late destroy error should be logged, saw ${JSON.stringify(logged)}`);
+      assert.strictEqual(stream.listenerCount('error'), 0,
+        'close should remove its error listener once the destroy has reported');
+    });
+
     it('stops waiting within the timeout when closingFlushInterval is longer', () => {
       const clock = sinon.useFakeTimers();
       try {
