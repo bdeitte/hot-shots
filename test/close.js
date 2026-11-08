@@ -1198,6 +1198,47 @@ describe('#close', () => {
         });
       });
 
+      it('stream: routes a destroy error that another stream emitted on the same tick', done => {
+        const shared = new Error('shared stream failure');
+        // eslint-disable-next-line no-empty-function
+        const openStream = new Writable({ write(chunk, encoding, callback) { callback(); } });
+        let failDestroy = null;
+        const closingStream = new Writable({
+          write(chunk, encoding, callback) {
+            callback();
+          },
+          destroy(_err, callback) {
+            failDestroy = () => callback(shared);
+          }
+        });
+        const seen = [];
+        const handler = err => seen.push(err.message);
+        const openClient = createHotShotsClient({ protocol: 'stream', stream: openStream, errorHandler: handler }, 'client');
+        const closingClient = createHotShotsClient({ protocol: 'stream', stream: closingStream, errorHandler: handler }, 'client');
+
+        closingClient.close();
+        setTimeout(() => {
+          // The same Error object, delivered on the open stream and then, on
+          // the same tick, failing the other stream's destroy.
+          openStream.emit('error', shared);
+          failDestroy();
+          setTimeout(() => {
+            openClient.close(() => {
+              try {
+                assert.deepStrictEqual(uncaught.map(err => err.message), []);
+                assert.strictEqual(seen.length, 2, `both streams' failures should be routed, saw ${JSON.stringify(seen)}`);
+                assert.ok(seen[1].includes('Error closing hot-shots socket'),
+                  `the closing stream's failure should be routed as a close error, saw ${JSON.stringify(seen)}`);
+                done();
+              } catch (assertErr) {
+                done(assertErr);
+              }
+            });
+          }, 50);
+        // Past close()'s drain wait, so its destroy has started.
+        }, 200);
+      });
+
       it('stream: calls the close callback once, after the destroy finishes', done => {
         const stream = createSlowDestroyStream();
         const calls = [];
@@ -1347,6 +1388,43 @@ describe('#close', () => {
         `the late destroy error should reach errorHandler, saw ${JSON.stringify(seen)}`);
       assert.strictEqual(stream.listenerCount('error'), 0,
         'close should remove its error listener once the late destroy finishes');
+    });
+
+    it('still routes a late destroy error after a send error was emitted past the timeout', () => {
+      const clock = sinon.useFakeTimers();
+      const consoleError = sinon.stub(console, 'error');
+      let stream;
+      let escaped = null;
+      try {
+        stream = new Writable({
+          emitClose: false,
+          write(chunk, encoding, callback) {
+            callback();
+          },
+          destroy(_err, callback) {
+            setTimeout(() => callback(new Error('destroy failed after the timeout')), constants.FLUSH_TIMEOUT + 1000);
+          }
+        });
+        // No errorHandler and no send callback, so a send error is emitted on
+        // the socket, where close()'s remaining listener is the one to see it.
+        const client = createHotShotsClient({ protocol: 'stream', stream: stream }, 'client');
+
+        client.close();
+        clock.tick(constants.FLUSH_TIMEOUT + 500);
+        client.increment('after.timeout');
+        clock.tick(1000);
+      } catch (err) {
+        escaped = err;
+      } finally {
+        consoleError.restore();
+        clock.restore();
+      }
+      assert.strictEqual(escaped, null, `the late destroy error must not escape, got ${escaped && escaped.message}`);
+      const logged = consoleError.getCalls().map(call => String(call.args[0]));
+      assert.ok(logged.some(msg => msg.includes('destroy failed after the timeout')),
+        `the late destroy error should be logged, saw ${JSON.stringify(logged)}`);
+      assert.strictEqual(stream.listenerCount('error'), 0,
+        'close should remove its error listener once the destroy finishes');
     });
 
     it('stops waiting within the timeout when closingFlushInterval is longer', () => {
