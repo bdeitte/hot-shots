@@ -1298,6 +1298,11 @@ describe('#close', () => {
           `the abandoned destroy should be reported, saw ${JSON.stringify(seen)}`);
         assert.strictEqual(stream.listenerCount('error'), 1,
           'close should keep an error listener on a destroy that may still fail');
+        // Nothing keeps polling a destroy that may never finish, which would
+        // hold the client and stream in memory for good.
+        clock.tick(60000);
+        assert.strictEqual(clock.countTimers(), 0,
+          'close should leave no timer running once it stops waiting');
       } finally {
         clock.restore();
       }
