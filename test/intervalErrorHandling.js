@@ -232,7 +232,7 @@ describe('#intervalErrorHandling', () => {
         clock.tick(10);
         assert.strictEqual(threw, true, 'telemetry.flush should have thrown');
         const calls = consoleErrorStub.getCalls().filter(c => {
-          return typeof c.args[0] === 'string' && c.args[0].includes('telemetry: errorHandler threw inside flush interval');
+          return typeof c.args[0] === 'string' && c.args[0].includes('errorHandler threw inside telemetry flush interval');
         });
         assert.ok(calls.length >= 1, 'console.error should have been called when handler throws');
         const msg = calls[0].args[0];
