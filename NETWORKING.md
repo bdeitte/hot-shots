@@ -225,7 +225,7 @@ Two paths reach protocolErrorHandler, and they differ on child clients:
 
 | Path | Runs for children? |
 |---|---|
-| The socket's own 'error' listener, installed by maybeAddProtocolErrorHandler | No. A child shares a socket it did not create, so it never installs one |
+| The socket's own 'error' listener, installed by maybeAddProtocolErrorHandler | Only on a socket the child created itself, such as a replacement. A child never installs one on its parent's shared socket |
 | The send callback in sendMessage, for any tcp/uds client with a callback or an errorHandler | Yes. A child still on its parent's socket moves only itself to the new socket and leaves the old one open, since the parent and any siblings still send on it. The old socket's owner replaces it when its own sends fail |
 
 Separately, a missing this.socket is recreated inline by sendMessage, again for tcp and
@@ -348,7 +348,9 @@ sequenceDiagram
   drain budget on purpose, since a first DNS lookup or TCP connect taking a few hundred ms
   is ordinary. flush(callback) shares the same bound (boundFlushCallback) over its whole
   wait, including the drain of in-flight sends, and calls back with HOTSHOTS_FLUSH_TIMEOUT.
-  It cancels nothing, since the client stays open.
+  It cancels nothing, since the client stays open. A flush that fails after the guard
+  stopped waiting on it is still reported to errorHandler or the console, since the
+  guard is that send's only callback.
 - A flush error outside CLOSE_CONTINUE_CODES aborts the close. _close() never runs and
   the socket stays open, so a caller must not assume a closed socket on error. A failed
   DNS lookup is not such an error. It carries hotShotsCode HOTSHOTS_DNS_LOOKUP_FAILED,
@@ -360,6 +362,11 @@ sequenceDiagram
   flush guard is the one exception: it cancels early, because the flush is already stuck.
 - **isSocketClosed()** (tcp, stream) is checked first, since destroy() only emits 'close'
   once and _close would wait forever on an already-destroyed socket.
+- **isClosingSilently()** (stream) is checked after socket.close(). A stream built with
+  emitClose: false finishes its destroy without any 'close' event, so _close polls for
+  the destroy to finish, for up to FLUSH_TIMEOUT. Past that the close callback gets an
+  error. The close-time 'error' listener stays attached until the destroy finishes, so a
+  destroy that fails late is still routed.
 - **_close is always reached via setImmediate.** unix-dgram crashes if close() runs inside
   a send completion callback on the same tick.
 - The drain waits on **this client plus every client the aggregator routed a send

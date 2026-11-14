@@ -285,7 +285,7 @@ describe('#typescript', function () {
     );
   });
 
-  it('should compile assigning and clearing errorHandler after construction', () => {
+  it('should compile assigning a SendError errorHandler after construction (ESM)', () => {
     fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ type: 'module' }));
     compileTs(
       {
@@ -301,6 +301,39 @@ describe('#typescript', function () {
         'import { StatsD, SendError } from \'hot-shots\';',
         'const client = new StatsD({ mock: true });',
         'client.errorHandler = (err: SendError): void => { console.error(err.hotShotsCode); };',
+        'client.errorHandler = undefined;',
+        'client.close();',
+      ].join('\n')
+    );
+  });
+
+  it('should compile assigning and clearing errorHandler after construction', () => {
+    compileTs(
+      {
+        compilerOptions: {
+          target: 'es2020',
+          module: 'commonjs',
+          moduleResolution: 'node',
+          strict: true,
+          // Rejects assigning undefined to an optional property unless its type
+          // includes undefined, and clearing the handler is supported.
+          exactOptionalPropertyTypes: true,
+          esModuleInterop: true,
+          noEmit: true,
+        },
+      },
+      [
+        'import { StatsD } from \'hot-shots\';',
+        'const client = new StatsD({ mock: true });',
+        'client.errorHandler = (err: Error) => { console.error(err.message); };',
+        'const child = client.childClient({});',
+        'child.errorHandler = undefined;',
+        'child.errorHandler = null;',
+        'const nullChild = client.childClient({ errorHandler: null });',
+        'nullChild.close();',
+        'const nullClient = new StatsD({ mock: true, errorHandler: null });',
+        'nullClient.close();',
+
         'client.errorHandler = undefined;',
         'client.close();',
       ].join('\n')

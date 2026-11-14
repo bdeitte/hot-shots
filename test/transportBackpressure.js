@@ -359,7 +359,7 @@ describe('#transportBackpressure', () => {
       // The guard waits FLUSH_TIMEOUT before giving up, so allow for it.
       this.timeout(constants.FLUSH_TIMEOUT + 5000);
 
-      const state = { reported: null };
+      const reported = [];
       statsd = createHotShotsClient({
         protocol: 'tcp',
         host: UNROUTABLE_HOST,
@@ -368,7 +368,7 @@ describe('#transportBackpressure', () => {
         bufferFlushInterval: 100000,
         tcpGracefulErrorHandling: false,
         errorHandler: err => {
-          state.reported = err;
+          reported.push(err);
         }
       }, 'client');
 
@@ -385,8 +385,10 @@ describe('#transportBackpressure', () => {
         assert.ok(!closeError, `close should not fail, got ${closeError && closeError.message}`);
         assert.ok(elapsed >= constants.FLUSH_TIMEOUT,
           `close should wait out the flush budget, returned after ${elapsed}ms`);
-        assert.ok(state.reported, 'giving up on the final flush should be reported');
-        assert.strictEqual(state.reported.code, constants.FLUSH_TIMEOUT_CODE);
+        // The timeout is reported first. Closing the socket then fails the
+        // write that never connected, and that late failure is reported too.
+        assert.ok(reported.length > 0, 'giving up on the final flush should be reported');
+        assert.strictEqual(reported[0].code, constants.FLUSH_TIMEOUT_CODE);
         done();
       });
     });

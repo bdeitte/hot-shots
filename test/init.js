@@ -348,6 +348,7 @@ describe('#init', () => {
 
     // Replace the dns lookup function with our mock dns lookup
     dns.lookup = (host, options, callback) => {
+      callback = typeof options === 'function' ? options : callback;
       return callback(new Error('Bad host'));
     };
 

@@ -31,7 +31,7 @@ export interface ClientOptions {
   bufferHolder?: { buffer: string };
   cacheDns?: boolean;
   cacheDnsTtl?: number;
-  errorHandler?: (err: SendError) => void;
+  errorHandler?: ((err: SendError) => void) | null;
   globalTags?: Tags;
   includeDataDogTags?: boolean;
   datadog?: boolean;
@@ -77,7 +77,7 @@ export interface ChildClientOptions {
   globalTags?: Tags;
   prefix?: string;
   suffix?: string;
-  errorHandler?: (err: SendError) => void;
+  errorHandler?: ((err: SendError) => void) | null;
   cardinality?: Cardinality;
 }
 
@@ -142,6 +142,14 @@ export type StatsCb = (error?: SendError, bytes?: number) => void;
 export class StatsD {
   constructor(options?: ClientOptions);
   childClient(options?: ChildClientOptions): StatsD;
+
+  /**
+   * The handler for errors without a per-call callback. It can be assigned or
+   * cleared after construction, with undefined or null, and socket errors
+   * follow the change. Includes undefined so clearing it compiles under
+   * exactOptionalPropertyTypes.
+   */
+  errorHandler?: ((err: SendError) => void) | null | undefined;
 
   increment(stat: string, tags?: Tags): void;
   increment(stat: string | string[], value: number, sampleRate?: number, tags?: Tags, callback?: StatsCb): void;
@@ -239,8 +247,6 @@ export class StatsD {
   check(name: string, status: DatadogChecksValues, options?: CheckOptions, tags?: Tags, callback?: StatsCb): void;
 
   public CHECKS: DatadogChecks;
-  /** Can be assigned or cleared after construction; the socket listener follows it. */
-  public errorHandler?: (err: SendError) => void;
   public mockBuffer?: string[];
   public socket: dgram.Socket;
 }

@@ -65,6 +65,77 @@ describe('#errorHandling', () => {
     });
   });
 
+  it('should contain an errorHandler that throws while the constructor reports a bad protocol', () => {
+    // The constructor reports an unsupported protocol through errorHandler
+    // rather than throwing. A handler that throws from there must not turn a
+    // misconfiguration into an exception out of `new StatsD(...)`.
+    const originalConsoleError = console.error;
+    const logged = [];
+    console.error = msg => logged.push(String(msg));
+
+    let client;
+    try {
+      assert.doesNotThrow(() => {
+        client = createHotShotsClient({
+          protocol: 'invalid-protocol',
+          errorHandler() {
+            throw new Error('handler boom');
+          }
+        }, 'client');
+      });
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    const contained = logged.filter(msg => msg.includes('handler boom'));
+    assert.strictEqual(contained.length, 1,
+      `the throw should be reported once with console.error, saw ${JSON.stringify(logged)}`);
+    if (client) {
+      client.close(() => { /* no socket was ever created */ });
+    }
+  });
+
+  it('should contain an errorHandler that throws on the send-failure path', done => {
+    // This is the single-send failure path, where hot-shots calls errorHandler
+    // itself from inside the transport's write callback. Without containment
+    // the throw escapes as an uncaught exception and ends the process. The
+    // stream here reports a write failure without emitting 'error', so only
+    // that path is under test.
+    const originalConsoleError = console.error;
+    const logged = [];
+    console.error = msg => logged.push(String(msg));
+
+    const stream = new EventEmitter();
+    stream.destroyed = false;
+    stream.writableLength = 0;
+    stream.write = (chunk, writeCallback) => {
+      setImmediate(() => writeCallback(new Error('write failed')));
+      return true;
+    };
+    stream.destroy = () => {
+      stream.destroyed = true;
+      setImmediate(() => stream.emit('close'));
+    };
+
+    statsd = createHotShotsClient({
+      protocol: 'stream',
+      stream: stream,
+      errorHandler() {
+        throw new Error('handler boom');
+      }
+    }, 'client');
+
+    statsd.increment('a');
+
+    setTimeout(() => {
+      console.error = originalConsoleError;
+      const contained = logged.filter(msg => msg.includes('handler boom'));
+      assert.strictEqual(contained.length, 1,
+        `the throw should be reported once with console.error, saw ${JSON.stringify(logged)}`);
+      done();
+    }, 50);
+  });
+
   it('should contain an errorHandler that throws on the socket error event', done => {
     // hot-shots registers errorHandler as the socket's 'error' listener, so a
     // throw there escapes through EventEmitter.emit and ends the process.
@@ -195,6 +266,33 @@ describe('#errorHandling', () => {
     done();
   });
 
+  it('should not attach the listener twice to a socket that cannot remove listeners', done => {
+    statsd = createHotShotsClient({ host: '127.0.0.1', port: 8125 }, 'client');
+    const realSocket = statsd.socket;
+    // A minimal transport, as a caller-supplied one may be: on() but no
+    // removeListener(), so clearing the handler cannot take the listener off.
+    const listeners = [];
+    statsd.socket = {
+      on: (event, fn) => {
+        if (event === 'error') {
+          listeners.push(fn);
+        }
+      },
+      emit: (event, err) => listeners.forEach(fn => fn(err)),
+      send: (buf, callback) => callback(),
+      close: () => {} // eslint-disable-line no-empty-function
+    };
+    const seen = [];
+    const handler = err => seen.push(err.message);
+    statsd.errorHandler = handler;
+    statsd.errorHandler = undefined;
+    statsd.errorHandler = handler;
+    statsd.socket.emit('error', new Error('once'));
+    statsd.socket = realSocket;
+    assert.deepStrictEqual(seen, ['once'], 'the handler must be called once per error');
+    done();
+  });
+
   it('should attach a late errorHandler to a socket that sendMessage recreates', done => {
     server = createServer('tcp', opts => {
       statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp' }), 'client');
@@ -214,7 +312,88 @@ describe('#errorHandling', () => {
     });
   });
 
-  it('should detach a child listener from its replacement socket when the child clears errorHandler', done => {
+  it('should attach an inherited errorHandler to a socket a child creates for itself', done => {
+    server = createServer('tcp', opts => {
+      const seen = [];
+      statsd = createHotShotsClient(Object.assign(opts, {
+        protocol: 'tcp',
+        errorHandler: err => seen.push(err.message)
+      }), 'client');
+      // A parent left without a socket, as after a failed transport creation.
+      // A child built now creates a socket of its own, and inherits the
+      // handler through the getter rather than through its own options.
+      statsd.socket.close();
+      statsd.socket = null;
+      const child = statsd.childClient();
+      assert.ok(child.socket, 'the child should have created its own socket');
+      child.socket.emit('error', new Error('on the child socket'));
+      ignoreErrors = true;
+      // Closed before asserting, so a failure does not leave the child's
+      // connection holding the server open.
+      child.close(() => {
+        try {
+          assert.ok(seen.includes('on the child socket'),
+            `the inherited errorHandler should see errors on the child socket, saw ${JSON.stringify(seen)}`);
+          done();
+        } catch (assertErr) {
+          done(assertErr);
+        }
+      });
+    });
+  });
+
+  it('should fall back to the parent errorHandler on a child\'s own socket once the child clears its own', done => {
+    server = createServer('tcp', opts => {
+      const seen = [];
+      statsd = createHotShotsClient(Object.assign(opts, {
+        protocol: 'tcp',
+        errorHandler: err => seen.push(`parent: ${err.message}`)
+      }), 'client');
+      statsd.socket.close();
+      statsd.socket = null;
+      const child = statsd.childClient({ errorHandler: err => seen.push(`child: ${err.message}`) });
+      // Clearing falls back to the parent's handler, so the listener on the
+      // child's own socket must stay in place for it.
+      child.errorHandler = null;
+      child.socket.emit('error', new Error('on the child socket'));
+      ignoreErrors = true;
+      child.close(() => {
+        try {
+          assert.deepStrictEqual(seen, ['parent: on the child socket'],
+            `the parent errorHandler should see the child socket error, saw ${JSON.stringify(seen)}`);
+          done();
+        } catch (assertErr) {
+          done(assertErr);
+        }
+      });
+    });
+  });
+
+  it('should route a child\'s own socket errors to an errorHandler the parent gains later', done => {
+    server = createServer('tcp', opts => {
+      const seen = [];
+      statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp' }), 'client');
+      statsd.socket.close();
+      statsd.socket = null;
+      const child = statsd.childClient();
+      // Nothing to attach for at creation. The child's own socket keeps a
+      // listener anyway, which reads whatever handler the parent has later.
+      statsd.errorHandler = err => seen.push(err.message);
+      child.socket.emit('error', new Error('on the child socket'));
+      ignoreErrors = true;
+      child.close(() => {
+        try {
+          assert.ok(seen.includes('on the child socket'),
+            `the later parent errorHandler should see the child socket error, saw ${JSON.stringify(seen)}`);
+          done();
+        } catch (assertErr) {
+          done(assertErr);
+        }
+      });
+    });
+  });
+
+  it('should log errors on a child\'s replacement socket once the child clears errorHandler', done => {
     server = createServer('tcp', opts => {
       statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp' }), 'client');
       let childCalls = 0;
@@ -239,8 +418,10 @@ describe('#errorHandling', () => {
           ignoreErrors = true;
           child.close();
           assert.strictEqual(childCalls, 0, 'the cleared handler must not be called');
-          assert.ok(!logged.some(msg => msg.includes('hot-shots: socket error')),
-            `the child's listener should be detached, saw ${JSON.stringify(logged)}`);
+          // The replacement socket has no other listener that reports, so the
+          // listener stays and logs, as a replaced socket always did.
+          const lines = logged.filter(msg => msg.includes('after clearing'));
+          assert.strictEqual(lines.length, 1, `the error should be logged once, saw ${JSON.stringify(logged)}`);
           done();
         });
       }, 20);
@@ -273,6 +454,34 @@ describe('#errorHandling', () => {
           child.close();
           assert.deepStrictEqual(seen, ['late on child socket', 'restored on child socket']);
           done();
+        });
+      }, 20);
+    });
+  });
+
+  it('should replace a child\'s own socket again on a socket-level error', done => {
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp' }), 'client');
+      const child = statsd.childClient({ errorHandler() {} }); // eslint-disable-line no-empty-function
+      setTimeout(() => {
+        const sharedSocket = statsd.socket;
+        sharedSocket.createdAt = Date.now() - 60000;
+        const realSend = sharedSocket.send;
+        sharedSocket.send = (buf, callback) => setImmediate(() => callback({ code: 'ECONNRESET' }));
+        child.increment('replace.me', () => {
+          sharedSocket.send = realSend;
+          const childSocket = child.socket;
+          assert.notStrictEqual(childSocket, sharedSocket, 'the child should have replaced its socket');
+          // An error the socket itself emits, not one from a send callback.
+          childSocket.createdAt = Date.now() - 60000;
+          childSocket.emit('error', internalError('ECONNRESET', 'reset on the child socket'));
+          ignoreErrors = true;
+          const replacedAgain = child.socket;
+          child.close(() => {
+            assert.notStrictEqual(replacedAgain, childSocket, 'the child\'s own socket should be replaced on its error');
+            assert.strictEqual(statsd.socket, sharedSocket, 'the parent should keep its socket');
+            done();
+          });
         });
       }, 20);
     });
@@ -405,6 +614,80 @@ describe('#errorHandling', () => {
     });
   });
 
+  it('should keep logging replacement socket errors after a late errorHandler is cleared', done => {
+    server = createServer('tcp', opts => {
+      statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp' }), 'client');
+      setTimeout(() => {
+        const initialSocket = statsd.socket;
+        initialSocket.createdAt = Date.now() - 60000;
+        initialSocket.emit('error', internalError('ECONNRESET', 'bad connection'));
+        assert.notStrictEqual(statsd.socket, initialSocket, 'the socket should have been replaced');
+        const seen = [];
+        statsd.errorHandler = err => seen.push(err.message);
+        statsd.errorHandler = undefined;
+        const originalConsoleError = console.error;
+        const logged = [];
+        console.error = msg => logged.push(String(msg));
+        try {
+          statsd.socket.emit('error', new Error('after clearing'));
+        } finally {
+          console.error = originalConsoleError;
+        }
+        ignoreErrors = true;
+        assert.deepStrictEqual(seen, [], 'the cleared handler must not be called');
+        const lines = logged.filter(msg => msg.includes('after clearing'));
+        assert.strictEqual(lines.length, 1, `the error should be logged once, saw ${JSON.stringify(logged)}`);
+        done();
+      }, 20);
+    });
+  });
+
+  it('should keep logging replacement socket errors after a close that failed synchronously', done => {
+    server = createServer('tcp', opts => {
+      setTimeout(() => {
+        const seen = [];
+        statsd = createHotShotsClient(Object.assign(opts, {
+          protocol: 'tcp',
+          closingFlushInterval: 5,
+          errorHandler: err => seen.push(err.message)
+        }), 'client');
+        const initialSocket = statsd.socket;
+        initialSocket.createdAt = Date.now() - 60000;
+        initialSocket.emit('error', internalError('ECONNRESET', 'bad connection'));
+        const replacement = statsd.socket;
+        assert.notStrictEqual(replacement, initialSocket, 'the socket should have been replaced');
+        const originalClose = replacement.close;
+        replacement.close = () => {
+          throw new Error('close failed');
+        };
+        statsd.close(err => {
+          replacement.close = originalClose;
+          assert.ok(err && err.message.includes('close failed'), `close should fail, got ${err && err.message}`);
+          // The replacement socket keeps its fallback listener, so clearing
+          // the handler after the failed close must not leave its errors
+          // unreported.
+          statsd.errorHandler = undefined;
+          const originalConsoleError = console.error;
+          const logged = [];
+          console.error = msg => logged.push(String(msg));
+          try {
+            replacement.emit('error', new Error('after the failed close'));
+          } finally {
+            console.error = originalConsoleError;
+          }
+          try {
+            assert.ok(logged.some(msg => msg.includes('after the failed close')),
+              `the replacement socket error should be logged, saw ${JSON.stringify(logged)}`);
+            done();
+          } catch (assertErr) {
+            done(assertErr);
+          }
+
+        });
+      }, 20);
+    });
+  });
+
   it('should keep errorHandler on the old socket when socket replacement fails', done => {
     const originalConnect = net.connect;
     const seen = [];
@@ -437,78 +720,6 @@ describe('#errorHandling', () => {
         done();
       }, 20);
     });
-  });
-
-  it('should contain an errorHandler that throws while the constructor reports a bad protocol', () => {
-    // The constructor reports an unsupported protocol through errorHandler
-    // rather than throwing. A handler that throws from there must not turn a
-    // misconfiguration into an exception out of `new StatsD(...)`.
-    const originalConsoleError = console.error;
-    const logged = [];
-    console.error = msg => logged.push(String(msg));
-
-    let client;
-    try {
-      assert.doesNotThrow(() => {
-        client = createHotShotsClient({
-          protocol: 'invalid-protocol',
-          errorHandler() {
-            throw new Error('handler boom');
-          }
-        }, 'client');
-      });
-    } finally {
-      console.error = originalConsoleError;
-    }
-
-    const contained = logged.filter(msg => msg.includes('handler boom'));
-    assert.strictEqual(contained.length, 1,
-      `the throw should be reported once with console.error, saw ${JSON.stringify(logged)}`);
-    if (client) {
-      client.close(() => { /* no socket was ever created */ });
-    }
-  });
-
-  it('should contain an errorHandler that throws on the send-failure path', done => {
-    // README documents that a throwing errorHandler is contained rather than
-    // propagated. This is the single-send failure path, where hot-shots calls
-    // errorHandler itself from inside the transport's write callback. Without
-    // containment the throw escapes as an uncaught exception and ends the
-    // process. The stream here reports a write failure without emitting
-    // 'error', so only that path is under test.
-    const originalConsoleError = console.error;
-    const logged = [];
-    console.error = msg => logged.push(String(msg));
-
-    const stream = new EventEmitter();
-    stream.destroyed = false;
-    stream.writableLength = 0;
-    stream.write = (chunk, writeCallback) => {
-      setImmediate(() => writeCallback(new Error('write failed')));
-      return true;
-    };
-    stream.destroy = () => {
-      stream.destroyed = true;
-      setImmediate(() => stream.emit('close'));
-    };
-
-    statsd = createHotShotsClient({
-      protocol: 'stream',
-      stream: stream,
-      errorHandler() {
-        throw new Error('handler boom');
-      }
-    }, 'client');
-
-    statsd.increment('a');
-
-    setTimeout(() => {
-      console.error = originalConsoleError;
-      const contained = logged.filter(msg => msg.includes('handler boom'));
-      assert.strictEqual(contained.length, 1,
-        `the throw should be reported once with console.error, saw ${JSON.stringify(logged)}`);
-      done();
-    }, 50);
   });
 
   describe('a send callback that throws on a deferred failure', () => {

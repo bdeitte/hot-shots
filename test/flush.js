@@ -244,6 +244,35 @@ describe('#flush', () => {
       done();
     };
 
+    it('should report a send error that arrives after flush stopped waiting', done => {
+      server = createServer('udp', opts => {
+        clock = sinon.useFakeTimers();
+        const reported = [];
+        createStuckClient(Object.assign(opts, {
+          maxBufferSize: 8192,
+          bufferFlushInterval: 60000,
+          errorHandler: err => reported.push(err)
+        }));
+        // Holds the send's callback so the test can fail the send later.
+        let sendCallback = null;
+        statsd.socket.send = (buf, callback) => { sendCallback = callback; };
+        statsd.increment('stuck.buffered');
+        const calls = [];
+        statsd.flush(err => calls.push(err));
+        clock.tick(constants.FLUSH_TIMEOUT);
+        clock.restore();
+        clock = null;
+        assert.strictEqual(calls.length, 1, 'flush should have stopped waiting');
+        assert.ok(sendCallback, 'the buffered payload should have been handed to the transport');
+        sendCallback(new Error('write failed'));
+        assert.strictEqual(calls.length, 1, 'the flush callback must not fire again');
+        assert.strictEqual(reported.length, 1, `the late send error should be reported once, saw ${reported.length}`);
+        assert.ok(reported[0].message.includes('write failed'),
+          `errorHandler should get the send error, got ${reported[0].message}`);
+        done();
+      });
+    });
+
     it('should stop waiting on a buffered flush that never calls back', done => {
       server = createServer('udp', opts => {
         clock = sinon.useFakeTimers();
