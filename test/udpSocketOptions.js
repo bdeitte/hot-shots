@@ -16,8 +16,19 @@ describe('#udpSocketOptions', () => {
   let server;
   let statsd;
   let clock;
+  // The server options carry address, not host, so every client built here
+  // reads DD_AGENT_HOST. A hostname there would change which lookups happen.
+  let originalAgentHost;
+
+  beforeEach(() => {
+    originalAgentHost = process.env.DD_AGENT_HOST;
+    delete process.env.DD_AGENT_HOST;
+  });
 
   afterEach(done => {
+    if (originalAgentHost !== undefined) {
+      process.env.DD_AGENT_HOST = originalAgentHost;
+    }
     if (clock) {
       clock.restore();
       clock = null;
