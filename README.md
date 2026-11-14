@@ -389,7 +389,7 @@ Buffered mode (`maxBufferSize > 0`, the default for UDS):
 - It is not a delivery signal — the actual UDP/TCP/UDS send happens later, when the buffer fills or the flush interval fires.
 - Send failures from the periodic flush interval and overflow-driven flush are routed to `errorHandler` (or logged), never to the per-metric callback.
 
-`close`'s callback receives an error as its first parameter on failure. On the success path it fires after the socket close completes. A final flush that `close()` stopped waiting on (code `HOTSHOTS_FLUSH_TIMEOUT`) goes to `errorHandler` or the console, the socket is still closed, and your callback fires with no error. If that flush fails later, the failure is reported the same way. On any other flush failure it fires early with the error and the socket close is skipped — your code should not assume the socket has been closed when the callback receives an error.
+`close`'s callback receives an error as its first parameter on failure. On the success path it fires after the socket close completes. A final flush that `close()` stopped waiting on (code `HOTSHOTS_FLUSH_TIMEOUT`) goes to `errorHandler` or the console, the socket is still closed, and your callback fires with no error. If that flush fails later, the failure is reported the same way. On any other flush failure it fires early with the error and the socket close is skipped — your code should not assume the socket has been closed when the callback receives an error. On a `stream` built with `emitClose: false`, `close()` waits up to 5 seconds for a destroy that is still pending. Past that your callback receives an error, or `errorHandler` or the console gets it when there is no callback.
 
 ```javascript
 // Using errorHandler
@@ -596,7 +596,7 @@ client.flush(() => {
 });
 ```
 
-The callback waits at most 5 seconds. If the transport has not finished by then, for example because a `tcp` connect never completes, the callback receives an error with code `HOTSHOTS_FLUSH_TIMEOUT`. The metrics may still be sent afterwards.
+The callback waits at most 5 seconds. If the transport has not finished by then, for example because a `tcp` connect never completes, the callback receives an error with code `HOTSHOTS_FLUSH_TIMEOUT`. The metrics may still be sent afterwards. The wait holds the process open, so a flush-then-exit flow with a stuck transport now exits after the callback fires with that error, where it previously could exit with the callback never called.
 
 ## Sanitization
 
