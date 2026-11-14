@@ -310,6 +310,36 @@ describe('#errorHandling', () => {
     });
   });
 
+  it('should attach an inherited errorHandler to a socket a child creates for itself', done => {
+    server = createServer('tcp', opts => {
+      const seen = [];
+      statsd = createHotShotsClient(Object.assign(opts, {
+        protocol: 'tcp',
+        errorHandler: err => seen.push(err.message)
+      }), 'client');
+      // A parent left without a socket, as after a failed transport creation.
+      // A child built now creates a socket of its own, and inherits the
+      // handler through the getter rather than through its own options.
+      statsd.socket.close();
+      statsd.socket = null;
+      const child = statsd.childClient();
+      assert.ok(child.socket, 'the child should have created its own socket');
+      child.socket.emit('error', new Error('on the child socket'));
+      ignoreErrors = true;
+      // Closed before asserting, so a failure does not leave the child's
+      // connection holding the server open.
+      child.close(() => {
+        try {
+          assert.ok(seen.includes('on the child socket'),
+            `the inherited errorHandler should see errors on the child socket, saw ${JSON.stringify(seen)}`);
+          done();
+        } catch (assertErr) {
+          done(assertErr);
+        }
+      });
+    });
+  });
+
   it('should log errors on a child\'s replacement socket once the child clears errorHandler', done => {
     server = createServer('tcp', opts => {
       statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp' }), 'client');
@@ -555,6 +585,52 @@ describe('#errorHandling', () => {
         const lines = logged.filter(msg => msg.includes('after clearing'));
         assert.strictEqual(lines.length, 1, `the error should be logged once, saw ${JSON.stringify(logged)}`);
         done();
+      }, 20);
+    });
+  });
+
+  it('should keep logging replacement socket errors after a close that failed synchronously', done => {
+    server = createServer('tcp', opts => {
+      setTimeout(() => {
+        const seen = [];
+        statsd = createHotShotsClient(Object.assign(opts, {
+          protocol: 'tcp',
+          closingFlushInterval: 5,
+          errorHandler: err => seen.push(err.message)
+        }), 'client');
+        const initialSocket = statsd.socket;
+        initialSocket.createdAt = Date.now() - 60000;
+        initialSocket.emit('error', internalError('ECONNRESET', 'bad connection'));
+        const replacement = statsd.socket;
+        assert.notStrictEqual(replacement, initialSocket, 'the socket should have been replaced');
+        const originalClose = replacement.close;
+        replacement.close = () => {
+          throw new Error('close failed');
+        };
+        statsd.close(err => {
+          replacement.close = originalClose;
+          assert.ok(err && err.message.includes('close failed'), `close should fail, got ${err && err.message}`);
+          // The replacement socket keeps its fallback listener, so clearing
+          // the handler after the failed close must not leave its errors
+          // unreported.
+          statsd.errorHandler = undefined;
+          const originalConsoleError = console.error;
+          const logged = [];
+          console.error = msg => logged.push(String(msg));
+          try {
+            replacement.emit('error', new Error('after the failed close'));
+          } finally {
+            console.error = originalConsoleError;
+          }
+          try {
+            assert.ok(logged.some(msg => msg.includes('after the failed close')),
+              `the replacement socket error should be logged, saw ${JSON.stringify(logged)}`);
+            done();
+          } catch (assertErr) {
+            done(assertErr);
+          }
+
+        });
       }, 20);
     });
   });

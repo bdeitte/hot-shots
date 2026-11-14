@@ -5,6 +5,7 @@ const helpers = require('./helpers/helpers.js');
 const net = require('net');
 const path = require('path');
 const { execFile } = require('child_process');
+const { EventEmitter } = require('events');
 const { PassThrough, Writable } = require('stream');
 
 const testTypes = helpers.testTypes;
@@ -1344,6 +1345,57 @@ describe('#close', () => {
     });
   });
 
+  describe('a socket replaced while close waits on it', () => {
+    /**
+     * Builds a transport over an EventEmitter whose close() emits 'close'
+     * asynchronously, like a real socket does. onClose runs inside close(),
+     * where a test can swap a replacement onto the client the way
+     * protocolErrorHandler does after a connection error.
+     * @param {Function} onClose - run synchronously inside close()
+     * @returns {Object} the transport
+     */
+    const createTransport = onClose => {
+      const emitter = new EventEmitter();
+      return {
+        on: emitter.on.bind(emitter),
+        removeListener: emitter.removeListener.bind(emitter),
+        emit: emitter.emit.bind(emitter),
+        listenerCount: emitter.listenerCount.bind(emitter),
+        send: (buf, callback) => callback(),
+        close: () => {
+          onClose();
+          setTimeout(() => emitter.emit('close'), 20);
+        },
+        unref: () => {} // eslint-disable-line no-empty-function
+      };
+    };
+
+    it('removes its listeners from the socket it closed rather than the replacement', done => {
+      const client = createHotShotsClient({ host: '127.0.0.1', port: 8125, closingFlushInterval: 5 }, 'client');
+      client.socket.close();
+      const replacement = createTransport(() => {}); // eslint-disable-line no-empty-function
+      const closing = createTransport(() => {
+        client.socket = replacement;
+      });
+      client.socket = closing;
+
+      client.close(err => {
+        try {
+          assert.ifError(err);
+          assert.strictEqual(closing.listenerCount('close'), 0,
+            'close should remove its close listener from the socket it closed');
+          assert.strictEqual(closing.listenerCount('error'), 0,
+            'close should remove its error listener from the socket it closed');
+          assert.strictEqual(replacement.listenerCount('error'), 0,
+            'close should not touch the replacement socket');
+          done();
+        } catch (assertErr) {
+          done(assertErr);
+        }
+      });
+    });
+  });
+
   describe('a stream with emitClose: false', () => {
     /**
      * Builds an open stream that never emits 'close'.
@@ -1390,17 +1442,24 @@ describe('#close', () => {
       });
     });
 
-    it('stops waiting on a destroy that never finishes, reports it, and calls back', () => {
+    /**
+     * Builds a stream whose destroy never finishes, so close() has to stop
+     * waiting on it.
+     * @returns {Writable} the stream
+     */
+    const createStuckStream = () => new Writable({
+      emitClose: false,
+      write(chunk, encoding, callback) {
+        callback();
+      },
+      // Never calls back, so the stream never finishes closing.
+      destroy() {} // eslint-disable-line no-empty-function
+    });
+
+    it('stops waiting on a destroy that never finishes and fails the close callback', () => {
       const clock = sinon.useFakeTimers();
       try {
-        const stream = new Writable({
-          emitClose: false,
-          write(chunk, encoding, callback) {
-            callback();
-          },
-          // Never calls back, so the stream never finishes closing.
-          destroy() {} // eslint-disable-line no-empty-function
-        });
+        const stream = createStuckStream();
         const seen = [];
         const calls = [];
         const client = createHotShotsClient({
@@ -1415,9 +1474,10 @@ describe('#close', () => {
 
         clock.tick(2000);
         assert.strictEqual(calls.length, 1, `close callback must fire exactly once, fired ${calls.length} times`);
-        assert.ok(!calls[0], `close should not fail, got ${calls[0] && calls[0].message}`);
-        assert.ok(seen.some(msg => msg.includes('stopped waiting on the stream\'s destroy')),
-          `the abandoned destroy should be reported, saw ${JSON.stringify(seen)}`);
+        assert.ok(calls[0] && calls[0].message.includes('stopped waiting on the stream\'s destroy'),
+          `the close callback should get the timeout error, got ${calls[0] && calls[0].message}`);
+        assert.strictEqual(seen.length, 0,
+          `the error goes to the close callback, not errorHandler, saw ${JSON.stringify(seen)}`);
         assert.strictEqual(stream.listenerCount('error'), 1,
           'close should keep an error listener on a destroy that may still fail');
         // Nothing keeps polling a destroy that may never finish, which would
@@ -1425,6 +1485,26 @@ describe('#close', () => {
         clock.tick(60000);
         assert.strictEqual(clock.countTimers(), 0,
           'close should leave no timer running once it stops waiting');
+      } finally {
+        clock.restore();
+      }
+    });
+
+    it('reports a destroy it stopped waiting on to errorHandler when close has no callback', () => {
+      const clock = sinon.useFakeTimers();
+      try {
+        const stream = createStuckStream();
+        const seen = [];
+        const client = createHotShotsClient({
+          protocol: 'stream',
+          stream: stream,
+          errorHandler: err => seen.push(err.message)
+        }, 'client');
+
+        client.close();
+        clock.tick(constants.FLUSH_TIMEOUT + 1000);
+        assert.ok(seen.some(msg => msg.includes('stopped waiting on the stream\'s destroy')),
+          `the abandoned destroy should be reported, saw ${JSON.stringify(seen)}`);
       } finally {
         clock.restore();
       }
@@ -1464,8 +1544,10 @@ describe('#close', () => {
       }
       assert.strictEqual(escaped, null, `the late destroy error must not escape, got ${escaped && escaped.message}`);
       assert.strictEqual(calls.length, 1, `close callback must fire exactly once, fired ${calls.length} times`);
-      assert.ok(!calls[0], `close should not fail, got ${calls[0] && calls[0].message}`);
+      assert.ok(calls[0] && calls[0].message.includes('stopped waiting on the stream\'s destroy'),
+        `the close callback should get the timeout error, got ${calls[0] && calls[0].message}`);
       assert.ok(seen.some(msg => msg.includes('destroy failed after the timeout')),
+
         `the late destroy error should reach errorHandler, saw ${JSON.stringify(seen)}`);
       assert.strictEqual(stream.listenerCount('error'), 0,
         'close should remove its error listener once the late destroy finishes');
