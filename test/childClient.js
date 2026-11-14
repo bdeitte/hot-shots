@@ -231,6 +231,40 @@ describe('#childClient', () => {
       assert.strictEqual(child.telegraf, true);
     });
 
+    it('should use an errorHandler assigned to the parent after the child was created', done => {
+      server = createServer(serverType, opts => {
+        statsd = createHotShotsClient(opts, clientType);
+        const child = statsd.childClient({});
+        const err = new Error('test error');
+        statsd.errorHandler = e => {
+          assert.strictEqual(e, err);
+          done();
+        };
+        child.dnsError = err;
+        child.send('test');
+      });
+    });
+
+    it('should fall back to the parent errorHandler when the child clears its own', done => {
+      server = createServer(serverType, opts => {
+        const err = new Error('test error');
+        statsd = createHotShotsClient(Object.assign(opts, {
+          errorHandler(e) {
+            assert.strictEqual(e, err);
+            done();
+          }
+        }), clientType);
+        const child = statsd.childClient({
+          errorHandler() {
+            assert.fail('the cleared child errorHandler should not be called');
+          }
+        });
+        child.errorHandler = undefined;
+        child.dnsError = err;
+        child.send('test');
+      });
+    });
+
     it('should allow child to override errorHandler', done => {
       server = createServer(serverType, opts => {
         const parent = createHotShotsClient(Object.assign(opts, {

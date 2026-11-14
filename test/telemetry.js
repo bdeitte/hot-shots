@@ -39,6 +39,62 @@ describe('#telemetry', () => {
       });
     });
 
+    /**
+     * Makes the client's telemetry flush interval throw once, with the console
+     * silenced, and returns how many times console.error was called. The
+     * client must have been built under the given fake clock, so its interval
+     * is a fake timer. The clock is restored before returning.
+     * @param {Object} client - a client with telemetry enabled
+     * @param {Object} clock - the sinon fake clock the client was built under
+     * @returns {number} how many times console.error was called
+     */
+    const failOneTelemetryFlush = (client, clock) => {
+      const flushStub = sinon.stub(client.telemetry, 'flush').throws(new Error('flush exploded'));
+      const consoleErrorStub = sinon.stub(console, 'error');
+      try {
+        clock.tick(client.telemetryFlushInterval + 1);
+      } finally {
+        consoleErrorStub.restore();
+        flushStub.restore();
+        clock.restore();
+      }
+      return consoleErrorStub.callCount;
+    };
+
+    it('should report flush interval errors to an errorHandler assigned after construction', done => {
+      server = createServer('udp', opts => {
+        // Installed after the server is listening, which uses real timers.
+        const clock = sinon.useFakeTimers();
+        statsd = createHotShotsClient(Object.assign(opts, {
+          includeDatadogTelemetry: true,
+          telemetryFlushInterval: 50
+        }), 'client');
+        const seen = [];
+        statsd.errorHandler = err => seen.push(err.message);
+        const logged = failOneTelemetryFlush(statsd, clock);
+        assert.deepStrictEqual(seen, ['flush exploded'], 'the late handler should get the flush error');
+        assert.strictEqual(logged, 0, 'the error must not also be logged');
+        done();
+      });
+    });
+
+    it('should log flush interval errors once the errorHandler is cleared', done => {
+      server = createServer('udp', opts => {
+        const clock = sinon.useFakeTimers();
+        const seen = [];
+        statsd = createHotShotsClient(Object.assign(opts, {
+          includeDatadogTelemetry: true,
+          telemetryFlushInterval: 50,
+          errorHandler: err => seen.push(err.message)
+        }), 'client');
+        statsd.errorHandler = undefined;
+        const logged = failOneTelemetryFlush(statsd, clock);
+        assert.deepStrictEqual(seen, [], 'the cleared handler must not be called');
+        assert.strictEqual(logged, 1, 'the error should be logged instead');
+        done();
+      });
+    });
+
     it('should use default flush interval of 10 seconds', done => {
       server = createServer('udp', opts => {
         statsd = createHotShotsClient(Object.assign(opts, {

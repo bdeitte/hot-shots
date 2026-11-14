@@ -513,18 +513,23 @@ describe('#close', () => {
       });
     });
 
-    it('async close-time error still reaches a child whose parent cleared the shared errorHandler', done => {
-      let inheritedHandlerCalls = 0;
+    it('async close-time error is logged once a child\'s parent cleared the shared errorHandler', done => {
+      let handlerCalls = 0;
       server = createServer('udp', opts => {
         statsd = createHotShotsClient(Object.assign(opts, {
-          errorHandler: () => { inheritedHandlerCalls++; },
+          errorHandler: () => { handlerCalls++; },
           closingFlushInterval: 5,
         }), 'client');
         const child = statsd.childClient();
-        // Detaches the parent's socket listener. The child still holds the
-        // handler, so its close path is now the only way the error is seen.
+        // Detaches the parent's socket listener. The child follows the parent's
+        // handler, so it has none either, and the child's close path must log
+        // the error instead of dropping it.
         statsd.errorHandler = undefined;
         delaySocketClose(statsd, 100);
+
+        const logged = [];
+        const originalConsoleError = console.error;
+        console.error = msg => logged.push(String(msg));
 
         child.close();
 
@@ -532,11 +537,18 @@ describe('#close', () => {
           statsd.socket.emit('error', new Error('synthetic async error'));
         }, 30);
         setTimeout(() => {
-          assert.strictEqual(inheritedHandlerCalls, 1,
-            `the child's errorHandler should fire exactly once; got ${inheritedHandlerCalls}`);
+          console.error = originalConsoleError;
           server.close();
           server = null;
-          done();
+          try {
+            assert.strictEqual(handlerCalls, 0,
+              `the cleared errorHandler must not fire; got ${handlerCalls}`);
+            assert.ok(logged.some(msg => msg.includes('synthetic async error')),
+              `the close-time error should be logged, saw ${JSON.stringify(logged)}`);
+            done();
+          } catch (assertErr) {
+            done(assertErr);
+          }
         }, 200);
       });
     });
@@ -943,6 +955,69 @@ describe('#close', () => {
     });
   });
 
+  describe('a send error after close stopped waiting on the final flush', () => {
+    let clock;
+    let consoleErrorStub;
+
+    afterEach(() => {
+      if (clock) {
+        clock.restore();
+        clock = null;
+      }
+      if (consoleErrorStub) {
+        consoleErrorStub.restore();
+        consoleErrorStub = null;
+      }
+    });
+
+    it('reports the send error to errorHandler', done => {
+      server = createServer('udp', opts => {
+        clock = sinon.useFakeTimers();
+        // The stuck send also trips close()'s force-close warning.
+        consoleErrorStub = sinon.stub(console, 'error');
+        const reported = [];
+        const client = createHotShotsClient(Object.assign(opts, {
+          maxBufferSize: 1024,
+          bufferFlushInterval: 100000,
+          closingFlushInterval: 5,
+          errorHandler: err => reported.push(err)
+        }), 'client');
+        // Holds the send's callback so the test can fail the send later.
+        let sendCallback = null;
+        client.socket.send = (buf, callback) => { sendCallback = callback; };
+        client.increment('buffered.metric');
+        const calls = [];
+        client.close(err => calls.push(err));
+
+        clock.tickAsync(constants.FLUSH_TIMEOUT).then(() => {
+          assert.strictEqual(reported.length, 1, 'giving up on the final flush should be reported');
+          assert.strictEqual(reported[0].code, constants.FLUSH_TIMEOUT_CODE);
+          return clock.tickAsync(5 * 12);
+        }).then(() => {
+          clock.restore();
+          clock = null;
+          assert.ok(sendCallback, 'the buffered payload should have been handed to the transport');
+          sendCallback(new Error('write failed'));
+          // dgram emits 'close' on a later tick of the real event loop.
+          setTimeout(() => {
+            try {
+              assert.strictEqual(calls.length, 1, `close callback must fire once, fired ${calls.length} times`);
+              assert.ok(!calls[0], `close should not fail, got ${calls[0] && calls[0].message}`);
+              assert.strictEqual(reported.length, 2, `the late send error should also be reported, saw ${reported.length}`);
+              assert.ok(reported[1].message.includes('write failed'),
+                `errorHandler should get the send error, got ${reported[1].message}`);
+              server.close();
+              server = null;
+              done();
+            } catch (assertErr) {
+              done(assertErr);
+            }
+          }, 20);
+        }).catch(done);
+      });
+    });
+  });
+
   describe('already-destroyed socket', () => {
     it('tcp: completes close when the socket was destroyed out of band', function (done) {
       this.timeout(4000);
@@ -1068,12 +1143,12 @@ describe('#close', () => {
         }, 500);
       });
 
-      it('stream: delivers a child\'s inherited handler when the parent clears its own mid-close', done => {
+      it('stream: logs a child\'s late destroy error when the parent clears its handler mid-close', done => {
         const stream = createSlowDestroyStream();
         const seen = [];
         const handler = err => seen.push(err.message);
         const parent = createHotShotsClient({ protocol: 'stream', stream: stream, errorHandler: handler }, 'client');
-        // Inherits the parent's handler, which the shared socket delivers when
+        // Reads the parent's handler, which the shared socket delivers when
         // close() starts.
         const child = parent.childClient({});
 
@@ -1081,15 +1156,21 @@ describe('#close', () => {
         child.close();
         // Clearing the parent's handler detaches the listener that was
         // delivering the child's errors, while the child's close is pending.
+        // The child follows the parent, so it has no handler either now.
+        const logged = [];
+        const originalConsoleError = console.error;
         setTimeout(() => {
           parent.errorHandler = undefined;
+          console.error = msg => logged.push(String(msg));
         }, 100);
 
         setTimeout(() => {
+          console.error = originalConsoleError;
           try {
             assert.deepStrictEqual(uncaught.map(err => err.message), []);
-            assert.ok(seen.some(msg => msg.includes('late destroy failure')),
-              `the child's handler should still get the destroy error, saw ${JSON.stringify(seen)}`);
+            assert.deepStrictEqual(seen, [], 'the cleared handler must not be called');
+            assert.ok(logged.some(msg => msg.includes('late destroy failure')),
+              `the destroy error should be logged, saw ${JSON.stringify(logged)}`);
             done();
           } catch (assertErr) {
             done(assertErr);
