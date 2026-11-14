@@ -106,7 +106,7 @@ Parameters (specified as one object passed into hot-shots):
 * `bufferFlushInterval`: If buffering is in use, this is the time in ms to always flush any buffered metrics. `default: 1000`
 * `telegraf`:    Use Telegraf's StatsD line protocol, which is slightly different than the rest `default: false`
 * `sampleRate`:    Sends only a sample of data to StatsD for all StatsD methods.  Can be overridden at the method level. `default: 1`
-* `errorHandler`: A function with one argument. It is called to handle various errors. `default: none`, errors are thrown/logger to console. It can also be assigned or cleared after construction (`client.errorHandler = fn`), and socket errors, telemetry errors and child clients follow the change. A child client without an `errorHandler` of its own uses its parent's current one.
+* `errorHandler`: A function with one argument. It is called to handle various errors. `default: none`, errors are thrown/logger to console. It can also be assigned or cleared after construction (`client.errorHandler = fn`, or `undefined` or `null` to clear), and socket errors, telemetry errors and child clients follow the change. A child client without an `errorHandler` of its own uses its parent's current one.
 * `useDefaultRoute`: Use the default interface on a Linux system. Useful when running in containers
 * `protocol`: Use `tcp` option for TCP protocol, or `uds` for the Unix Domain Socket protocol or `stream` for the raw stream. Defaults to `udp` otherwise.
 * `path`: Used only when the protocol is `uds`. Defaults to `/var/run/datadog/dsd.socket`.
