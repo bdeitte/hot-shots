@@ -226,6 +226,12 @@ describe('#typescript', function () {
         'client.errorHandler = (err: Error) => { console.error(err.message); };',
         'const child = client.childClient({});',
         'child.errorHandler = undefined;',
+        'child.errorHandler = null;',
+        'const nullChild = client.childClient({ errorHandler: null });',
+        'nullChild.close();',
+        'const nullClient = new StatsD({ mock: true, errorHandler: null });',
+        'nullClient.close();',
+
         'client.errorHandler = undefined;',
         'client.close();',
       ].join('\n')

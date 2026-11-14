@@ -340,6 +340,57 @@ describe('#errorHandling', () => {
     });
   });
 
+  it('should fall back to the parent errorHandler on a child\'s own socket once the child clears its own', done => {
+    server = createServer('tcp', opts => {
+      const seen = [];
+      statsd = createHotShotsClient(Object.assign(opts, {
+        protocol: 'tcp',
+        errorHandler: err => seen.push(`parent: ${err.message}`)
+      }), 'client');
+      statsd.socket.close();
+      statsd.socket = null;
+      const child = statsd.childClient({ errorHandler: err => seen.push(`child: ${err.message}`) });
+      // Clearing falls back to the parent's handler, so the listener on the
+      // child's own socket must stay in place for it.
+      child.errorHandler = null;
+      child.socket.emit('error', new Error('on the child socket'));
+      ignoreErrors = true;
+      child.close(() => {
+        try {
+          assert.deepStrictEqual(seen, ['parent: on the child socket'],
+            `the parent errorHandler should see the child socket error, saw ${JSON.stringify(seen)}`);
+          done();
+        } catch (assertErr) {
+          done(assertErr);
+        }
+      });
+    });
+  });
+
+  it('should route a child\'s own socket errors to an errorHandler the parent gains later', done => {
+    server = createServer('tcp', opts => {
+      const seen = [];
+      statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp' }), 'client');
+      statsd.socket.close();
+      statsd.socket = null;
+      const child = statsd.childClient();
+      // Nothing to attach for at creation. The child's own socket keeps a
+      // listener anyway, which reads whatever handler the parent has later.
+      statsd.errorHandler = err => seen.push(err.message);
+      child.socket.emit('error', new Error('on the child socket'));
+      ignoreErrors = true;
+      child.close(() => {
+        try {
+          assert.ok(seen.includes('on the child socket'),
+            `the later parent errorHandler should see the child socket error, saw ${JSON.stringify(seen)}`);
+          done();
+        } catch (assertErr) {
+          done(assertErr);
+        }
+      });
+    });
+  });
+
   it('should log errors on a child\'s replacement socket once the child clears errorHandler', done => {
     server = createServer('tcp', opts => {
       statsd = createHotShotsClient(Object.assign(opts, { protocol: 'tcp' }), 'client');

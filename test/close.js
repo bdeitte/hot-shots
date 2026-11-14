@@ -717,6 +717,53 @@ describe('#close', () => {
       });
     });
 
+    it('async close-time error reaches root errorHandler when that error replaces the socket mid-close', done => {
+      let rootCalls = 0;
+      server = createServer('tcp', opts => {
+        setTimeout(() => {
+          statsd = createHotShotsClient(Object.assign(opts, {
+            protocol: 'tcp',
+            errorHandler: () => { rootCalls++; },
+            closingFlushInterval: 5,
+          }), 'client');
+          const closingSocket = statsd.socket;
+          // Old enough to clear the graceful-restart rate limit, so the error
+          // below has protocolErrorHandler swap in a replacement while close
+          // is still waiting on this socket.
+          closingSocket.createdAt = Date.now() - 60000;
+          delaySocketClose(statsd, 100);
+
+          // No close callback, so the close-time error must reach errorHandler.
+          statsd.close();
+
+          setTimeout(() => {
+            const err = new Error('reset while closing');
+            err.code = 'ECONNRESET';
+            closingSocket.emit('error', err);
+            assert.notStrictEqual(statsd.socket, closingSocket, 'the error should have replaced the socket');
+          }, 30);
+          setTimeout(() => {
+            const calls = rootCalls;
+            // Close the replacement socket and the server before asserting, so
+            // a failure leaves nothing holding the process open.
+            statsd.close(() => {
+              server.close();
+              server = null;
+              statsd = null;
+              try {
+                assert.strictEqual(calls, 1,
+                  `root errorHandler should receive the close-time error; got ${calls}`);
+                done();
+              } catch (assertErr) {
+                done(assertErr);
+              }
+            });
+          }, 200);
+
+        }, 20);
+      });
+    });
+
     it('grandchild inheriting through an overriding child does not lose async error delivery', done => {
       let rootCalls = 0;
       let intermediateCalls = 0;
