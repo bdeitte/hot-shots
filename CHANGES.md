@@ -18,7 +18,6 @@ CHANGELOG
 * [@bdeitte](https://github.com/bdeitte) Give every refused send a `HOTSHOTS_*` error code and count it as `packets_dropped_queue`, and add `bytes_dropped_queue` to the Datadog telemetry. A `cacheDns` cooldown refusal keeps the resolver's code on `code` and carries `HOTSHOTS_DNS_COOLDOWN` on `hotShotsCode`, and a failed lookup carries `HOTSHOTS_DNS_LOOKUP_FAILED` there. A send with no socket fails with `HOTSHOTS_SOCKET_NOT_CREATED`. Every send failure now carries the `Error sending hot-shots message:` prefix, so a `dnsError` set on the client is wrapped rather than passed through as the same object. See NETWORKING.md for each code and its bucket
 * [@bdeitte](https://github.com/bdeitte) Deliver send failures on a later tick, so an `errorHandler` that emits a metric on failure can no longer grow the stack without bound
 * [@bdeitte](https://github.com/bdeitte) Contain a send callback that throws, reporting it with `console.error` and continuing. Such a throw previously could end the process
-* [@bdeitte](https://github.com/bdeitte) Fix send and close errors being logged twice after a `tcp`/`uds` socket replacement on a client with no `errorHandler`
 * [@bdeitte](https://github.com/bdeitte) Add NETWORKING.md, documenting the send path and failure modes of each transport, and link it from README.md
 
 ## 18.0.0 (2026-10-31)
