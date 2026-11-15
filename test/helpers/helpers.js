@@ -22,6 +22,7 @@ const CLIENT = 'client';
 const CHILD_CLIENT = 'child client';
 const CHILD_CHILD_CLIENT = 'child child client';
 const TCP_BROKEN = 'tcp_broken';
+const TCP_UTF8 = 'tcp_utf8';
 const UDS_BROKEN = 'uds_broken';
 
 // tcp puts a newline at the end but udp/uds do not
@@ -111,11 +112,30 @@ function testProtocolTypes() {
 }
 
 /**
+ * Point the client at the exact address the TCP server bound.
+ *
+ * server.address() reports `address`, but StatsD reads `host`, so without this
+ * the client falls back to Node's default of 'localhost'. Where localhost
+ * resolves to ::1 first, that leaves an IPv4-only server and an IPv6-seeking
+ * client. autoSelectFamily hides it for the client code under test, but these
+ * tests should target the bound address directly rather than lean on that.
+ *
+ * @param {Object} address - the result of server.address()
+ * @returns {Object} client options carrying an explicit host
+ */
+function tcpClientOptions(address) {
+  return Object.assign({}, address, { host: address.address });
+}
+
+/**
  * Create statsd server to send messages to for testing
  */
 function createServer(serverType, callback) {
-  const onListening = (opts) => {
-    callback(Object.assign(opts, { protocol: serverType, bufferFlushInterval: 10 }));
+  // The protocol defaults to the server type, which holds for every type whose
+  // name is a protocol. TCP_UTF8 is a tcp server with a different decode, so it
+  // passes the protocol its client should speak.
+  const onListening = (opts, protocol = serverType) => {
+    callback(Object.assign(opts, { protocol, bufferFlushInterval: 10 }));
   };
 
   let server;
@@ -180,10 +200,27 @@ function createServer(serverType, callback) {
       });
     });
     server.on('listening', () => {
-      onListening(server.address());
+      onListening(tcpClientOptions(server.address()));
     });
 
-    server.listen(0, 'localhost');
+    server.listen(0, '127.0.0.1');
+  }
+  else if (serverType === TCP_UTF8) {
+    // Same as TCP but decoding utf-8, for a payload that is not ascii. TCP stays
+    // on ascii so the decode every other test has used is still exercised.
+    server = net.createServer(socket => {
+      socket.setEncoding('utf8');
+      socket.on('data', data => {
+        if (data) {
+          server.emit('metrics', data);
+        }
+      });
+    });
+    server.on('listening', () => {
+      onListening(tcpClientOptions(server.address()), TCP);
+    });
+
+    server.listen(0, '127.0.0.1');
   }
   else if (serverType === TCP_BROKEN) {
     server = net.createServer(socket => {
@@ -196,10 +233,10 @@ function createServer(serverType, callback) {
       socket.destroy();
     });
     server.on('listening', () => {
-      onListening(server.address());
+      onListening(tcpClientOptions(server.address()));
     });
 
-    server.listen(0, 'localhost');
+    server.listen(0, '127.0.0.1');
   }
   else if (serverType === STREAM) {
     server = new EventEmitter();
@@ -263,5 +300,6 @@ module.exports = {
   testTypes: testTypes,
   testProtocolTypes: testProtocolTypes,
   createServer: createServer,
+  TCP_UTF8: TCP_UTF8,
   createHotShotsClient: createHotShotsClient,
 };

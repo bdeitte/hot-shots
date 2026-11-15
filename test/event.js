@@ -1,10 +1,12 @@
 const assert = require('assert');
 const helpers = require('./helpers/helpers.js');
+const { TCP } = require('../lib/constants').PROTOCOL;
 
 const closeAll = helpers.closeAll;
 const testTypes = helpers.testTypes;
 const createServer = helpers.createServer;
 const createHotShotsClient = helpers.createHotShotsClient;
+const TCP_UTF8 = helpers.TCP_UTF8;
 
 describe('#event', () => {
   let server;
@@ -164,6 +166,23 @@ describe('#event', () => {
         });
         server.on('metrics', event => {
           assert.strictEqual(event, `_e{4,4}:test|text${metricEnd}`);
+          done();
+        });
+      });
+
+      it('should count the event title and text lengths in utf-8 bytes', done => {
+        // The header is _e{TITLE_UTF8_LENGTH,TEXT_UTF8_LENGTH}, so these are byte
+        // counts: 'déploiement' is 11 utf-16 code units but 12 utf-8 bytes, and
+        // '完了 🚀' is 5 utf-16 code units but 11 utf-8 bytes.
+        //
+        // The only test here whose payload is not ascii, so the tcp case reads it
+        // off a utf-8 server. Every other test keeps the ascii one.
+        server = createServer(serverType === TCP ? TCP_UTF8 : serverType, opts => {
+          statsd = createHotShotsClient(opts, clientType);
+          statsd.event('déploiement', '完了 🚀');
+        });
+        server.on('metrics', event => {
+          assert.strictEqual(event, `_e{12,11}:déploiement|完了 🚀${metricEnd}`);
           done();
         });
       });

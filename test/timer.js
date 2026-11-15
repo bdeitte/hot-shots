@@ -1,4 +1,5 @@
-const execSync = require('child_process').execSync; // eslint-disable-line no-sync
+/* global Atomics, SharedArrayBuffer -- ES2017 globals, present in every supported Node; .eslintrc env is es6 */
+
 const StatsD = require('../lib/statsd');
 const assert = require('assert');
 const helpers = require('./helpers/helpers.js');
@@ -401,11 +402,15 @@ describe('#timer', () => {
 });
 
 /**
- * Use system sleep for given milliseconds
+ * Block the calling thread for given milliseconds.
+ *
+ * Deliberately not a child process: spawning one adds process-creation latency
+ * to whatever the caller measures, and on Windows that latency is large enough
+ * to push a 100ms sleep past a 1100ms assertion.
  */
 function sleep(ms) {
   return () => {
-    execSync(`sleep ${ms / 1000}`);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
   };
 }
 

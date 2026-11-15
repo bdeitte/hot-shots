@@ -1,7 +1,7 @@
 {
   "name": "hot-shots",
   "description": "Node.js client for StatsD, DogStatsD, and Telegraf",
-  "version": "17.1.1",
+  "version": "18.0.0",
   "author": "Steve Ivy",
   "main": "./index.js",
   "types": "./types.d.ts",
@@ -48,12 +48,12 @@
     "lib": "./lib/"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "scripts": {
     "coverage": "nyc --reporter=lcov --reporter=text npm test",
     "test": "mocha -R spec --timeout 5000 test/*.js && node test/esm-import.mjs",
-    "lint": "eslint \"./lib/**/*.js\" \"./test/**/*.{js,mjs}\" \"./*.mjs\"",
+    "lint": "eslint \"./lib/**/*.js\" \"./test/**/*.{js,mjs}\" \"./perfTest/**/*.js\" \"./*.mjs\"",
     "perf": "node perfTest/test.js",
     "pretest": "npm run lint"
   },
