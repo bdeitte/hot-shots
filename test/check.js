@@ -147,10 +147,6 @@ describe('#check', () => {
       });
 
       it('should contain an errorHandler that throws on the unsupported path', done => {
-        const originalConsoleError = console.error;
-        const logged = [];
-        console.error = msg => logged.push(String(msg));
-
         server = createServer(serverType, opts => {
           statsd = createHotShotsClient(Object.assign(opts, {
             telegraf: true,
@@ -159,6 +155,9 @@ describe('#check', () => {
             }
           }), clientType);
 
+          const originalConsoleError = console.error;
+          const logged = [];
+          console.error = msg => logged.push(String(msg));
           try {
             // The handler already received the unsupported-feature error. Its
             // own throw must not then surface at this unrelated call site.

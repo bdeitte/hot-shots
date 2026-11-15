@@ -243,6 +243,67 @@ describe('#intervalErrorHandling', () => {
         done();
       });
     });
+
+    /**
+     * Makes the client's next telemetry flush throw, then delegate to the real
+     * flush, so teardown's final flush is not the throwing one.
+     * @param {Object} client - a client with telemetry enabled
+     * @returns {void}
+     */
+    const failNextTelemetryFlush = client => {
+      const originalFlush = client.telemetry.flush.bind(client.telemetry);
+      let threw = false;
+      client.telemetry.flush = function (callback) {
+        if (!threw) {
+          threw = true;
+          throw new Error('boom from telemetry flush');
+        }
+        return originalFlush(callback);
+      };
+    };
+
+    it('telemetry interval routes to an errorHandler assigned after construction', done => {
+      const received = [];
+      server = createServer('udp', opts => {
+        consoleErrorStub = sinon.stub(console, 'error');
+        clock = sinon.useFakeTimers();
+
+        statsd = createHotShotsClient(Object.assign(opts, {
+          includeDatadogTelemetry: true,
+          telemetryFlushInterval: 5,
+        }), 'client');
+        statsd.errorHandler = err => received.push(err.message);
+        failNextTelemetryFlush(statsd);
+
+        clock.tick(6);
+        assert.deepStrictEqual(received, ['boom from telemetry flush'], 'the late handler should get the flush error');
+        assert.strictEqual(consoleErrorStub.callCount, 0, 'the error must not also be logged');
+        done();
+      });
+    });
+
+    it('telemetry interval falls back to console.error once the errorHandler is cleared', done => {
+      const received = [];
+      server = createServer('udp', opts => {
+        consoleErrorStub = sinon.stub(console, 'error');
+        clock = sinon.useFakeTimers();
+
+        statsd = createHotShotsClient(Object.assign(opts, {
+          includeDatadogTelemetry: true,
+          telemetryFlushInterval: 5,
+          errorHandler: err => received.push(err.message),
+        }), 'client');
+        statsd.errorHandler = undefined;
+        failNextTelemetryFlush(statsd);
+
+        clock.tick(6);
+        assert.deepStrictEqual(received, [], 'the cleared handler must not be called');
+        assert.strictEqual(consoleErrorStub.callCount, 1, 'the error should be logged instead');
+        assert.ok(String(consoleErrorStub.firstCall.args[0]).includes('boom from telemetry flush'),
+          `console.error should include original error, got: ${consoleErrorStub.firstCall.args[0]}`);
+        done();
+      });
+    });
   });
 
   describe('close-time flush', () => {
