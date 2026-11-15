@@ -13,6 +13,10 @@ CHANGELOG
 * [@bdeitte](https://github.com/bdeitte) Fix send and close errors being logged twice after a `tcp`/`uds` socket replacement on a client with no `errorHandler`
 * [@bdeitte](https://github.com/bdeitte) Bound the final buffered flush in `close()` and the wait in `flush(callback)` at 5 seconds. A `tcp` client whose connection never completes previously hung `close()` forever. Past the bound, `flush` calls back with a `HOTSHOTS_FLUSH_TIMEOUT` error, and `close()` reports it and still closes the socket. The wait holds the process open until it ends. A flush that fails after the bound is still reported to `errorHandler` or the console
 
+## 18.0.1 (2026-11-15)
+
+* [@ralsina](https://github.com/ralsina) Track the buffered byte count on the shared buffer holder instead of per client, so the buffer shared between a client and its `childClient()`s can no longer exceed `maxBufferSize`.
+
 ## 18.0.0 (2026-10-31)
 
 * [@bdeitte](https://github.com/bdeitte) BREAKING: Drop Node.js 18 support, now requires Node.js >= 20.0.0. Also test Node.js 26 in CI
