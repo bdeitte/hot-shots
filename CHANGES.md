@@ -1,6 +1,10 @@
 CHANGELOG
 =========
 
+## 18.0.1 (2026-11-15)
+
+* [@ralsina](https://github.com/ralsina) Track the buffered byte count on the shared buffer holder instead of per client, so the buffer shared between a client and its `childClient()`s can no longer exceed `maxBufferSize`.
+
 ## 18.0.0 (2026-10-31)
 
 * [@bdeitte](https://github.com/bdeitte) BREAKING: Drop Node.js 18 support, now requires Node.js >= 20.0.0. Also test Node.js 26 in CI
@@ -8,8 +12,6 @@ CHANGELOG
 * [@bdeitte](https://github.com/bdeitte) Add a Docker perfTest harness that counts the network and DNS calls the test suite makes (see `perfTest/README.md`)
 * [@dylanpulver](https://github.com/dylanpulver) Fix DogStatsD event headers to count utf-8 bytes, so events with a non-ascii title or text are no longer unparseable
 * [@dylanpulver](https://github.com/dylanpulver) Fix the TCP transport corrupting non-ascii payloads. TCP now sends utf-8 like the other transports; ascii-only payloads are unchanged
-
-* [@ralsina](https://github.com/ralsina) Track the buffered byte count on the shared buffer holder instead of per client, so the buffer shared between a client and its `childClient()`s can no longer exceed `maxBufferSize`. Since 13.2.0 the oversized datagrams were truncated by the Datadog agent, which surfaced as prefix tag keys and values. See [#335](https://github.com/bdeitte/hot-shots/issues/335)
 
 ## 17.1.1 (2026-9-13)
 
