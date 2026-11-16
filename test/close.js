@@ -1054,6 +1054,9 @@ describe('#close', () => {
               assert.strictEqual(reported.length, 2, `the late send error should also be reported, saw ${reported.length}`);
               assert.ok(reported[1].message.includes('write failed'),
                 `errorHandler should get the send error, got ${reported[1].message}`);
+              // close() zeroed the counter when it stopped waiting, and the
+              // late send callback must not take it below that.
+              assert.strictEqual(client.messagesInFlight, 0, 'the late send callback must not drive messagesInFlight negative');
               server.close();
               server = null;
               done();

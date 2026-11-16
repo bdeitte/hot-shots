@@ -191,11 +191,11 @@ describe('#buffer', () => {
 
         statsd.increment('a', 1);
         assert.ok(statsd.bufferHolder.buffer.length > 0);
-        assert.ok(statsd.bufferLength > 0);
+        assert.ok(statsd.bufferHolder.length > 0);
 
         statsd.flushQueue();
         assert.strictEqual(statsd.bufferHolder.buffer, '');
-        assert.strictEqual(statsd.bufferLength, 0);
+        assert.strictEqual(statsd.bufferHolder.length, 0);
         done();
       });
     });
@@ -215,6 +215,32 @@ describe('#buffer', () => {
         assert.ok(parent.bufferHolder.buffer.includes('parent.metric:1|c'));
         assert.ok(parent.bufferHolder.buffer.includes('child.child.metric:2|c'));
         assert.strictEqual(parent.bufferHolder, child.bufferHolder);
+        done();
+      });
+    });
+
+    it('should never allow the shared buffer to exceed maxBufferSize across child clients', done => {
+      const maxSize = 200;
+      server = createServer('udp', opts => {
+        const parent = createHotShotsClient(Object.assign(opts, {
+          maxBufferSize: maxSize,
+          bufferFlushInterval: 10000, // long interval so we control flushing
+        }), 'client');
+        statsd = parent;
+        const children = Array.from({ length: 5 }, (_, i) => parent.childClient({ globalTags: { child: `c${i}` } }));
+
+        // Interleave writes from several children: each child only enqueues a
+        // fraction of the shared buffer, so a per-client size counter would
+        // let the shared buffer grow past maxBufferSize
+        for (let i = 0; i < 50; i++) {
+          children[i % children.length].increment(`test.metric.${i}`, 1, { v: Array.from({ length: i % 7 }).fill('é').join('') });
+          const bufferSize = Buffer.byteLength(parent.bufferHolder.buffer);
+          assert.strictEqual(
+            bufferSize <= maxSize,
+            true,
+            `Shared buffer size ${bufferSize} exceeded maxBufferSize ${maxSize} after message ${i}`
+          );
+        }
         done();
       });
     });
@@ -255,7 +281,7 @@ describe('#buffer', () => {
 
         // Buffer should have been flushed by the interval
         assert.strictEqual(statsd.bufferHolder.buffer, '');
-        assert.strictEqual(statsd.bufferLength, 0);
+        assert.strictEqual(statsd.bufferHolder.length, 0);
 
         done();
       });

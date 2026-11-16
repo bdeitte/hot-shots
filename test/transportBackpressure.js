@@ -375,7 +375,7 @@ describe('#transportBackpressure', () => {
       // Buffered, so it is only handed to the never-connecting socket by
       // close()'s final flushQueue - whose write callback never fires.
       statsd.increment('buffered.metric');
-      assert.ok(statsd.bufferLength > 0, 'metric should be sitting in the buffer');
+      assert.ok(statsd.bufferHolder.length > 0, 'metric should be sitting in the buffer');
 
       const startedAt = Date.now();
       const client = statsd;

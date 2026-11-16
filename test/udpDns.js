@@ -1707,7 +1707,7 @@ describe('#udpDns', () => {
 
         // Buffered, so nothing is sent until close()'s final flushQueue.
         statsd.increment('buffered.metric');
-        assert.ok(statsd.bufferLength > 0, 'metric should be sitting in the buffer');
+        assert.ok(statsd.bufferHolder.length > 0, 'metric should be sitting in the buffer');
 
         statsd.close(closeError => {
           assert.ok(!closeError, `close should not fail, got ${closeError && closeError.message}`);
@@ -1748,7 +1748,7 @@ describe('#udpDns', () => {
         });
 
         statsd.increment('slow.lookup.metric');
-        assert.ok(statsd.bufferLength > 0, 'metric should be sitting in the buffer');
+        assert.ok(statsd.bufferHolder.length > 0, 'metric should be sitting in the buffer');
 
         statsd.close(closeError => {
           assert.ok(!closeError, `close should not fail, got ${closeError && closeError.message}`);
@@ -2225,7 +2225,7 @@ describe('#udpDns', () => {
         // cache) happens when the buffer is flushed, which the first close()
         // below triggers.
         statsd.increment('warmup');
-        assert.ok(statsd.bufferLength > 0, 'metric should be sitting in the buffer');
+        assert.ok(statsd.bufferHolder.length > 0, 'metric should be sitting in the buffer');
 
         statsd.close(firstCloseError => {
           assert.ok(!firstCloseError, `first close should not fail, got ${firstCloseError && firstCloseError.message}`);
@@ -2233,7 +2233,7 @@ describe('#udpDns', () => {
           // Buffer another metric between the two closes so the second
           // close()'s own final flushQueue() has something to reject.
           statsd.increment('buffered.after.first.close');
-          assert.ok(statsd.bufferLength > 0, 'metric should be sitting in the buffer');
+          assert.ok(statsd.bufferHolder.length > 0, 'metric should be sitting in the buffer');
 
           statsd.close(secondCloseError => {
             assert.ok(!secondCloseError,
@@ -2276,7 +2276,7 @@ describe('#udpDns', () => {
 
           // Give the final flush a payload to be refused.
           statsd.increment('buffered.during.cooldown');
-          assert.ok(statsd.bufferLength > 0, 'metric should be sitting in the buffer');
+          assert.ok(statsd.bufferHolder.length > 0, 'metric should be sitting in the buffer');
 
           statsd.close(closeError => {
             // The refusal is reported through errorHandler, not by failing the

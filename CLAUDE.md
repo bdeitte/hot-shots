@@ -13,6 +13,8 @@ hot-shots is a Node.js client library for StatsD, DogStatsD (Datadog), and Teleg
 - **lib/transport.js**: Protocol implementations (UDP, TCP, UDS, stream)
 - **lib/statsFunctions.js**: Core metric methods (timing, increment, gauge, etc.)
 - **lib/helpers.js**: Tag formatting, sanitization, and utility functions
+- **lib/clientSocket.js**: Creating a client's socket, and replacing a TCP/UDS socket after a connection error
+- **lib/errorListener.js**: Attaching, detaching and locating a client's socket `error` listener
 - **lib/constants.js**: Protocol constants and error codes
 - **lib/telemetry.js**: Client-side telemetry for DogStatsD (tracks metrics/bytes sent/dropped)
 - **lib/aggregator.js**: Opt-in client-side aggregation of counts/gauges/sets for DogStatsD
