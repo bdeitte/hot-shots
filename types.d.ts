@@ -4,6 +4,21 @@ import stream = require("stream");
 export type Tags = { [key: string]: string } | string[];
 export type Cardinality = 'none' | 'low' | 'orchestrator' | 'high';
 
+/**
+ * An Error reported to an errorHandler or a send callback.
+ *
+ * `code` carries the underlying transport or resolver code, such as `ENOTFOUND`
+ * or `ERR_SOCKET_DESTROYED`, and for most refusals holds the `HOTSHOTS_*` code
+ * directly. `hotShotsCode` is set only where `code` has to stay the resolver's
+ * own value, so existing handlers keep matching: `HOTSHOTS_DNS_COOLDOWN` on a
+ * send refused during a `cacheDns` cooldown, and `HOTSHOTS_DNS_LOOKUP_FAILED`
+ * on a send whose DNS lookup failed.
+ */
+export interface SendError extends Error {
+  code?: string;
+  hotShotsCode?: string;
+}
+
 export interface AggregationOptions {
   /** Interval in milliseconds between aggregation flushes. Default: 2000. */
   flushInterval?: number;
@@ -16,7 +31,7 @@ export interface ClientOptions {
   bufferHolder?: { buffer: string };
   cacheDns?: boolean;
   cacheDnsTtl?: number;
-  errorHandler?: ((err: Error) => void) | null;
+  errorHandler?: ((err: SendError) => void) | null;
   globalTags?: Tags;
   includeDataDogTags?: boolean;
   datadog?: boolean;
@@ -27,6 +42,7 @@ export interface ClientOptions {
   host?: string;
   isChild?: boolean;
   maxBufferSize?: number;
+  maxPendingWriteBytes?: number;
   mock?: boolean;
   path?: string;
   port?: number;
@@ -61,7 +77,7 @@ export interface ChildClientOptions {
   globalTags?: Tags;
   prefix?: string;
   suffix?: string;
-  errorHandler?: ((err: Error) => void) | null;
+  errorHandler?: ((err: SendError) => void) | null;
   cardinality?: Cardinality;
 }
 
@@ -121,7 +137,7 @@ export interface TimerContext {
   addTags(tags: Tags): void;
 }
 
-export type StatsCb = (error?: Error, bytes?: number) => void;
+export type StatsCb = (error?: SendError, bytes?: number) => void;
 
 export class StatsD {
   constructor(options?: ClientOptions);
@@ -133,7 +149,7 @@ export class StatsD {
    * follow the change. Includes undefined so clearing it compiles under
    * exactOptionalPropertyTypes.
    */
-  errorHandler?: ((err: Error) => void) | null | undefined;
+  errorHandler?: ((err: SendError) => void) | null | undefined;
 
   increment(stat: string, tags?: Tags): void;
   increment(stat: string | string[], value: number, sampleRate?: number, tags?: Tags, callback?: StatsCb): void;

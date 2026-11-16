@@ -685,8 +685,8 @@ describe('#close', () => {
     });
 
     it('async close-time error reaches root errorHandler when no close callback (regression for stale on-socket flag)', done => {
-      // The construction-time _errorHandlerInitiallyOnSocket flag is true for a root client with
-      // an errorHandler at construction. But _close() removes the user's handler
+      // A root client with an errorHandler starts close with its listener on the
+      // socket. But _close() removes the user's handler
       // from the socket, so by the time handleSocketErr fires it must NOT use the
       // stale flag — the local errorHandlerOnSocketDuringClose tracks the runtime
       // state. Pre-fix: root errorHandler was suppressed and the close-time error
@@ -778,8 +778,8 @@ describe('#close', () => {
         });
 
         // Grandchild inherits intermediate's overridden handler. The handler is NOT
-        // on the shared socket (only root's is), so the propagation must result in
-        // grandchild._errorHandlerInitiallyOnSocket === false; handleSocketErr must call it
+        // on the shared socket (only root's is), so isErrorHandlerOnSocket must be
+        // false for the grandchild; handleSocketErr must call it
         // explicitly on async errors.
         const grandchild = intermediate.childClient();
         delaySocketClose(statsd, 100);

@@ -213,7 +213,7 @@ describe('#flush', () => {
   describe('a transport that never completes the send', () => {
     /**
      * Builds a udp client whose sends never call back, as a tcp connect that
-     * never completes would leave them.
+     * never completes or a cold DNS lookup that never resolves would leave them.
      * @param {Object} opts - the server options plus any client options
      * @returns {void}
      */

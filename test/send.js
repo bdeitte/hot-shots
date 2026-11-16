@@ -25,7 +25,7 @@ describe('#send', () => {
           const err = new Error('Boom!');
           statsd = createHotShotsClient(Object.assign(opts, {
             errorHandler(e) {
-              assert.strictEqual(e, err);
+              assert.strictEqual(e.message, 'Error sending hot-shots message: Error: Boom!');
               done();
             }
           }), clientType);
@@ -64,7 +64,8 @@ describe('#send', () => {
           const err = new Error('DNS failed');
           statsd = createHotShotsClient(Object.assign(opts, {
             errorHandler(e) {
-              assert.strictEqual(e, err);
+              assert.strictEqual(e.message, 'Error sending hot-shots message: Error: DNS failed');
+              assert.strictEqual(e.hotShotsCode, 'HOTSHOTS_DNS_LOOKUP_FAILED');
               done();
             }
           }), clientType);
@@ -79,9 +80,26 @@ describe('#send', () => {
           statsd = createHotShotsClient(opts, clientType);
           statsd.dnsError = err;
           statsd._send('test message', (e) => {
-            assert.strictEqual(e, err);
+            assert.strictEqual(e.message, 'Error sending hot-shots message: Error: DNS failed');
+            assert.strictEqual(e.hotShotsCode, 'HOTSHOTS_DNS_LOOKUP_FAILED');
             done();
           });
+        });
+      });
+
+      it('should throw the wrapped dnsError when there is no callback or errorHandler', done => {
+        server = createServer(serverType, opts => {
+          const err = new Error('DNS failed');
+          err.code = 'EAI_AGAIN';
+          statsd = createHotShotsClient(opts, clientType);
+          statsd.dnsError = err;
+          assert.throws(() => statsd._send('test message'), {
+            message: 'Error sending hot-shots message: Error: DNS failed',
+            code: 'EAI_AGAIN',
+            hotShotsCode: 'HOTSHOTS_DNS_LOOKUP_FAILED'
+          });
+          statsd.dnsError = null;
+          done();
         });
       });
 
