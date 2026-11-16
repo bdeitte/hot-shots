@@ -204,4 +204,37 @@ describe('#typescript', function () {
       ].join('\n')
     );
   });
+
+  it('should compile assigning and clearing errorHandler after construction', () => {
+    compileTs(
+      {
+        compilerOptions: {
+          target: 'es2020',
+          module: 'commonjs',
+          moduleResolution: 'node',
+          strict: true,
+          // Rejects assigning undefined to an optional property unless its type
+          // includes undefined, and clearing the handler is supported.
+          exactOptionalPropertyTypes: true,
+          esModuleInterop: true,
+          noEmit: true,
+        },
+      },
+      [
+        'import { StatsD } from \'hot-shots\';',
+        'const client = new StatsD({ mock: true });',
+        'client.errorHandler = (err: Error) => { console.error(err.message); };',
+        'const child = client.childClient({});',
+        'child.errorHandler = undefined;',
+        'child.errorHandler = null;',
+        'const nullChild = client.childClient({ errorHandler: null });',
+        'nullChild.close();',
+        'const nullClient = new StatsD({ mock: true, errorHandler: null });',
+        'nullClient.close();',
+
+        'client.errorHandler = undefined;',
+        'client.close();',
+      ].join('\n')
+    );
+  });
 });
