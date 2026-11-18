@@ -13,6 +13,8 @@ CHANGELOG
 * [@dylanpulver](https://github.com/dylanpulver) Fix DogStatsD event headers to count utf-8 bytes, so events with a non-ascii title or text are no longer unparseable
 * [@dylanpulver](https://github.com/dylanpulver) Fix the TCP transport corrupting non-ascii payloads. TCP now sends utf-8 like the other transports; ascii-only payloads are unchanged
 
+* [@Pearce-Ropion](https://github.com/Pearce-Ropion) Faster tag merging in `send` for non-Telegraf clients: the global tags are joined once and reused, and per-call tags that are an object are merged straight to a string without building intermediate arrays. The tags sent, and their order, are unchanged.
+
 ## 17.1.1 (2026-9-13)
 
 * [@erulabs](https://github.com/erulabs) Reuse formatted tag strings in `overrideTags` to avoid splitting and reconstructing values, while preserving tag sanitization, overrides, and duplicate-key ordering.
